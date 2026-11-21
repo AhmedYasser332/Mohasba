@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --bg-canvas: #f3f5f6;
+  --bg-surface: #ffffff;
+  --bg-subtle: #e9edf0;
+  --border-hairline: #d5dce1;
+  --ink-primary: #11161a;
+  --ink-secondary: #526068;
+  --accent-live: #0f5257;
+}
+
+.dark {
+  --bg-canvas: #16181c;
+  --bg-surface: #1d2026;
+  --bg-subtle: #242830;
+  --border-hairline: #2a2f38;
+  --ink-primary: #d6dce2;
+  --ink-secondary: #8e98a4;
+  --accent-live: #58a4aa;
+}
+
+html,
+body {
+  background-color: var(--bg-canvas);
+  color: var(--ink-primary);
+}

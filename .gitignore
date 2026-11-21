@@ -21,6 +21,13 @@ out/
 build/
 dist/
 coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# PWA build manifest & test artifacts
+public/sw-manifest.json
+playwright-report/
+test-results/
 
 # Local tooling & OS files
 .DS_Store
