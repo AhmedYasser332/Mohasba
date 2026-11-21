@@ -1,0 +1,3823 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>جدول المحاسبة — معاينة تفاعلية (المرحلة الثالثة)</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230F5257' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='3'/%3E%3Cpolyline points='7 12.5 10.5 16 17 8.5'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* Light Mode — Cool Mineral Chalk & Architectural Ledger */
+      --bg-canvas: #F3F5F6;
+      --bg-surface: #FFFFFF;
+      --bg-subtle: #E9EDF0;
+      --bg-hover: #E1E7EB;
+      --border-hairline: #D5DCE1;
+      --border-strong: #B6C2CA;
+      --ink-primary: #11161A;
+      --ink-secondary: #526068;
+      --ink-muted: #687680;
+      --ink-inverse: #FFFFFF;
+      --accent-live: #0F5257;
+      --accent-live-soft: #E3F0F1;
+
+      /* 5-State + Unlogged Semantic Tokens (WCAG AA+) */
+      --done-ink: #1A6B4B;
+      --done-fill: #E7F3ED;
+      --done-border: #B7DEC9;
+
+      --missed-ink: #A8383B;
+      --missed-fill: #F9EBEB;
+      --missed-border: #E8C1C2;
+
+      --qadaa-ink: #295985;
+      --qadaa-fill: #EBF2F8;
+      --qadaa-border: #BDD2E5;
+
+      --percent-ink: #9A5B13;
+      --percent-fill: #FBF2E6;
+      --percent-border: #E5CCA8;
+
+      --disabled-ink: #66727C;
+      --disabled-fill: #ECEFF1;
+      --disabled-border: #D5DCE1;
+
+      --pending-border: #B8C2C9;
+      --expired-ink: #855D25;
+      --expired-fill: rgba(181, 137, 74, 0.08);
+      --expired-border: #B5894A;
+
+      /* Transient Elevation ONLY */
+      --shadow-overlay: 0 6px 20px rgba(17, 22, 26, 0.14);
+
+      /* Hierarchical Radii */
+      --r-cell: 2px;
+      --r-control: 6px;
+      --r-panel: 8px;
+
+      /* Typography & Motion */
+      --font-sans: 'Readex Pro', system-ui, -apple-system, sans-serif;
+      --t-fast: 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      --sidebar-w: 228px;
+    }
+
+    [data-theme="dark"] {
+      /* Dark Mode — Dimmed Graphite Charcoal (Low-Glare Fajr / Isha Comfort) */
+      --bg-canvas: #16181C;
+      --bg-surface: #1D2026;
+      --bg-subtle: #242830;
+      --bg-hover: #2C313B;
+      --border-hairline: #2A2F38;
+      --border-strong: #3A414D;
+      --ink-primary: #D6DCE2;
+      --ink-secondary: #8E98A4;
+      --ink-muted: #76808C;
+      --ink-inverse: #14171B;
+      --accent-live: #58A4AA;
+      --accent-live-soft: rgba(88, 164, 170, 0.13);
+      --live-btn-bg: #1E5B60;
+      --live-btn-ink: #EDF4F5;
+
+      --done-ink: #64B88E;
+      --done-fill: rgba(100, 184, 142, 0.10);
+      --done-border: rgba(100, 184, 142, 0.22);
+
+      --missed-ink: #DC8284;
+      --missed-fill: rgba(220, 130, 132, 0.11);
+      --missed-border: rgba(220, 130, 132, 0.24);
+
+      --qadaa-ink: #79ABD6;
+      --qadaa-fill: rgba(121, 171, 214, 0.11);
+      --qadaa-border: rgba(121, 171, 214, 0.24);
+
+      --percent-ink: #D4A459;
+      --percent-fill: rgba(212, 164, 89, 0.11);
+      --percent-border: rgba(212, 164, 89, 0.24);
+
+      --disabled-ink: #727C88;
+      --disabled-fill: #191C21;
+      --disabled-border: #262B33;
+
+      --pending-border: #383F4B;
+      --expired-ink: #CCA05C;
+      --expired-fill: rgba(204, 160, 92, 0.09);
+      --expired-border: rgba(204, 160, 92, 0.36);
+
+      --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      font-size: 16px;
+      color-scheme: light dark;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--font-sans);
+      background-color: var(--bg-canvas);
+      color: var(--ink-primary);
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Browser Surface Styling (Craft Floor) */
+    ::selection {
+      background-color: var(--accent-live-soft);
+      color: var(--ink-primary);
+    }
+
+    input, textarea, select {
+      font-family: inherit;
+      caret-color: var(--accent-live);
+    }
+
+    a, button {
+      font-family: inherit;
+      text-underline-offset: 3px;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent-live);
+      outline-offset: 2px;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-canvas);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 4px;
+    }
+
+    .nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      flex-shrink: 0;
+    }
+
+    .icon-sm {
+      width: 15px;
+      height: 15px;
+    }
+
+    /* Shell Architecture — Strict Desktop & Mobile Isolation */
+    .app-shell {
+      display: flex;
+      min-height: 100dvh;
+    }
+
+    /* Desktop Right Sidebar Rail (RTL inline-start) */
+    .desktop-rail {
+      display: none;
+    }
+
+    @media (min-width: 1024px) {
+      .desktop-rail {
+        display: flex;
+        flex-direction: column;
+        width: var(--sidebar-w);
+        flex-shrink: 0;
+        background: var(--bg-surface);
+        border-inline-end: 1px solid var(--border-hairline);
+        position: sticky;
+        top: 0;
+        height: 100dvh;
+        padding-block: 16px;
+        padding-inline: 12px;
+        gap: 16px;
+        transition: width var(--t-fast), padding var(--t-fast), opacity var(--t-fast);
+        overflow: hidden;
+      }
+
+      .app-shell.sidebar-collapsed .desktop-rail {
+        width: 0;
+        padding-inline: 0;
+        border-inline-end-color: transparent;
+        opacity: 0;
+        pointer-events: none;
+      }
+    }
+
+    .brand-block {
+      padding-inline: 6px;
+      padding-block-end: 12px;
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .desktop-sidebar-trigger,
+    .desktop-only {
+      display: none !important;
+    }
+
+    @media (min-width: 1024px) {
+      .desktop-only {
+        display: inline-flex !important;
+      }
+      .desktop-sidebar-trigger {
+        display: inline-flex !important;
+      }
+      .app-shell:not(.sidebar-collapsed) .top-bar .desktop-sidebar-trigger {
+        display: none !important;
+      }
+      .app-shell.sidebar-collapsed .top-bar-end {
+        display: flex;
+      }
+    }
+
+    /* Crisp Native-Like Tooltip for Keyboard Shortcut Discovery */
+    .has-tip {
+      position: relative;
+    }
+    .has-tip::after {
+      content: attr(data-tip);
+      position: absolute;
+      inset-block-start: calc(100% + 6px);
+      inset-inline-start: 0;
+      background: var(--ink-primary);
+      color: var(--ink-inverse);
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 4px 8px;
+      border-radius: var(--r-cell);
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity var(--t-fast);
+      z-index: 40;
+    }
+    .has-tip:hover::after,
+    .has-tip:focus-visible::after {
+      opacity: 1;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 1.0625rem;
+      font-weight: 700;
+      color: var(--ink-primary);
+    }
+
+    .brand-note {
+      margin: 4px 0 0;
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+    }
+
+    .rail-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      padding-block: 10px;
+      padding-inline: 10px;
+      border: 1px solid transparent;
+      border-radius: var(--r-control);
+      background: transparent;
+      color: var(--ink-secondary);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+      text-align: start;
+    }
+
+    .nav-btn-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .nav-btn:hover {
+      background: var(--bg-subtle);
+      color: var(--ink-primary);
+    }
+
+    .nav-btn[aria-current="page"] {
+      background: var(--accent-live-soft);
+      color: var(--accent-live);
+      border-color: var(--border-hairline);
+      font-weight: 600;
+    }
+
+    .count-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 20px;
+      padding-inline: 6px;
+      border-radius: var(--r-cell);
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: var(--bg-subtle);
+      color: var(--ink-primary);
+    }
+
+    .count-chip.alert {
+      background: var(--missed-fill);
+      color: var(--missed-ink);
+      border: 1px solid var(--missed-border);
+    }
+
+    .rail-footer {
+      border-block-start: 1px solid var(--border-hairline);
+      padding-block-start: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Main Column */
+    .main-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      padding-block-end: 74px;
+    }
+
+    @media (min-width: 1024px) {
+      .main-col {
+        padding-block-end: 32px;
+      }
+    }
+
+    /* Top Utility Header */
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--bg-surface);
+      border-block-end: 1px solid var(--border-hairline);
+      padding-block: 10px;
+      padding-inline: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    @media (min-width: 1024px) {
+      .top-bar {
+        padding-inline: 28px;
+      }
+    }
+
+    .top-bar-start {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .page-heading {
+      margin: 0;
+      font-size: 1.0625rem;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (min-width: 1024px) {
+      .page-heading {
+        font-size: 1.25rem;
+      }
+    }
+
+    .demo-tag {
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-cell);
+      padding: 2px 7px;
+      white-space: nowrap;
+      display: none;
+    }
+
+    @media (min-width: 640px) {
+      .demo-tag {
+        display: inline-block;
+      }
+    }
+
+    .top-bar-end {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    @media (min-width: 1024px) {
+      .top-bar-end {
+        display: none;
+      }
+    }
+
+    /* Buttons & Controls */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 36px;
+      padding-block: 6px;
+      padding-inline: 12px;
+      border-radius: var(--r-control);
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      color: var(--ink-primary);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast), opacity var(--t-fast);
+      white-space: nowrap;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--bg-subtle);
+      border-color: var(--border-strong);
+    }
+
+    .btn:active:not(:disabled) {
+      opacity: 0.86;
+    }
+
+    .btn:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--ink-primary);
+      color: var(--ink-inverse);
+      border-color: var(--ink-primary);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      opacity: 0.9;
+      background: var(--ink-primary);
+      border-color: var(--ink-primary);
+    }
+
+    .btn-live {
+      background: var(--accent-live);
+      color: #FFFFFF;
+      border-color: var(--accent-live);
+    }
+
+    [data-theme="dark"] .btn-live {
+      background: var(--live-btn-bg);
+      border-color: var(--live-btn-bg);
+      color: var(--live-btn-ink);
+      font-weight: 600;
+    }
+
+    .btn-live:hover:not(:disabled) {
+      opacity: 0.92;
+      background: var(--accent-live);
+      border-color: var(--accent-live);
+    }
+
+    .btn-icon {
+      min-width: 38px;
+      min-height: 38px;
+      padding: 0;
+    }
+
+    /* 4-State Sync Visibility Control */
+    .sync-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding-block: 4px;
+      padding-inline: 10px;
+      border-radius: var(--r-control);
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-subtle);
+      color: var(--ink-primary);
+      font-size: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color var(--t-fast), border-color var(--t-fast);
+    }
+
+    .sync-btn:hover {
+      background: var(--bg-hover);
+    }
+
+    .sync-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 9999px;
+      background: var(--done-ink);
+      flex-shrink: 0;
+    }
+
+    .sync-btn[data-sync="offline"] {
+      background: var(--percent-fill);
+      border-color: var(--percent-border);
+      color: var(--percent-ink);
+    }
+    .sync-btn[data-sync="offline"] .sync-dot {
+      background: var(--percent-ink);
+    }
+
+    .sync-btn[data-sync="attention"] {
+      background: var(--missed-fill);
+      border-color: var(--missed-border);
+      color: var(--missed-ink);
+    }
+    .sync-btn[data-sync="attention"] .sync-dot {
+      background: var(--missed-ink);
+    }
+
+    /* Content Workspace */
+    .workspace {
+      width: 100%;
+      max-width: 1220px;
+      margin-inline: auto;
+      padding-block: 16px;
+      padding-inline: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    @media (min-width: 1024px) {
+      .workspace {
+        padding-block: 22px;
+        padding-inline: 28px;
+        gap: 20px;
+      }
+    }
+
+    /* Mobile Bottom Navigation (44px+ touch targets) */
+    .mobile-nav {
+      position: fixed;
+      inset-block-end: 0;
+      inset-inline: 0;
+      z-index: 30;
+      background: var(--bg-surface);
+      border-block-start: 1px solid var(--border-hairline);
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      padding-block: 4px;
+      padding-block-end: max(4px, env(safe-area-inset-bottom));
+    }
+
+    @media (min-width: 1024px) {
+      .mobile-nav {
+        display: none;
+      }
+    }
+
+    .mobile-nav-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      min-height: 52px;
+      border: none;
+      background: transparent;
+      color: var(--ink-secondary);
+      font-size: 0.72rem;
+      font-weight: 500;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .mobile-nav-btn[aria-current="page"] {
+      color: var(--accent-live);
+      font-weight: 600;
+    }
+
+    .mobile-badge {
+      position: absolute;
+      top: 5px;
+      inset-inline-end: 18%;
+      min-width: 16px;
+      height: 16px;
+      padding-inline: 4px;
+      border-radius: var(--r-cell);
+      background: var(--missed-ink);
+      color: #FFFFFF;
+      font-size: 0.65rem;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Structural Panels (Zero Resting Shadow, Hairline Only) */
+    .panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-panel);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding-block: 12px;
+      padding-inline: 16px;
+      background: var(--bg-subtle);
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--ink-primary);
+    }
+
+    .panel-meta {
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+    }
+
+    /* Screen 1: Joi Day Strip */
+    .day-strip {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .day-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      min-height: 54px;
+      padding-block: 6px;
+      padding-inline: 2px;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-control);
+      background: var(--bg-surface);
+      color: var(--ink-secondary);
+      cursor: pointer;
+      transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+    }
+
+    .day-tile:hover {
+      background: var(--bg-subtle);
+      color: var(--ink-primary);
+    }
+
+    .day-tile[aria-pressed="true"] {
+      background: var(--ink-primary);
+      color: var(--ink-inverse);
+      border-color: var(--ink-primary);
+    }
+
+    .day-tile-name {
+      font-size: 0.72rem;
+      font-weight: 500;
+    }
+
+    .day-tile-num {
+      font-size: 0.875rem;
+      font-weight: 700;
+    }
+
+    .day-tile-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 9999px;
+      background: var(--accent-live);
+    }
+
+    .day-tile[aria-pressed="true"] .day-tile-dot {
+      background: var(--ink-inverse);
+    }
+
+    /* Period Switcher Tabs */
+    .period-strip {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-block-end: 2px;
+      scrollbar-width: none;
+    }
+    .period-strip::-webkit-scrollbar {
+      display: none;
+    }
+
+    .period-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding-block: 6px;
+      padding-inline: 12px;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-control);
+      background: var(--bg-surface);
+      color: var(--ink-secondary);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+    }
+
+    .period-pill:hover {
+      background: var(--bg-subtle);
+      color: var(--ink-primary);
+    }
+
+    .period-pill[aria-selected="true"] {
+      background: var(--accent-live-soft);
+      border-color: var(--accent-live);
+      color: var(--accent-live);
+      font-weight: 600;
+    }
+
+    .live-indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 9999px;
+      background: var(--accent-live);
+    }
+
+    /* Catch-Up Banner (48h Unlogged) */
+    .catchup-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-block: 10px;
+      padding-inline: 14px;
+      background: var(--bg-surface);
+      border: 1px dashed var(--expired-border);
+      border-radius: var(--r-panel);
+      flex-wrap: wrap;
+    }
+
+    .catchup-text {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8125rem;
+      color: var(--expired-ink);
+      font-weight: 500;
+    }
+
+    /* Signature Craft Detail — 2px Time-Window Horizon Rail */
+    .window-header {
+      position: relative;
+      padding-block: 14px 16px;
+      padding-inline: 16px;
+      background: var(--bg-surface);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .window-title {
+      margin: 0;
+      font-size: 1.0625rem;
+      font-weight: 700;
+      color: var(--ink-primary);
+    }
+
+    .window-time-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8125rem;
+      color: var(--ink-secondary);
+    }
+
+    .window-countdown {
+      font-weight: 600;
+      color: var(--accent-live);
+    }
+
+    .window-countdown.closing {
+      color: var(--percent-ink);
+    }
+
+    .horizon-track {
+      position: absolute;
+      inset-block-end: 0;
+      inset-inline: 0;
+      height: 2px;
+      background: var(--border-hairline);
+    }
+
+    .horizon-fill {
+      height: 100%;
+      background: var(--accent-live);
+      transition: width var(--t-fast), background-color var(--t-fast);
+    }
+
+    .horizon-fill.closing {
+      background: var(--percent-ink);
+    }
+
+    /* Quick Action Split Bar */
+    .quick-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding-block: 10px;
+      padding-inline: 16px;
+      background: var(--bg-subtle);
+      border-block-end: 1px solid var(--border-hairline);
+    }
+
+    @media (max-width: 420px) {
+      .quick-split {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .quick-split .btn {
+      min-height: 44px;
+      font-size: 0.8125rem;
+    }
+
+    /* WHOOP-Style Action Rows (Divide-Y, Zero Card Nesting) */
+    .action-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .action-row {
+      padding-block: 11px;
+      padding-inline: 16px;
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--bg-surface);
+      transition: background-color var(--t-fast);
+    }
+
+    .action-row:last-child {
+      border-block-end: none;
+    }
+
+    .action-row-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .action-info {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .action-title-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .action-title {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--ink-primary);
+    }
+
+    .action-row.is-disabled .action-title {
+      color: var(--disabled-ink);
+      text-decoration: line-through;
+    }
+
+    .target-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: var(--r-cell);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-hairline);
+      font-size: 0.72rem;
+      color: var(--ink-secondary);
+      font-weight: 500;
+    }
+
+    .new-target-tag {
+      background: var(--qadaa-fill);
+      border-color: var(--qadaa-border);
+      color: var(--qadaa-ink);
+    }
+
+    .action-sub-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* WHOOP 7-Day Mini-Dots (Strictly 6px circles) */
+    .week-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .w-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 9999px;
+      background: var(--border-hairline);
+    }
+    .w-dot.done { background: var(--done-ink); }
+    .w-dot.missed { background: var(--missed-ink); }
+    .w-dot.qadaa { background: var(--qadaa-ink); }
+    .w-dot.percent { background: var(--percent-ink); }
+    .w-dot.disabled { background: var(--disabled-border); opacity: 0.6; }
+    .w-dot.expired { background: var(--expired-border); }
+
+    .row-note-preview {
+      font-size: 0.72rem;
+      color: var(--ink-secondary);
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Inline Thumb Controls (44x44px Mobile Safe) */
+    .action-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .tap-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--r-control);
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-canvas);
+      color: var(--ink-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+    }
+
+    .tap-btn:hover {
+      border-color: var(--border-strong);
+      color: var(--ink-primary);
+    }
+
+    .tap-btn.active-done {
+      background: var(--done-fill);
+      border-color: var(--done-border);
+      color: var(--done-ink);
+    }
+
+    .tap-btn.active-missed {
+      background: var(--missed-fill);
+      border-color: var(--missed-border);
+      color: var(--missed-ink);
+    }
+
+    .tap-btn.active-qadaa {
+      background: var(--qadaa-fill);
+      border-color: var(--qadaa-border);
+      color: var(--qadaa-ink);
+    }
+
+    .tap-btn.active-disabled {
+      background: var(--disabled-fill);
+      border-color: var(--disabled-border);
+      color: var(--disabled-ink);
+    }
+
+    .tap-btn-more {
+      width: 34px;
+      height: 44px;
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .tap-btn-more:hover {
+      background: var(--bg-subtle);
+      border-color: var(--border-hairline);
+    }
+
+    /* Inline Percentage Chip Bar */
+    .pct-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .pct-chip {
+      position: relative;
+      min-height: 34px;
+      min-width: 48px;
+      padding-block: 4px;
+      padding-inline: 9px;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-cell);
+      background: var(--bg-canvas);
+      color: var(--ink-secondary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      overflow: hidden;
+      transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+    }
+
+    .pct-chip:hover {
+      border-color: var(--border-strong);
+      color: var(--ink-primary);
+    }
+
+    .pct-chip.selected-pct {
+      background: var(--percent-fill);
+      border-color: var(--percent-border);
+      color: var(--percent-ink);
+    }
+
+    .pct-chip.selected-done {
+      background: var(--done-fill);
+      border-color: var(--done-border);
+      color: var(--done-ink);
+    }
+
+    .pct-chip.selected-missed {
+      background: var(--missed-fill);
+      border-color: var(--missed-border);
+      color: var(--missed-ink);
+    }
+
+    .pct-chip-fill {
+      position: absolute;
+      inset-block-end: 0;
+      inset-inline-start: 0;
+      height: 3px;
+      background: var(--percent-ink);
+    }
+
+    /* Sub-header for Bound Left-Side Habits */
+    .sub-band {
+      padding-block: 8px;
+      padding-inline: 16px;
+      background: var(--bg-subtle);
+      border-block: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--ink-secondary);
+    }
+
+    /* Screen 2: Weekly Matrix (Desktop Syncra Table + Mobile WHOOP Ledger) */
+    .matrix-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .matrix-toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .matrix-desktop-wrap {
+      display: none;
+    }
+
+    .matrix-mobile-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    @media (min-width: 1024px) {
+      .matrix-desktop-wrap {
+        display: block;
+      }
+      .matrix-mobile-wrap {
+        display: none;
+      }
+    }
+
+    .matrix-mobile-wrap.force-grid .mobile-ledger-view {
+      display: none;
+    }
+    .matrix-mobile-wrap:not(.force-grid) .mobile-compact-table {
+      display: none;
+    }
+
+    .ledger-table-wrap {
+      overflow-x: auto;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-panel);
+    }
+
+    table.ledger-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 0.8125rem;
+    }
+
+    .ledger-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: var(--bg-subtle);
+      border-block-end: 1px solid var(--border-hairline);
+      padding-block: 9px;
+      padding-inline: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--ink-secondary);
+      text-align: center;
+    }
+
+    .ledger-table thead th.col-action {
+      width: 34%;
+      text-align: start;
+      padding-inline-start: 14px;
+    }
+
+    .ledger-table thead th.col-day.is-today {
+      color: var(--accent-live);
+      background: var(--accent-live-soft);
+    }
+
+    .ledger-table thead th.col-rate {
+      width: 9%;
+    }
+
+    .ledger-table tbody tr.side-divider td {
+      padding: 0;
+      height: 2px;
+      background: var(--ink-primary);
+    }
+
+    .ledger-table tbody tr.side-label-row td {
+      background: var(--bg-canvas);
+      padding-block: 8px;
+      padding-inline: 14px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--ink-secondary);
+      border-block-end: 1px solid var(--border-hairline);
+    }
+
+    .ledger-table tbody tr.group-row td {
+      background: var(--bg-subtle);
+      padding: 0;
+      border-block-end: 1px solid var(--border-hairline);
+    }
+
+    .group-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-block: 8px;
+      padding-inline: 14px;
+      border: none;
+      background: transparent;
+      color: var(--ink-primary);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .group-toggle-start {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .ledger-table tbody tr.data-row {
+      height: 38px;
+      border-block-end: 1px solid var(--border-hairline);
+    }
+
+    .ledger-table tbody tr.data-row:hover {
+      background: var(--bg-canvas);
+    }
+
+    .ledger-table td.cell-title {
+      padding-block: 4px;
+      padding-inline: 14px 8px;
+      color: var(--ink-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .ledger-table td.cell-status {
+      padding: 3px;
+      text-align: center;
+    }
+
+    .ledger-table td.cell-rate {
+      text-align: center;
+      font-weight: 600;
+      color: var(--ink-secondary);
+      padding-inline: 6px;
+    }
+
+    /* Matrix Cell & Mobile Circle Shared States (Zero Clipping / Zero Overflow) */
+    .m-cell {
+      position: relative;
+      width: 100%;
+      height: 30px;
+      border-radius: var(--r-cell);
+      border: 1px solid transparent;
+      background: transparent;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      overflow: hidden;
+      transition: background-color var(--t-fast), border-color var(--t-fast);
+    }
+
+    .m-cell.st-done,
+    .m-whoop-circle.st-done {
+      background: var(--done-fill);
+      border-color: var(--done-border);
+      color: var(--done-ink);
+    }
+    .m-cell.st-missed,
+    .m-whoop-circle.st-missed {
+      background: var(--missed-fill);
+      border-color: var(--missed-border);
+      color: var(--missed-ink);
+    }
+    .m-cell.st-qadaa,
+    .m-whoop-circle.st-qadaa {
+      background: var(--qadaa-fill);
+      border-color: var(--qadaa-border);
+      color: var(--qadaa-ink);
+    }
+    .m-cell.st-percent,
+    .m-whoop-circle.st-percent {
+      background: var(--percent-fill);
+      border-color: var(--percent-border);
+      color: var(--percent-ink);
+    }
+    .m-cell.st-disabled,
+    .m-whoop-circle.st-disabled {
+      background: var(--disabled-fill);
+      border-color: var(--disabled-border);
+      color: var(--disabled-ink);
+    }
+    .m-cell.st-pending,
+    .m-whoop-circle.st-pending {
+      background: transparent;
+      border: 1px dashed var(--pending-border);
+      color: var(--ink-muted);
+    }
+    .m-cell.st-expired,
+    .m-whoop-circle.st-expired {
+      background: var(--expired-fill);
+      border: 1px dashed var(--expired-border);
+      color: var(--expired-ink);
+    }
+
+    .app-shell.overview-active .main-col {
+      padding-block-end: 6px;
+    }
+
+    .app-shell.overview-active .top-bar {
+      padding-block: 6px;
+    }
+
+    /* Bird's-Eye One-Glance Sheet Mode (Zero Scroll Side-by-Side Desktop View) */
+    .workspace.overview-wide {
+      max-width: 100%;
+      padding-block: 6px;
+      padding-inline: 14px;
+      gap: 6px;
+    }
+
+    .overview-split {
+      display: grid;
+      grid-template-columns: 1.24fr 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .overview-split .ledger-table {
+      font-size: 0.72rem;
+    }
+
+    .overview-split .ledger-table thead th {
+      padding-block: 4px;
+      padding-inline: 2px;
+      font-size: 0.67rem;
+    }
+
+    .overview-split .ledger-table thead th.col-period {
+      width: 10%;
+      text-align: center;
+    }
+
+    .overview-split .ledger-table thead th.col-action {
+      width: 31%;
+      padding-inline-start: 6px;
+    }
+
+    .overview-split .ledger-table thead th.col-rate {
+      width: 7%;
+    }
+
+    .overview-split .ledger-table td.cell-period {
+      background: var(--bg-subtle);
+      border-inline-end: 1px solid var(--border-hairline);
+      border-block-end: 1px solid var(--border-strong);
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.7rem;
+      color: var(--ink-primary);
+      padding-inline: 4px;
+      vertical-align: middle;
+    }
+
+    .overview-split .ledger-table td.cell-period.is-live-period {
+      background: var(--accent-live-soft);
+      color: var(--accent-live);
+    }
+
+    .overview-split .ledger-table tbody tr.period-end-row {
+      border-block-end: 1px solid var(--border-strong);
+    }
+
+    .overview-split .ledger-table tbody tr.data-row {
+      height: 21px;
+    }
+
+    .overview-split .ledger-table td.cell-title {
+      padding-block: 0;
+      padding-inline: 6px 4px;
+    }
+
+    .overview-split .ledger-table td.cell-status {
+      padding: 1px;
+    }
+
+    .overview-split .m-cell {
+      height: 17px;
+      font-size: 0.64rem;
+    }
+
+    .overview-split .m-cell .icon-sm {
+      width: 12px;
+      height: 12px;
+    }
+
+    .overview-split .ledger-table td.cell-rate {
+      font-size: 0.67rem;
+      padding-inline: 2px;
+    }
+
+    .overview-split .target-tag {
+      font-size: 0.63rem;
+      padding: 0 4px;
+    }
+
+    .m-cell-bar {
+      position: absolute;
+      inset-block-end: 0;
+      inset-inline-start: 0;
+      height: 3px;
+      background: var(--percent-ink);
+    }
+
+    /* Mobile WHOOP 7-Day Circle Row */
+    .m-whoop-row {
+      padding-block: 10px;
+      padding-inline: 14px;
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--bg-surface);
+    }
+    .m-whoop-row:last-child { border-block-end: none; }
+
+    .m-whoop-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .m-whoop-days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+    }
+
+    .m-whoop-day {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      border: none;
+      background: transparent;
+      padding: 2px 0;
+      cursor: pointer;
+    }
+
+    .m-whoop-day-lbl {
+      font-size: 0.68rem;
+      color: var(--ink-secondary);
+    }
+
+    .m-whoop-circle {
+      position: relative;
+      overflow: hidden;
+      width: 34px;
+      height: 34px;
+      border-radius: var(--r-control);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 600;
+      border: 1px solid var(--border-hairline);
+    }
+
+    /* Segmented Tabs (Screen 3 & 4) */
+    .seg-tabs {
+      display: inline-flex;
+      padding: 3px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-control);
+      gap: 3px;
+      flex-wrap: wrap;
+    }
+
+    .seg-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      padding-block: 4px;
+      padding-inline: 12px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--ink-secondary);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color var(--t-fast), color var(--t-fast);
+    }
+
+    .seg-tab[aria-selected="true"] {
+      background: var(--bg-surface);
+      border-color: var(--border-hairline);
+      color: var(--ink-primary);
+      font-weight: 600;
+    }
+
+    /* Screen 3: Qadaa Rows */
+    .qadaa-row {
+      padding-block: 12px;
+      padding-inline: 16px;
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .qadaa-row:last-child { border-block-end: none; }
+
+    .qadaa-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .qadaa-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+    }
+
+    .qadaa-snapshot {
+      background: var(--qadaa-fill);
+      border: 1px solid var(--qadaa-border);
+      color: var(--qadaa-ink);
+      padding: 1px 6px;
+      border-radius: var(--r-cell);
+      font-weight: 600;
+    }
+
+    /* Screen 4: Analytics Grid (3 Lean Insights) */
+    .pulse-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-block-start: 1px solid var(--border-hairline);
+    }
+
+    @media (max-width: 720px) {
+      .pulse-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .pulse-cell {
+      padding: 16px;
+      border-inline-end: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .pulse-cell:last-child {
+      border-inline-end: none;
+    }
+
+    @media (max-width: 720px) {
+      .pulse-cell {
+        border-inline-end: none;
+        border-block-end: 1px solid var(--border-hairline);
+      }
+      .pulse-cell:last-child {
+        border-block-end: none;
+      }
+    }
+
+    .pulse-label {
+      font-size: 0.8125rem;
+      color: var(--ink-secondary);
+      font-weight: 500;
+    }
+
+    .pulse-num {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--ink-primary);
+      line-height: 1.2;
+    }
+
+    .pulse-detail {
+      font-size: 0.75rem;
+      color: var(--ink-secondary);
+    }
+
+    .analytics-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 860px) {
+      .analytics-split {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .bar-row {
+      padding-block: 10px;
+      padding-inline: 16px;
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .bar-row:last-child { border-block-end: none; }
+
+    .bar-row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.8125rem;
+    }
+
+    .bar-track {
+      height: 6px;
+      background: var(--bg-subtle);
+      border-radius: var(--r-cell);
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: var(--accent-live);
+      transition: width var(--t-fast);
+    }
+
+    .bar-fill.weak { background: var(--missed-ink); }
+    .bar-fill.mid { background: var(--percent-ink); }
+    .bar-fill.good { background: var(--done-ink); }
+
+    .sub-split-note {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.72rem;
+      color: var(--ink-secondary);
+    }
+
+    .progression-trail {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--qadaa-ink);
+      background: var(--qadaa-fill);
+      border: 1px solid var(--qadaa-border);
+      border-radius: var(--r-cell);
+      padding: 2px 8px;
+      width: fit-content;
+    }
+
+    /* Screen 5: Settings */
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    @media (min-width: 1024px) {
+      .settings-grid {
+        grid-template-columns: 1.2fr 1fr;
+        align-items: start;
+      }
+    }
+
+    .offline-guard {
+      padding: 12px 16px;
+      background: var(--percent-fill);
+      border: 1px solid var(--percent-border);
+      border-radius: var(--r-panel);
+      color: var(--percent-ink);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .setting-row {
+      padding-block: 11px;
+      padding-inline: 16px;
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .setting-row:last-child { border-block-end: none; }
+
+    .field-input, .field-select {
+      min-height: 36px;
+      padding-block: 6px;
+      padding-inline: 10px;
+      border-radius: var(--r-control);
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-canvas);
+      color: var(--ink-primary);
+      font-size: 0.8125rem;
+    }
+
+    .switch-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+    }
+
+    .switch-toggle input {
+      accent-color: var(--accent-live);
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    .ntfy-preview {
+      margin: 12px 16px 14px;
+      padding: 12px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-control);
+      font-size: 0.8125rem;
+    }
+
+    /* Transient 5-Second Undo Toast */
+    .undo-toast {
+      position: fixed;
+      inset-block-end: 68px;
+      inset-inline: 14px;
+      max-width: 440px;
+      margin-inline: auto;
+      z-index: 50;
+      background: var(--ink-primary);
+      color: var(--ink-inverse);
+      border-radius: var(--r-panel);
+      box-shadow: var(--shadow-overlay);
+      overflow: hidden;
+      display: none;
+    }
+
+    @media (min-width: 1024px) {
+      .undo-toast {
+        inset-block-end: 24px;
+        inset-inline-start: auto;
+        inset-inline-end: 28px;
+        margin-inline: 0;
+        width: 390px;
+      }
+    }
+
+    .undo-toast.visible {
+      display: block;
+    }
+
+    .undo-toast-body {
+      padding-block: 11px;
+      padding-inline: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.8125rem;
+    }
+
+    .undo-btn {
+      padding: 5px 12px;
+      border-radius: var(--r-control);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: transparent;
+      color: inherit;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    [data-theme="dark"] .undo-btn {
+      border-color: rgba(17, 22, 26, 0.25);
+    }
+
+    .undo-progress {
+      height: 3px;
+      background: var(--accent-live);
+      width: 100%;
+      transform-origin: right;
+    }
+
+    /* Native <dialog> Popovers / Editors (Escapes overflow cleanly) */
+    dialog.app-dialog {
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--r-panel);
+      background: var(--bg-surface);
+      color: var(--ink-primary);
+      padding: 0;
+      width: min(420px, calc(100vw - 28px));
+      box-shadow: var(--shadow-overlay);
+    }
+
+    dialog.app-dialog::backdrop {
+      background: rgba(17, 22, 26, 0.45);
+    }
+
+    .dialog-head {
+      padding: 14px 16px;
+      background: var(--bg-subtle);
+      border-block-end: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .dialog-title {
+      margin: 0;
+      font-size: 0.9375rem;
+      font-weight: 700;
+    }
+
+    .dialog-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 0.8125rem;
+    }
+
+    .dialog-foot {
+      padding: 12px 16px;
+      border-block-start: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .state-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .empty-state {
+      padding: 28px 16px;
+      text-align: center;
+      color: var(--ink-secondary);
+      font-size: 0.875rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <!-- Desktop RTL Right Sidebar Rail -->
+    <aside class="desktop-rail" aria-label="التنقل الرئيسي">
+      <div class="brand-block">
+        <div>
+          <h1 class="brand-title">جدول المحاسبة</h1>
+          <p class="brand-note">نسخة معاينة تفاعلية (بيانات تجريبية)</p>
+        </div>
+        <button class="btn btn-icon has-tip" id="btn-collapse-sidebar" type="button"
+          data-tip="طي القائمة (Ctrl + I / Ctrl + ه)"
+          title="طي القائمة (Ctrl + I / Ctrl + ه)"
+          aria-label="طي القائمة الجانبية"></button>
+      </div>
+      <nav class="rail-nav" id="desktop-nav"></nav>
+      <div class="rail-footer">
+        <button class="sync-btn" id="desktop-sync-btn" type="button" data-sync="synced" title="اضغط لمحاكاة العمل بدون إنترنت">
+          <span class="sync-dot"></span>
+          <span class="sync-label">متزامن</span>
+        </button>
+        <button class="btn" id="desktop-theme-btn" type="button">
+          <span class="theme-icon-slot"></span>
+          <span class="theme-text">الوضع الليلي (الفجر)</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Workspace Column -->
+    <div class="main-col">
+      <header class="top-bar">
+        <div class="top-bar-start">
+          <button class="btn btn-icon desktop-sidebar-trigger has-tip" id="btn-expand-sidebar" type="button"
+            data-tip="فتح القائمة (Ctrl + I / Ctrl + ه)"
+            title="فتح القائمة (Ctrl + I / Ctrl + ه)"
+            aria-label="فتح القائمة الجانبية"></button>
+          <h2 class="page-heading" id="active-screen-title">الآن</h2>
+          <span class="demo-tag">بيانات تجريبية للمعاينة</span>
+        </div>
+        <div class="top-bar-end">
+          <button class="sync-btn" id="mobile-sync-btn" type="button" data-sync="synced" title="محاكاة حالة الاتصال">
+            <span class="sync-dot"></span>
+            <span class="sync-label">متزامن</span>
+          </button>
+          <button class="btn btn-icon" id="mobile-theme-btn" type="button" aria-label="تبديل المظهر النهاري والليلي">
+            <span class="theme-icon-slot"></span>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace" id="app-main"></main>
+    </div>
+  </div>
+
+  <!-- Mobile Bottom Navigation Bar -->
+  <nav class="mobile-nav" id="mobile-nav" aria-label="التنقل السفلي"></nav>
+
+  <!-- 5-Second Undo Toast -->
+  <div class="undo-toast" id="undo-toast" role="status" aria-live="polite">
+    <div class="undo-toast-body">
+      <span id="undo-message">تم الحفظ</span>
+      <button class="undo-btn" id="undo-action-btn" type="button">تراجع</button>
+    </div>
+    <div class="undo-progress" id="undo-progress"></div>
+  </div>
+
+  <!-- Cell Detail / Matrix Editor Dialog -->
+  <dialog class="app-dialog" id="cell-dialog" aria-labelledby="cell-dialog-title">
+    <div class="dialog-head">
+      <h3 class="dialog-title" id="cell-dialog-title">تعديل الخلية</h3>
+      <button class="btn btn-icon" type="button" id="cell-dialog-close" aria-label="إغلاق"></button>
+    </div>
+    <div class="dialog-body" id="cell-dialog-body"></div>
+    <div class="dialog-foot">
+      <button class="btn" type="button" id="cell-dialog-cancel">إلغاء</button>
+      <button class="btn btn-primary" type="button" id="cell-dialog-save">حفظ التغيير</button>
+    </div>
+  </dialog>
+
+  <!-- Normal Day Preview Dialog -->
+  <dialog class="app-dialog" id="normal-day-dialog" aria-labelledby="normal-dialog-title">
+    <div class="dialog-head">
+      <h3 class="dialog-title" id="normal-dialog-title">تعبئة يوم اعتيادي</h3>
+      <button class="btn btn-icon" type="button" id="normal-dialog-close" aria-label="إغلاق"></button>
+    </div>
+    <div class="dialog-body" id="normal-day-body"></div>
+    <div class="dialog-foot">
+      <button class="btn" type="button" id="normal-dialog-cancel">إلغاء</button>
+      <button class="btn btn-primary" type="button" id="normal-dialog-apply">تطبيق التعبئة</button>
+    </div>
+  </dialog>
+
+  <!-- Target Evolution Dialog -->
+  <dialog class="app-dialog" id="evolve-dialog" aria-labelledby="evolve-dialog-title">
+    <div class="dialog-head">
+      <h3 class="dialog-title" id="evolve-dialog-title">تطوير الهدف</h3>
+      <button class="btn btn-icon" type="button" id="evolve-dialog-close" aria-label="إغلاق"></button>
+    </div>
+    <div class="dialog-body" id="evolve-dialog-body"></div>
+    <div class="dialog-foot">
+      <button class="btn" type="button" id="evolve-dialog-cancel">إلغاء</button>
+      <button class="btn btn-live" type="button" id="evolve-dialog-save">حفظ النسخة الجديدة</button>
+    </div>
+  </dialog>
+
+  <script>
+    // =========================================================================
+    // Uniform 1.5px Geometric SVG Icon System (Zero Unicode Emojis in Chrome)
+    // =========================================================================
+    const ICONS = {
+      now: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
+      matrix: '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="15" y1="4" x2="15" y2="20"/></svg>',
+      qadaa: '<svg class="icon" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/></svg>',
+      analytics: '<svg class="icon" viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="19"/><rect x="6" y="11" width="3" height="8"/><rect x="11" y="7" width="3" height="12"/><rect x="16" y="13" width="3" height="6"/></svg>',
+      settings: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+      check: '<svg class="icon" viewBox="0 0 24 24"><polyline points="5 12.5 9.5 17 19 7.5"/></svg>',
+      checkSm: '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="5 12.5 9.5 17 19 7.5"/></svg>',
+      cross: '<svg class="icon" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>',
+      crossSm: '<svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>',
+      qadaaSm: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.6-5.9L4 8.5"/><polyline points="4 4 4 8.5 8.5 8.5"/></svg>',
+      dashSm: '<svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="6" y1="12" x2="18" y2="12"/></svg>',
+      more: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>',
+      sun: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="7" y2="7"/><line x1="17" y1="17" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="7" y2="17"/><line x1="17" y1="7" x2="19.1" y2="4.9"/></svg>',
+      moon: '<svg class="icon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+      chevronDown: '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>',
+      chevronLeft: '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>',
+      mosque: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M6 20v-7a6 6 0 0 1 12 0v7"/><path d="M12 3v4"/><path d="M9 20v-4a3 3 0 0 1 6 0v4"/></svg>',
+      checkAll: '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="2 12.5 6.5 17 16 7.5"/><polyline points="10.5 17 12.5 17 22 7.5"/></svg>',
+      alert: '<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12.5"/><circle cx="12" cy="16" r="0.6"/></svg>',
+      download: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 4v11"/><polyline points="7.5 11.5 12 16 16.5 11.5"/><path d="M4 20h16"/></svg>',
+      trendUp: '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 7 13 14 9 10 4 15"/><polyline points="15 7 20 7 20 12"/></svg>',
+      sidebarToggle: '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>'
+    };
+
+    // =========================================================================
+    // Illustrative Generic Islamic Starter Pack + Realistic Prototype State
+    // Week: Saturday 14 Nov -> Friday 20 Nov (Today = Thursday 19 Nov, index 5)
+    // Active Prayer Window: Asr (22 min remaining -> Horizon Rail turns Ochre!)
+    // =========================================================================
+    const DAYS = [
+      { idx: 0, date: '2026-11-14', short: 'السبت', abbr: 'Sat', num: '14' },
+      { idx: 1, date: '2026-11-15', short: 'الأحد', abbr: 'Sun', num: '15' },
+      { idx: 2, date: '2026-11-16', short: 'الإثنين', abbr: 'Mon', num: '16' },
+      { idx: 3, date: '2026-11-17', short: 'الثلاثاء', abbr: 'Tue', num: '17' },
+      { idx: 4, date: '2026-11-18', short: 'الأربعاء', abbr: 'Wed', num: '18' },
+      { idx: 5, date: '2026-11-19', short: 'الخميس', abbr: 'Thu', num: '19', isToday: true },
+      { idx: 6, date: '2026-11-20', short: 'الجمعة', abbr: 'Fri', num: '20', isFuture: true }
+    ];
+    const TODAY_DATE = '2026-11-19';
+    const ACTIVE_PERIOD_ID = 'asr';
+
+    const PERIODS = [
+      { id: 'fajr', name: 'الصبح', side: 'right', timeLabel: '04:55 - 06:22', elapsedPct: 100, remainingMin: 0, state: 'expired', ntfyEnabled: true, ntfyLead: 25 },
+      { id: 'morning', name: 'الصباح', side: 'right', timeLabel: '05:52 - 11:46', elapsedPct: 100, remainingMin: 0, state: 'expired', ntfyEnabled: true, ntfyLead: 30 },
+      { id: 'dhuhr', name: 'الظهر', side: 'right', timeLabel: '11:46 - 14:43', elapsedPct: 100, remainingMin: 0, state: 'expired', ntfyEnabled: true, ntfyLead: 25 },
+      { id: 'asr', name: 'العصر', side: 'right', timeLabel: '14:43 - 17:01', elapsedPct: 84, remainingMin: 22, state: 'live', ntfyEnabled: true, ntfyLead: 25 },
+      { id: 'evening', name: 'المساء', side: 'right', timeLabel: '15:13 - 18:22', elapsedPct: 58, remainingMin: 79, state: 'open', ntfyEnabled: true, ntfyLead: 30 },
+      { id: 'maghrib', name: 'المغرب', side: 'right', timeLabel: '17:01 - 18:22', elapsedPct: 0, remainingMin: 81, state: 'upcoming', ntfyEnabled: true, ntfyLead: 20 },
+      { id: 'isha', name: 'العشاء', side: 'right', timeLabel: '18:22 - 04:56', elapsedPct: 0, remainingMin: 634, state: 'upcoming', ntfyEnabled: true, ntfyLead: 30 },
+      { id: 'daily_sunan', name: 'الأذكار والسنن اليومية', side: 'left', state: 'open' },
+      { id: 'fasting_heart', name: 'الصيام والقلب', side: 'left', state: 'open' },
+      { id: 'friday_duties', name: 'وظائف الجمعة', side: 'left', state: 'open' }
+    ];
+
+    const state = {
+      screen: 'now',
+      theme: 'light',
+      syncMode: 'synced', // 'synced' | 'offline' | 'attention'
+      pendingOutbox: 0,
+      selectedDayIdx: 5,
+      selectedPeriodId: 'asr',
+      qadaaTab: 'open', // 'open' | 'unlogged' | 'core'
+      analyticsHorizon: '30d', // '7d' | '30d'
+      mobileMatrixGrid: false,
+      matrixOverviewMode: false, // Desktop side-by-side zero-scroll sheet mode
+      sidebarCollapsed: false,
+      collapsedGroups: {},
+      rolloverMode: 'FAJR',
+      ntfyMaster: true,
+      ntfyQuietStart: '23:00',
+      ntfyQuietEnd: '04:00',
+      ntfyDigest: true,
+      ntfyDigestTime: '22:15',
+      actions: [
+        // الصبح
+        { id: 'fajr_sunnah', periodId: 'fajr', title: 'السنة القبلية', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'fajr_jamaah', periodId: 'fajr', title: 'الجماعة الأولى', side: 'right', isMosque: true, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        { id: 'fajr_adhkar', periodId: 'fajr', title: 'أذكار بعد الصلاة', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        // الصباح
+        { id: 'morning_adhkar', periodId: 'morning', title: 'أذكار الصباح', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: true, normalDay: true, offDays: [], targets: [] },
+        { id: 'morning_duha', periodId: 'morning', title: 'صلاة الضحى', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [{ id: 'tv_duha_1', from: '2026-10-01', label: 'ركعتان', dir: 'initial' }, { id: 'tv_duha_2', from: '2026-11-10', label: '4 ركعات', dir: 'level_up' }] },
+        { id: 'morning_istighfar', periodId: 'morning', title: 'الاستغفار والصلاة على النبي', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: true, normalDay: true, offDays: [], targets: [{ id: 'tv_ist_1', from: '2026-10-01', label: '100 مرة', dir: 'initial' }] },
+        // الظهر
+        { id: 'dhuhr_sunnah_b', periodId: 'dhuhr', title: 'السنة القبلية', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [6], targets: [] },
+        { id: 'dhuhr_jamaah', periodId: 'dhuhr', title: 'الجماعة الأولى', side: 'right', isMosque: true, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        { id: 'dhuhr_adhkar', periodId: 'dhuhr', title: 'أذكار بعد الصلاة', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'dhuhr_sunnah_a', periodId: 'dhuhr', title: 'السنة البعدية', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'quran_wird', periodId: 'dhuhr', title: 'ورد قراءة القرآن', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: true, normalDay: true, offDays: [], targets: [{ id: 'tv_q_1', from: '2026-10-01', label: '10 صفحات', dir: 'initial' }, { id: 'tv_q_2', from: '2026-11-17', label: '20 صفحة', dir: 'level_up' }] },
+        { id: 'dhuhr_sheet', periodId: 'dhuhr', title: 'ملئ جدول المحاسبة', side: 'right', isMosque: false, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        // العصر
+        { id: 'asr_jamaah', periodId: 'asr', title: 'الجماعة الأولى', side: 'right', isMosque: true, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        { id: 'asr_adhkar', periodId: 'asr', title: 'أذكار بعد الصلاة', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        // المساء
+        { id: 'evening_adhkar', periodId: 'evening', title: 'أذكار المساء', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: true, normalDay: true, offDays: [], targets: [] },
+        { id: 'evening_istighfar', periodId: 'evening', title: 'ورد الذكر المسائي', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: true, normalDay: true, offDays: [], targets: [{ id: 'tv_ev_1', from: '2026-10-01', label: '100 مرة', dir: 'initial' }] },
+        // المغرب
+        { id: 'maghrib_jamaah', periodId: 'maghrib', title: 'الجماعة الأولى', side: 'right', isMosque: true, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        { id: 'maghrib_adhkar', periodId: 'maghrib', title: 'أذكار بعد الصلاة', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'maghrib_sunnah', periodId: 'maghrib', title: 'السنة البعدية', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'maghrib_duaa', periodId: 'maghrib', title: 'ورد الدعاء', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: true, normalDay: true, offDays: [], targets: [{ id: 'tv_duaa_1', from: '2026-10-01', label: '10 دقائق', dir: 'initial' }] },
+        // العشاء
+        { id: 'isha_jamaah', periodId: 'isha', title: 'الجماعة الأولى', side: 'right', isMosque: true, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        { id: 'isha_adhkar', periodId: 'isha', title: 'أذكار بعد الصلاة', side: 'right', isMosque: true, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'isha_sunnah', periodId: 'isha', title: 'السنة البعدية', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'isha_witr', periodId: 'isha', title: 'صلاة الوتر', side: 'right', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: true, offDays: [], targets: [{ id: 'tv_witr_1', from: '2026-10-01', label: 'ركعة بـ 10 آيات', dir: 'initial' }] },
+        { id: 'isha_sheet', periodId: 'isha', title: 'ملئ جدول المحاسبة', side: 'right', isMosque: false, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        // العادات اليومية (الجدول الأيسر — مفتوحة طول اليوم مع ربط اختياري بوقت)
+        { id: 'sunan_wake', periodId: 'daily_sunan', boundPeriodId: 'fajr', title: 'أذكار الاستيقاظ', side: 'left', isMosque: false, isCore: false, qadaa: false, pct: false, normalDay: true, offDays: [], targets: [] },
+        { id: 'sunan_sleep', periodId: 'daily_sunan', boundPeriodId: 'isha', title: 'أذكار وسنن النوم', side: 'left', isMosque: false, isCore: false, qadaa: false, pct: true, normalDay: true, offDays: [], targets: [] },
+        { id: 'sunan_mosque', periodId: 'daily_sunan', boundPeriodId: 'asr', title: 'سنن دخول المسجد والمشي إليه', side: 'left', isMosque: false, isCore: false, qadaa: false, pct: true, normalDay: true, offDays: [], targets: [] },
+        { id: 'birr_parents', periodId: 'daily_sunan', title: 'بر الوالدين', side: 'left', isMosque: false, isCore: false, qadaa: false, pct: true, normalDay: true, offDays: [], targets: [] },
+        { id: 'wake_no_snooze', periodId: 'daily_sunan', boundPeriodId: 'fajr', title: 'الاستيقاظ بدون غفوة (Snooze)', side: 'left', isMosque: false, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [], targets: [] },
+        // الصيام والقلب
+        { id: 'fasting', periodId: 'fasting_heart', title: 'صيام الإثنين والخميس', side: 'left', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: false, offDays: [0, 1, 3, 4, 6], targets: [] },
+        { id: 'gaze', periodId: 'fasting_heart', title: 'غض البصر', side: 'left', isMosque: false, isCore: false, qadaa: false, pct: true, normalDay: true, offDays: [], targets: [] },
+        // وظائف الجمعة
+        { id: 'fri_kahf', periodId: 'friday_duties', boundPeriodId: 'asr', title: 'سورة الكهف', side: 'left', isMosque: false, isCore: false, qadaa: true, pct: false, normalDay: false, offDays: [0, 1, 2, 3, 4, 5], targets: [] },
+        { id: 'fri_tabkeer', periodId: 'friday_duties', boundPeriodId: 'dhuhr', title: 'التبكير للجمعة', side: 'left', isMosque: false, isCore: true, qadaa: false, pct: false, normalDay: false, offDays: [0, 1, 2, 3, 4, 5], targets: [] }
+      ],
+      // logs keyed by `${actionId}::${date}` -> { status, pct?, note?, targetVersionId?, enabledOverride? }
+      logs: {},
+      // Historical cross-week Qadaa debt (demonstrating Day D original target snapshot!)
+      historicalQadaa: [
+        { id: 'hq_1', actionId: 'quran_wird', date: '2026-11-12', dayLabel: 'الخميس 12 نوفمبر', targetLabel: '10 صفحات', status: 'MISSED', ageDays: 7 },
+        { id: 'hq_2', actionId: 'isha_witr', date: '2026-11-11', dayLabel: 'الأربعاء 11 نوفمبر', targetLabel: 'ركعة بـ 10 آيات', status: 'MISSED', ageDays: 8 }
+      ]
+    };
+
+    // Seed realistic week logs (Sat 14 -> Thu 19)
+    function seedInitialLogs() {
+      const set = (aid, dayIdx, status, pct = null, note = '', tvId = null) => {
+        const d = DAYS[dayIdx].date;
+        state.logs[`${aid}::${d}`] = { status, pct, note, targetVersionId: tvId || getActiveTarget(aid, d)?.id || null };
+      };
+
+      // Sat 14 .. Wed 18 mostly logged with realistic misses, Qadaa, and percentages
+      for (let i = 0; i <= 4; i++) {
+        set('fajr_sunnah', i, 'DONE');
+        set('fajr_jamaah', i, i === 3 ? 'MISSED' : 'DONE');
+        set('fajr_adhkar', i, 'DONE');
+        set('morning_adhkar', i, i === 2 ? 'PERCENT' : 'DONE', i === 2 ? 75 : null);
+        set('morning_duha', i, i === 1 ? 'QADAA_DONE' : (i === 4 ? 'MISSED' : 'DONE'));
+        set('morning_istighfar', i, i === 3 ? 'PERCENT' : 'DONE', i === 3 ? 50 : null);
+        set('dhuhr_sunnah_b', i, 'DONE');
+        set('dhuhr_jamaah', i, 'DONE');
+        set('dhuhr_adhkar', i, 'DONE');
+        set('dhuhr_sunnah_a', i, i === 2 ? 'QADAA_DONE' : 'DONE');
+        // Quran wird: Sat..Mon on 10 pages, Tue..Wed upgraded to 20 pages ("هدف جديد" grace!)
+        if (i === 0) set('quran_wird', i, 'DONE');
+        if (i === 1) set('quran_wird', i, 'MISSED'); // Open Qadaa on 10 pages!
+        if (i === 2) set('quran_wird', i, 'DONE');
+        if (i === 3) set('quran_wird', i, 'PERCENT', 75, 'أول يوم على 20 صفحة');
+        if (i === 4) set('quran_wird', i, 'PERCENT', 60);
+        set('dhuhr_sheet', i, i === 3 ? 'MISSED' : 'DONE');
+        set('asr_jamaah', i, 'DONE');
+        set('asr_adhkar', i, 'DONE');
+        set('evening_adhkar', i, i === 1 ? 'MISSED' : (i === 4 ? 'PERCENT' : 'DONE'), i === 4 ? 50 : null);
+        set('evening_istighfar', i, i === 3 ? 'MISSED' : 'DONE');
+        set('maghrib_jamaah', i, 'DONE');
+        set('maghrib_adhkar', i, 'DONE');
+        set('maghrib_sunnah', i, 'DONE');
+        set('maghrib_duaa', i, i === 2 || i === 3 ? 'MISSED' : 'DONE');
+        set('isha_jamaah', i, 'DONE');
+        set('isha_adhkar', i, 'DONE');
+        set('isha_sunnah', i, i === 1 ? 'QADAA_DONE' : 'DONE');
+        if (i < 4) set('isha_witr', i, i === 2 ? 'QADAA_DONE' : 'DONE');
+        // Wed (i=4) isha_witr & isha_sheet intentionally EMPTY -> surfaces in 48h Catch-Up!
+        if (i < 4) set('isha_sheet', i, 'DONE');
+        set('sunan_wake', i, 'DONE');
+        set('sunan_sleep', i, i === 3 ? 'PERCENT' : 'DONE', i === 3 ? 50 : null);
+        set('sunan_mosque', i, 'DONE');
+        set('birr_parents', i, 'DONE');
+        set('wake_no_snooze', i, i === 3 || i === 4 ? 'MISSED' : 'DONE');
+        if (i === 2) set('fasting', i, 'DONE'); // Monday fasting
+        set('gaze', i, i === 4 ? 'PERCENT' : 'DONE', i === 4 ? 80 : null);
+      }
+
+      // Today (Thu 19): Fajr + Morning + Dhuhr done, Morning Duha left EMPTY (expired backlog!), Asr currently LIVE & unlogged!
+      set('fajr_sunnah', 5, 'DONE');
+      set('fajr_jamaah', 5, 'DONE');
+      set('fajr_adhkar', 5, 'DONE');
+      set('sunan_wake', 5, 'DONE');
+      set('wake_no_snooze', 5, 'DONE');
+      set('morning_adhkar', 5, 'DONE');
+      // morning_duha left EMPTY on today -> expired unlogged!
+      set('morning_istighfar', 5, 'PERCENT', 75);
+      set('dhuhr_sunnah_b', 5, 'DONE');
+      set('dhuhr_jamaah', 5, 'DONE');
+      set('dhuhr_adhkar', 5, 'DONE');
+      set('dhuhr_sunnah_a', 5, 'DONE');
+      set('quran_wird', 5, 'PERCENT', 50, '10 من 20 صفحة قبل العصر');
+      set('dhuhr_sheet', 5, 'DONE');
+      set('fasting', 5, 'DONE', null, 'صيام الخميس');
+    }
+
+    // =========================================================================
+    // Domain Helpers (Strict Stage 2 Rules)
+    // =========================================================================
+    function getAction(id) {
+      return state.actions.find(a => a.id === id);
+    }
+
+    function getActiveTarget(actionId, dateStr) {
+      const a = getAction(actionId);
+      if (!a || !a.targets || !a.targets.length) return null;
+      const eligible = a.targets.filter(t => t.from <= dateStr).sort((x, y) => x.from.localeCompare(y.from));
+      return eligible.length ? eligible[eligible.length - 1] : null;
+    }
+
+    function getTargetById(actionId, tvId) {
+      const a = getAction(actionId);
+      if (!a || !tvId) return null;
+      return a.targets.find(t => t.id === tvId) || null;
+    }
+
+    function isNewTargetGrace(action) {
+      if (!action.targets || action.targets.length < 2) return false;
+      const latest = action.targets[action.targets.length - 1];
+      if (latest.dir === 'step_down') return false;
+      // Count logged days since latest.from
+      let count = 0;
+      for (const d of DAYS) {
+        if (d.date >= latest.from && d.date <= TODAY_DATE) {
+          const rec = state.logs[`${action.id}::${d.date}`];
+          if (rec && ['DONE', 'MISSED', 'QADAA_DONE', 'PERCENT'].includes(rec.status)) count++;
+        }
+      }
+      return count < 5;
+    }
+
+    function isCellDisabled(action, dayIdx) {
+      const dateStr = DAYS[dayIdx].date;
+      const rec = state.logs[`${action.id}::${dateStr}`];
+      if (rec && rec.status === 'DISABLED') return true;
+      if (rec && rec.enabledOverride === true) return false;
+      if (rec && rec.status && rec.status !== 'EMPTY') return false;
+      return action.offDays.includes(dayIdx);
+    }
+
+    function isWindowExpired(action, dayIdx) {
+      if (dayIdx < 5) return true; // Past days expired
+      if (dayIdx > 5) return false; // Future days
+      const pId = action.side === 'right' ? action.periodId : action.boundPeriodId;
+      if (!pId) return false;
+      const p = PERIODS.find(x => x.id === pId);
+      return p ? p.state === 'expired' : false;
+    }
+
+    function getCellDisplayState(action, dayIdx) {
+      const dateStr = DAYS[dayIdx].date;
+      const rec = state.logs[`${action.id}::${dateStr}`];
+      if (isCellDisabled(action, dayIdx)) return { status: 'DISABLED', pct: null, note: rec?.note || '' };
+      if (!rec || !rec.status || rec.status === 'EMPTY') {
+        return { status: isWindowExpired(action, dayIdx) ? 'UNLOGGED_EXPIRED' : 'PENDING', pct: null, note: rec?.note || '' };
+      }
+      return rec;
+    }
+
+    function getScore(rec) {
+      if (!rec) return null;
+      if (rec.status === 'DONE') return 1.0;
+      if (rec.status === 'QADAA_DONE') return 0.85;
+      if (rec.status === 'PERCENT') return (rec.pct || 0) / 100;
+      if (rec.status === 'MISSED') return 0.0;
+      return null;
+    }
+
+    function countOpenQadaa() {
+      let n = state.historicalQadaa.filter(h => h.status === 'MISSED').length;
+      for (const a of state.actions) {
+        if (!a.qadaa) continue;
+        for (let i = 0; i <= 5; i++) {
+          const st = getCellDisplayState(a, i);
+          if (st.status === 'MISSED') n++;
+        }
+      }
+      return n;
+    }
+
+    function get48hUnlogged() {
+      const list = [];
+      for (const dayIdx of [4, 5]) { // Yesterday (Wed 18) + Today (Thu 19)
+        for (const a of state.actions) {
+          const st = getCellDisplayState(a, dayIdx);
+          if (st.status === 'UNLOGGED_EXPIRED') {
+            list.push({ action: a, dayIdx, date: DAYS[dayIdx].date });
+          }
+        }
+      }
+      return list;
+    }
+
+    // =========================================================================
+    // Mutations + 5-Second Live Undo Engine + Offline Queue Counter
+    // =========================================================================
+    let undoTimer = null;
+    let undoSnapshot = null;
+
+    function mutateCell(actionId, dateStr, newRec, undoLabel = null) {
+      const key = `${actionId}::${dateStr}`;
+      const prev = state.logs[key] ? { ...state.logs[key] } : null;
+
+      // Canonicalization rules (§2.2): 100% -> DONE, 0% -> MISSED
+      if (newRec && newRec.status === 'PERCENT') {
+        if (newRec.pct >= 100) newRec = { ...newRec, status: 'DONE', pct: null };
+        else if (newRec.pct <= 0) newRec = { ...newRec, status: 'MISSED', pct: null };
+      }
+
+      if (!newRec) {
+        delete state.logs[key];
+      } else {
+        const tv = newRec.targetVersionId || getActiveTarget(actionId, dateStr)?.id || null;
+        state.logs[key] = { ...newRec, targetVersionId: tv };
+      }
+
+      if (state.syncMode !== 'synced') {
+        state.pendingOutbox++;
+      }
+
+      if (undoLabel) {
+        showUndo(undoLabel, () => {
+          if (prev) state.logs[key] = prev;
+          else delete state.logs[key];
+          render();
+        });
+      }
+      render();
+    }
+
+    function showUndo(message, revertFn) {
+      clearTimeout(undoTimer);
+      undoSnapshot = revertFn;
+      const toast = document.getElementById('undo-toast');
+      const msgEl = document.getElementById('undo-message');
+      const bar = document.getElementById('undo-progress');
+      msgEl.textContent = message;
+      toast.classList.add('visible');
+      bar.style.transition = 'none';
+      bar.style.transform = 'scaleX(1)';
+      requestAnimationFrame(() => {
+        bar.style.transition = 'transform 5000ms linear';
+        bar.style.transform = 'scaleX(0)';
+      });
+      undoTimer = setTimeout(() => {
+        toast.classList.remove('visible');
+        undoSnapshot = null;
+      }, 5000);
+    }
+
+    document.getElementById('undo-action-btn').addEventListener('click', () => {
+      clearTimeout(undoTimer);
+      document.getElementById('undo-toast').classList.remove('visible');
+      if (undoSnapshot) {
+        const fn = undoSnapshot;
+        undoSnapshot = null;
+        fn();
+      }
+    });
+
+    // =========================================================================
+    // Render Shell Chrome (Nav, Sync, Theme)
+    // =========================================================================
+    const NAV_ITEMS = [
+      { id: 'now', label: 'الآن', icon: 'now' },
+      { id: 'matrix', label: 'الجدول', desktopLabel: 'الجدول الأسبوعي', icon: 'matrix' },
+      { id: 'qadaa', label: 'القضاء', icon: 'qadaa', hasBadge: true },
+      { id: 'analytics', label: 'التحليلات', icon: 'analytics' },
+      { id: 'settings', label: 'الإعدادات', icon: 'settings' }
+    ];
+
+    function renderChrome() {
+      const qCount = countOpenQadaa();
+      const dNav = document.getElementById('desktop-nav');
+      const mNav = document.getElementById('mobile-nav');
+      const titleEl = document.getElementById('active-screen-title');
+
+      const curNav = NAV_ITEMS.find(x => x.id === state.screen);
+      titleEl.textContent = curNav.desktopLabel || curNav.label;
+
+      dNav.innerHTML = NAV_ITEMS.map(item => `
+        <button class="nav-btn" type="button" data-nav="${item.id}" aria-current="${state.screen === item.id ? 'page' : 'false'}">
+          <span class="nav-btn-label">${ICONS[item.icon]}<span>${item.desktopLabel || item.label}</span></span>
+          ${item.hasBadge && qCount > 0 ? `<span class="count-chip alert nums">${qCount}</span>` : ''}
+        </button>
+      `).join('');
+
+      mNav.innerHTML = NAV_ITEMS.map(item => `
+        <button class="mobile-nav-btn" type="button" data-nav="${item.id}" aria-current="${state.screen === item.id ? 'page' : 'false'}">
+          ${ICONS[item.icon]}
+          <span>${item.label}</span>
+          ${item.hasBadge && qCount > 0 ? `<span class="mobile-badge nums">${qCount}</span>` : ''}
+        </button>
+      `).join('');
+
+      document.querySelectorAll('[data-nav]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.screen = btn.dataset.nav;
+          render();
+        });
+      });
+
+      // Sync Badges
+      const syncLabel = state.syncMode === 'synced'
+        ? 'متزامن'
+        : state.syncMode === 'offline'
+          ? `أوفلاين (${state.pendingOutbox} بالانتظار)`
+          : `يتطلب تأكيد الجلسة (${state.pendingOutbox})`;
+
+      ['desktop-sync-btn', 'mobile-sync-btn'].forEach(id => {
+        const el = document.getElementById(id);
+        el.dataset.sync = state.syncMode;
+        el.querySelector('.sync-label').textContent = syncLabel;
+      });
+
+      // Theme & Sidebar Collapse State
+      document.documentElement.dataset.theme = state.theme;
+      const shellEl = document.getElementById('app-shell');
+      shellEl.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+      const isOverview = state.screen === 'matrix' && state.matrixOverviewMode;
+      shellEl.classList.toggle('overview-active', isOverview);
+      const mainEl = document.getElementById('app-main');
+      mainEl.classList.toggle('overview-wide', isOverview);
+      const iconHtml = state.theme === 'light' ? ICONS.moon : ICONS.sun;
+      document.querySelectorAll('.theme-icon-slot').forEach(s => { s.innerHTML = iconHtml; });
+      const dThemeTxt = document.querySelector('#desktop-theme-btn .theme-text');
+      if (dThemeTxt) dThemeTxt.textContent = state.theme === 'light' ? 'الوضع الليلي (الفجر)' : 'الوضع النهاري (الشارع)';
+    }
+
+    function toggleTheme() {
+      state.theme = state.theme === 'light' ? 'dark' : 'light';
+      renderChrome();
+    }
+
+    function cycleSyncMode() {
+      if (state.syncMode === 'synced') {
+        state.syncMode = 'offline';
+        state.pendingOutbox = Math.max(state.pendingOutbox, 2);
+      } else if (state.syncMode === 'offline') {
+        state.syncMode = 'attention';
+      } else {
+        state.syncMode = 'synced';
+        state.pendingOutbox = 0;
+      }
+      render();
+    }
+
+    document.getElementById('desktop-theme-btn').addEventListener('click', toggleTheme);
+    document.getElementById('mobile-theme-btn').addEventListener('click', toggleTheme);
+    document.getElementById('desktop-sync-btn').addEventListener('click', cycleSyncMode);
+    document.getElementById('mobile-sync-btn').addEventListener('click', cycleSyncMode);
+
+    // Collapsible Desktop Right Panel + Layout-Independent Shortcut (Ctrl + KeyI => Ctrl+I / Ctrl+ه)
+    function toggleSidebar() {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+      renderChrome();
+    }
+
+    document.getElementById('btn-collapse-sidebar').innerHTML = ICONS.sidebarToggle;
+    document.getElementById('btn-expand-sidebar').innerHTML = ICONS.sidebarToggle;
+    document.getElementById('btn-collapse-sidebar').addEventListener('click', toggleSidebar);
+    document.getElementById('btn-expand-sidebar').addEventListener('click', toggleSidebar);
+
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyI') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    });
+
+    // =========================================================================
+    // Screen 1: <3s Street Quick-Log ("الآن")
+    // =========================================================================
+    function renderNowScreen() {
+      const day = DAYS[state.selectedDayIdx];
+      const period = PERIODS.find(p => p.id === state.selectedPeriodId) || PERIODS[3];
+      const rightPeriods = PERIODS.filter(p => p.side === 'right');
+
+      const periodActions = state.actions.filter(a => a.side === 'right' && a.periodId === period.id);
+      const boundLeftActions = state.actions.filter(a => a.side === 'left' && a.boundPeriodId === period.id && !isCellDisabled(a, day.idx));
+      const unlogged48 = get48hUnlogged();
+
+      // Quick split eligibility checks (Non-overwriting!)
+      const emptyMosque = periodActions.filter(a => a.isMosque && !a.pct && !isCellDisabled(a, day.idx) && ['PENDING', 'UNLOGGED_EXPIRED'].includes(getCellDisplayState(a, day.idx).status));
+      const emptyAllRight = periodActions.filter(a => !isCellDisabled(a, day.idx) && ['PENDING', 'UNLOGGED_EXPIRED'].includes(getCellDisplayState(a, day.idx).status));
+
+      const isClosing = period.state === 'live' && period.remainingMin <= 25;
+      const timeStatusText = period.state === 'live'
+        ? `باقي ${period.remainingMin} دقيقة`
+        : period.state === 'expired'
+          ? 'انتهى الوقت'
+          : period.state === 'open'
+            ? `متاح (${period.remainingMin} دقيقة)`
+            : 'قادم';
+
+      return `
+        <!-- Joi-Style 7-Day Strip -->
+        <section class="day-strip" aria-label="أيام الأسبوع">
+          ${DAYS.map(d => `
+            <button class="day-tile" type="button" data-day="${d.idx}" aria-pressed="${d.idx === day.idx}">
+              <span class="day-tile-name">${d.short}</span>
+              <span class="day-tile-num nums">${d.num}</span>
+              ${d.isToday ? '<span class="day-tile-dot" title="اليوم"></span>' : '<span style="height:5px"></span>'}
+            </button>
+          `).join('')}
+        </section>
+
+        <!-- Conditional 48h Unlogged Catch-Up Banner -->
+        ${unlogged48.length > 0 ? `
+          <div class="catchup-bar">
+            <span class="catchup-text">${ICONS.alert}<span>لديك <strong class="nums">${unlogged48.length}</strong> خانات منتهية غير مسجلة خلال آخر 48 ساعة</span></span>
+            <button class="btn" type="button" id="go-catchup-btn">مراجعة سريعة</button>
+          </div>
+        ` : ''}
+
+        <!-- Period Switcher -->
+        <div class="period-strip" role="tablist" aria-label="فترات اليوم">
+          ${rightPeriods.map(p => `
+            <button class="period-pill" type="button" role="tab" data-period="${p.id}" aria-selected="${p.id === period.id}">
+              ${p.state === 'live' ? '<span class="live-indicator"></span>' : ''}
+              <span>${p.name}</span>
+            </button>
+          `).join('')}
+        </div>
+
+        <!-- Active Window Panel + Signature 2px Time-Window Horizon Rail -->
+        <section class="panel" aria-label="أعمال الفترة">
+          <div class="window-header">
+            <h3 class="window-title">فترة ${period.name}</h3>
+            <div class="window-time-meta nums">
+              <span dir="ltr">${period.timeLabel}</span>
+              <span class="window-countdown ${isClosing ? 'closing' : ''}">${timeStatusText}</span>
+            </div>
+            <div class="horizon-track" aria-hidden="true">
+              <div class="horizon-fill ${isClosing ? 'closing' : ''}" style="width:${period.elapsedPct}%"></div>
+            </div>
+          </div>
+
+          <!-- Split Quick-Actions (Mosque vs Full Period, Strictly Non-Overwriting) -->
+          <div class="quick-split">
+            <button class="btn btn-live" type="button" id="btn-mark-mosque" ${emptyMosque.length === 0 ? 'disabled' : ''}>
+              ${ICONS.mosque}
+              <span>تم ما في المسجد${emptyMosque.length > 0 ? ` (${emptyMosque.length})` : ''}</span>
+            </button>
+            <button class="btn" type="button" id="btn-mark-full" ${emptyAllRight.length === 0 ? 'disabled' : ''}>
+              ${ICONS.checkAll}
+              <span>تم الفترة بالكامل${emptyAllRight.length > 0 ? ` (${emptyAllRight.length})` : ''}</span>
+            </button>
+          </div>
+
+          <!-- WHOOP-Style Action Rows -->
+          <div class="action-list">
+            ${periodActions.map(a => renderStreetActionRow(a, day)).join('')}
+          </div>
+
+          ${boundLeftActions.length > 0 ? `
+            <div class="sub-band">
+              <span>عادات يومية مرتبطة بهذه الفترة</span>
+              <span>خارج زر المسجد وإحصاء الفترة</span>
+            </div>
+            <div class="action-list">
+              ${boundLeftActions.map(a => renderStreetActionRow(a, day)).join('')}
+            </div>
+          ` : ''}
+        </section>
+      `;
+    }
+
+    function renderStreetActionRow(action, day) {
+      const st = getCellDisplayState(action, day.idx);
+      const isDisabled = st.status === 'DISABLED';
+      const activeTarget = getActiveTarget(action.id, day.date);
+      const showGrace = isNewTargetGrace(action);
+
+      // 7-day WHOOP mini dots
+      const dotsHtml = DAYS.map(d => {
+        const s = getCellDisplayState(action, d.idx).status;
+        const cls = s === 'DONE' ? 'done'
+          : s === 'MISSED' ? 'missed'
+          : s === 'QADAA_DONE' ? 'qadaa'
+          : s === 'PERCENT' ? 'percent'
+          : s === 'DISABLED' ? 'disabled'
+          : s === 'UNLOGGED_EXPIRED' ? 'expired' : '';
+        return `<span class="w-dot ${cls}" title="${d.short}"></span>`;
+      }).join('');
+
+      const pctChipsHtml = action.pct && !isDisabled ? `
+        <div class="pct-bar" role="group" aria-label="تحديد النسبة المئوية">
+          ${[25, 50, 75, 100, 0].map(val => {
+            const isSel = (val === 100 && st.status === 'DONE')
+              || (val === 0 && st.status === 'MISSED')
+              || (st.status === 'PERCENT' && st.pct === val);
+            const cls = isSel ? (val === 100 ? 'selected-done' : val === 0 ? 'selected-missed' : 'selected-pct') : '';
+            return `
+              <button class="pct-chip nums ${cls}" type="button" data-pct-action="${action.id}" data-pct-val="${val}">
+                ${val}%
+                ${val > 0 && val < 100 && isSel ? `<span class="pct-chip-fill" style="width:${val}%"></span>` : ''}
+              </button>
+            `;
+          }).join('')}
+        </div>
+      ` : '';
+
+      return `
+        <div class="action-row ${isDisabled ? 'is-disabled' : ''}">
+          <div class="action-row-main">
+            <div class="action-info">
+              <div class="action-title-line">
+                <span class="action-title">${action.title}</span>
+                ${activeTarget ? `<span class="target-tag nums">${activeTarget.label}</span>` : ''}
+                ${showGrace ? `<span class="target-tag new-target-tag">هدف جديد</span>` : ''}
+                ${isDisabled ? `<span class="target-tag">معذور اليوم</span>` : ''}
+              </div>
+              <div class="action-sub-line">
+                <span class="week-dots" aria-label="حالة آخر 7 أيام">${dotsHtml}</span>
+                ${st.note ? `<span class="row-note-preview">${st.note}</span>` : ''}
+              </div>
+            </div>
+            <div class="action-controls">
+              <button class="tap-btn ${st.status === 'DONE' ? 'active-done' : (st.status === 'QADAA_DONE' ? 'active-qadaa' : '')}"
+                type="button" data-tap-done="${action.id}" aria-label="تسجيل تم للعمل ${action.title}">
+                ${st.status === 'QADAA_DONE' ? ICONS.qadaaSm : ICONS.check}
+              </button>
+              <button class="tap-btn ${st.status === 'MISSED' ? 'active-missed' : ''}"
+                type="button" data-tap-missed="${action.id}" aria-label="تسجيل فات للعمل ${action.title}">
+                ${ICONS.cross}
+              </button>
+              <button class="tap-btn tap-btn-more" type="button" data-open-cell="${action.id}::${day.idx}" aria-label="خيارات إضافية">
+                ${ICONS.more}
+              </button>
+            </div>
+          </div>
+          ${pctChipsHtml}
+        </div>
+      `;
+    }
+
+    function wireNowEvents() {
+      const day = DAYS[state.selectedDayIdx];
+      document.querySelectorAll('[data-day]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.selectedDayIdx = Number(btn.dataset.day);
+          render();
+        });
+      });
+
+      document.querySelectorAll('[data-period]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.selectedPeriodId = btn.dataset.period;
+          render();
+        });
+      });
+
+      const catchBtn = document.getElementById('go-catchup-btn');
+      if (catchBtn) {
+        catchBtn.addEventListener('click', () => {
+          state.screen = 'qadaa';
+          state.qadaaTab = 'unlogged';
+          render();
+        });
+      }
+
+      // Split Quick-Actions with 5s Undo Snapshot
+      const markMosqueBtn = document.getElementById('btn-mark-mosque');
+      if (markMosqueBtn) {
+        markMosqueBtn.addEventListener('click', () => {
+          const targets = state.actions.filter(a =>
+            a.side === 'right' && a.periodId === state.selectedPeriodId && a.isMosque && !a.pct
+            && !isCellDisabled(a, day.idx)
+            && ['PENDING', 'UNLOGGED_EXPIRED'].includes(getCellDisplayState(a, day.idx).status)
+          );
+          if (!targets.length) return;
+          const prevMap = {};
+          targets.forEach(a => {
+            const k = `${a.id}::${day.date}`;
+            prevMap[k] = state.logs[k] ? { ...state.logs[k] } : null;
+            state.logs[k] = { status: 'DONE', pct: null, note: '', targetVersionId: getActiveTarget(a.id, day.date)?.id || null };
+            if (state.syncMode !== 'synced') state.pendingOutbox++;
+          });
+          showUndo(`تم تسجيل ${targets.length} أعمال في المسجد`, () => {
+            Object.entries(prevMap).forEach(([k, v]) => { if (v) state.logs[k] = v; else delete state.logs[k]; });
+            render();
+          });
+          render();
+        });
+      }
+
+      const markFullBtn = document.getElementById('btn-mark-full');
+      if (markFullBtn) {
+        markFullBtn.addEventListener('click', () => {
+          const targets = state.actions.filter(a =>
+            a.side === 'right' && a.periodId === state.selectedPeriodId
+            && !isCellDisabled(a, day.idx)
+            && ['PENDING', 'UNLOGGED_EXPIRED'].includes(getCellDisplayState(a, day.idx).status)
+          );
+          if (!targets.length) return;
+          const prevMap = {};
+          targets.forEach(a => {
+            const k = `${a.id}::${day.date}`;
+            prevMap[k] = state.logs[k] ? { ...state.logs[k] } : null;
+            state.logs[k] = { status: 'DONE', pct: null, note: '', targetVersionId: getActiveTarget(a.id, day.date)?.id || null };
+            if (state.syncMode !== 'synced') state.pendingOutbox++;
+          });
+          showUndo(`تم تسجيل الفترة بالكامل (${targets.length})`, () => {
+            Object.entries(prevMap).forEach(([k, v]) => { if (v) state.logs[k] = v; else delete state.logs[k]; });
+            render();
+          });
+          render();
+        });
+      }
+
+      // 1-Tap Done / Missed
+      document.querySelectorAll('[data-tap-done]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const aid = btn.dataset.tapDone;
+          const cur = getCellDisplayState(getAction(aid), day.idx);
+          if (cur.status === 'DONE') {
+            mutateCell(aid, day.date, null);
+          } else {
+            mutateCell(aid, day.date, { status: 'DONE', pct: null, note: cur.note || '', enabledOverride: true });
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-tap-missed]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const aid = btn.dataset.tapMissed;
+          const cur = getCellDisplayState(getAction(aid), day.idx);
+          if (cur.status === 'MISSED') {
+            mutateCell(aid, day.date, null);
+          } else {
+            mutateCell(aid, day.date, { status: 'MISSED', pct: null, note: cur.note || '', enabledOverride: true });
+          }
+        });
+      });
+
+      // Inline Percentage Chips
+      document.querySelectorAll('[data-pct-action]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const aid = btn.dataset.pctAction;
+          const val = Number(btn.dataset.pctVal);
+          const cur = getCellDisplayState(getAction(aid), day.idx);
+          mutateCell(aid, day.date, { status: 'PERCENT', pct: val, note: cur.note || '', enabledOverride: true });
+        });
+      });
+
+      wireCellOpenButtons();
+    }
+
+    // =========================================================================
+    // Screen 2: Weekly Matrix (Syncra Desktop Table + WHOOP Mobile Ledger)
+    // =========================================================================
+    function renderCellContent(st) {
+      if (st.status === 'DONE') return { cls: 'st-done', html: ICONS.checkSm };
+      if (st.status === 'MISSED') return { cls: 'st-missed', html: ICONS.crossSm };
+      if (st.status === 'QADAA_DONE') return { cls: 'st-qadaa', html: ICONS.qadaaSm };
+      if (st.status === 'PERCENT') {
+        return {
+          cls: 'st-percent nums',
+          html: `${st.pct}%<span class="m-cell-bar" style="width:${st.pct}%"></span>`
+        };
+      }
+      if (st.status === 'DISABLED') return { cls: 'st-disabled', html: ICONS.dashSm };
+      if (st.status === 'UNLOGGED_EXPIRED') return { cls: 'st-expired', html: '' };
+      return { cls: 'st-pending', html: '' };
+    }
+
+    function computeActionWeekRate(action) {
+      let sum = 0; let count = 0;
+      for (let i = 0; i <= 5; i++) {
+        const s = getScore(getCellDisplayState(action, i));
+        if (s !== null) { sum += s; count++; }
+      }
+      return count > 0 ? `${Math.round((sum / count) * 100)}%` : '—';
+    }
+
+    function renderMatrixTable(compact = false, sideFilter = 'both') {
+      const rightGroups = PERIODS.filter(p => p.side === 'right');
+      const leftGroups = PERIODS.filter(p => p.side === 'left');
+
+      const renderGroupBlock = (p) => {
+        const acts = state.actions.filter(a => a.periodId === p.id);
+        const collapsed = sideFilter === 'both' ? !!state.collapsedGroups[p.id] : false;
+        const liveRail = p.state === 'live'
+          ? `<span class="horizon-track"><span class="horizon-fill ${p.remainingMin <= 25 ? 'closing' : ''}" style="width:${p.elapsedPct}%"></span></span>`
+          : '';
+        return `
+          <tr class="group-row">
+            <td colspan="9">
+              <button class="group-toggle" type="button" data-toggle-group="${p.id}" aria-expanded="${!collapsed}">
+                <span class="group-toggle-start">
+                  ${collapsed ? ICONS.chevronLeft : ICONS.chevronDown}
+                  <span>${p.name}</span>
+                  <span class="panel-meta nums">(${acts.length})</span>
+                </span>
+                ${p.timeLabel && !compact ? `<span class="panel-meta nums" dir="ltr">${p.timeLabel}</span>` : ''}
+                ${liveRail}
+              </button>
+            </td>
+          </tr>
+          ${collapsed ? '' : acts.map(a => {
+            const tv = getActiveTarget(a.id, TODAY_DATE);
+            return `
+              <tr class="data-row">
+                <td class="cell-title" title="${a.title}">
+                  ${a.title}
+                  ${tv && !compact ? ` <span class="target-tag nums">${tv.label}</span>` : ''}
+                </td>
+                ${DAYS.map(d => {
+                  const st = getCellDisplayState(a, d.idx);
+                  const c = renderCellContent(st);
+                  return `
+                    <td class="cell-status">
+                      <button class="m-cell ${c.cls}" type="button" data-open-cell="${a.id}::${d.idx}"
+                        aria-label="${a.title} ${d.short}">
+                        ${c.html}
+                      </button>
+                    </td>
+                  `;
+                }).join('')}
+                <td class="cell-rate nums">${computeActionWeekRate(a)}</td>
+              </tr>
+            `;
+          }).join('')}
+        `;
+      };
+
+      const bodyRows = sideFilter === 'right'
+        ? `<tr class="side-label-row"><td colspan="9">الفترات الزمنية الموقوتة (الجدول الأيمن)</td></tr>${rightGroups.map(renderGroupBlock).join('')}`
+        : sideFilter === 'left'
+          ? `<tr class="side-label-row"><td colspan="9">العادات والسنن اليومية (الجدول الأيسر)</td></tr>${leftGroups.map(renderGroupBlock).join('')}`
+          : `<tr class="side-label-row"><td colspan="9">الفترات الزمنية الموقوتة (الجدول الأيمن)</td></tr>
+             ${rightGroups.map(renderGroupBlock).join('')}
+             <tr class="side-divider"><td colspan="9"></td></tr>
+             <tr class="side-label-row"><td colspan="9">العادات والسنن اليومية (الجدول الأيسر)</td></tr>
+             ${leftGroups.map(renderGroupBlock).join('')}`;
+
+      return `
+        <div class="ledger-table-wrap">
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th class="col-action">العمل</th>
+                ${DAYS.map(d => `<th class="col-day ${d.isToday ? 'is-today' : ''}"><span dir="ltr">${compact ? d.abbr : d.short}</span><div class="nums">${d.num}</div></th>`).join('')}
+                <th class="col-rate">${compact ? '%' : 'النسبة'}</th>
+              </tr>
+            </thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderMobileWhoopLedger() {
+      return PERIODS.map(p => {
+        const acts = state.actions.filter(a => a.periodId === p.id);
+        const collapsed = !!state.collapsedGroups[p.id];
+        return `
+          <section class="panel">
+            <button class="group-toggle" type="button" data-toggle-group="${p.id}" style="background:var(--bg-subtle);border-block-end:${collapsed ? 'none' : '1px solid var(--border-hairline)'}">
+              <span class="group-toggle-start">
+                ${collapsed ? ICONS.chevronLeft : ICONS.chevronDown}
+                <span>${p.name}</span>
+              </span>
+              <span class="panel-meta nums">${acts.length} أعمال</span>
+            </button>
+            ${collapsed ? '' : acts.map(a => `
+              <div class="m-whoop-row">
+                <div class="m-whoop-head">
+                  <span style="font-size:0.875rem;font-weight:500">${a.title}</span>
+                  <span class="panel-meta nums">${computeActionWeekRate(a)}</span>
+                </div>
+                <div class="m-whoop-days">
+                  ${DAYS.map(d => {
+                    const st = getCellDisplayState(a, d.idx);
+                    const c = renderCellContent(st);
+                    return `
+                      <button class="m-whoop-day" type="button" data-open-cell="${a.id}::${d.idx}" aria-label="${a.title} ${d.abbr}">
+                        <span class="m-whoop-day-lbl" dir="ltr">${d.abbr}</span>
+                        <span class="m-whoop-circle ${c.cls}">${c.html}</span>
+                      </button>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </section>
+        `;
+      }).join('');
+    }
+
+    function renderOverviewSideTable(side) {
+      const groups = PERIODS.filter(p => p.side === side);
+      const rows = groups.map(p => {
+        const acts = state.actions.filter(a => a.periodId === p.id);
+        return acts.map((a, idx) => {
+          const isLastInGroup = idx === acts.length - 1;
+          return `
+            <tr class="data-row ${isLastInGroup ? 'period-end-row' : ''}">
+              ${idx === 0 ? `<td class="cell-period ${p.state === 'live' ? 'is-live-period' : ''}" rowspan="${acts.length}">${p.name}</td>` : ''}
+              <td class="cell-title" title="${a.title}">${a.title}</td>
+              ${DAYS.map(d => {
+                const st = getCellDisplayState(a, d.idx);
+                const c = renderCellContent(st);
+                return `
+                  <td class="cell-status">
+                    <button class="m-cell ${c.cls}" type="button" data-open-cell="${a.id}::${d.idx}" aria-label="${a.title} ${d.abbr}">${c.html}</button>
+                  </td>
+                `;
+              }).join('')}
+              <td class="cell-rate nums">${computeActionWeekRate(a)}</td>
+            </tr>
+          `;
+        }).join('');
+      }).join('');
+
+      return `
+        <div class="ledger-table-wrap">
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th class="col-period">${side === 'right' ? 'الفترة' : 'المجموعة'}</th>
+                <th class="col-action">العمل</th>
+                ${DAYS.map(d => `<th class="col-day ${d.isToday ? 'is-today' : ''}"><span dir="ltr">${d.abbr}</span> <span class="nums">${d.num}</span></th>`).join('')}
+                <th class="col-rate">%</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderMatrixScreen() {
+      const expiredCount = get48hUnlogged().length;
+      return `
+        <div class="matrix-toolbar">
+          <div class="matrix-toolbar-group">
+            <strong style="font-size:0.9375rem">أسبوع 14 نوفمبر إلى 20 نوفمبر</strong>
+            <div class="seg-tabs desktop-only" role="tablist" aria-label="وضع عرض الجدول">
+              <button class="seg-tab" type="button" role="tab" data-dview="standard" aria-selected="${!state.matrixOverviewMode}">العرض المريح</button>
+              <button class="seg-tab" type="button" role="tab" data-dview="overview" aria-selected="${state.matrixOverviewMode}">نظرة واحدة (بدون سكرول)</button>
+            </div>
+          </div>
+          <div class="matrix-toolbar-group">
+            <button class="btn" type="button" id="btn-normal-day">يوم اعتيادي</button>
+            <button class="btn" type="button" id="btn-archive-qadaa" ${expiredCount === 0 ? 'disabled' : ''}>
+              ترحيل المنتهي للقضاء (${expiredCount})
+            </button>
+          </div>
+        </div>
+
+        <!-- Desktop Matrix: Standard Single-Column OR Side-by-Side Zero-Scroll Sheet Mode -->
+        <div class="matrix-desktop-wrap">
+          ${state.matrixOverviewMode
+            ? `<div class="overview-split">${renderOverviewSideTable('right')}${renderOverviewSideTable('left')}</div>`
+            : renderMatrixTable(false, 'both')}
+        </div>
+
+        <!-- Mobile Parity: WHOOP 7-Day Circle Ledger + Compact Toggle -->
+        <div class="matrix-mobile-wrap ${state.mobileMatrixGrid ? 'force-grid' : ''}">
+          <div class="seg-tabs">
+            <button class="seg-tab" type="button" data-mview="whoop" aria-selected="${!state.mobileMatrixGrid}">دوائر الأسبوع (مريح للموبايل)</button>
+            <button class="seg-tab" type="button" data-mview="grid" aria-selected="${state.mobileMatrixGrid}">جدول مضغوط</button>
+          </div>
+          <div class="mobile-ledger-view" style="display:flex;flex-direction:column;gap:12px">
+            ${renderMobileWhoopLedger()}
+          </div>
+          <div class="mobile-compact-table">
+            ${renderMatrixTable(true)}
+          </div>
+        </div>
+      `;
+    }
+
+    function wireMatrixEvents() {
+      document.querySelectorAll('[data-toggle-group]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const gid = btn.dataset.toggleGroup;
+          state.collapsedGroups[gid] = !state.collapsedGroups[gid];
+          render();
+        });
+      });
+
+      document.querySelectorAll('[data-mview]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.mobileMatrixGrid = btn.dataset.mview === 'grid';
+          render();
+        });
+      });
+
+      document.querySelectorAll('[data-dview]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.matrixOverviewMode = btn.dataset.dview === 'overview';
+          if (state.matrixOverviewMode) state.sidebarCollapsed = true;
+          render();
+        });
+      });
+
+      // Archive expired EMPTY to MISSED (Stage 2 Rule)
+      const archBtn = document.getElementById('btn-archive-qadaa');
+      if (archBtn) {
+        archBtn.addEventListener('click', () => {
+          const items = get48hUnlogged();
+          if (!items.length) return;
+          const prevMap = {};
+          items.forEach(({ action, date }) => {
+            const k = `${action.id}::${date}`;
+            prevMap[k] = state.logs[k] ? { ...state.logs[k] } : null;
+            state.logs[k] = { status: 'MISSED', pct: null, note: '', targetVersionId: getActiveTarget(action.id, date)?.id || null };
+            if (state.syncMode !== 'synced') state.pendingOutbox++;
+          });
+          showUndo(`تم ترحيل ${items.length} خانات منتهية إلى فوات وقضاء`, () => {
+            Object.entries(prevMap).forEach(([k, v]) => { if (v) state.logs[k] = v; else delete state.logs[k]; });
+            render();
+          });
+          render();
+        });
+      }
+
+      // Normal Day Dialog Preview
+      const normBtn = document.getElementById('btn-normal-day');
+      if (normBtn) {
+        normBtn.addEventListener('click', openNormalDayDialog);
+      }
+
+      wireCellOpenButtons();
+    }
+
+    // =========================================================================
+    // Screen 3: Global Qadaa & 48h Backlog ("القضاء")
+    // =========================================================================
+    function renderQadaaScreen() {
+      // Collect all open Qadaa (historical + this week)
+      const openQadaa = [];
+      state.historicalQadaa.forEach(h => {
+        if (h.status === 'MISSED') {
+          const a = getAction(h.actionId);
+          openQadaa.push({ isHistorical: true, id: h.id, action: a, dayLabel: h.dayLabel, targetLabel: h.targetLabel, ageDays: h.ageDays });
+        }
+      });
+      for (let i = 0; i <= 5; i++) {
+        const d = DAYS[i];
+        state.actions.forEach(a => {
+          if (!a.qadaa) return;
+          const st = getCellDisplayState(a, i);
+          if (st.status === 'MISSED') {
+            const snap = getTargetById(a.id, st.targetVersionId) || getActiveTarget(a.id, d.date);
+            openQadaa.push({
+              isHistorical: false,
+              action: a,
+              date: d.date,
+              dayLabel: `${d.short} ${d.num} نوفمبر`,
+              targetLabel: snap ? snap.label : null,
+              ageDays: 5 - i
+            });
+          }
+        });
+      }
+
+      const unlogged = get48hUnlogged();
+
+      // Core non-recoverable misses this week
+      const coreMisses = [];
+      for (let i = 0; i <= 5; i++) {
+        const d = DAYS[i];
+        state.actions.forEach(a => {
+          if (a.qadaa) return;
+          const st = getCellDisplayState(a, i);
+          if (st.status === 'MISSED') {
+            coreMisses.push({ action: a, dayLabel: `${d.short} ${d.num} نوفمبر` });
+          }
+        });
+      }
+
+      let bodyHtml = '';
+      if (state.qadaaTab === 'open') {
+        bodyHtml = openQadaa.length === 0
+          ? `<div class="empty-state">${ICONS.check}<span>لا توجد فوائت قضاء مفتوحة حالياً</span></div>`
+          : openQadaa.map(item => `
+              <div class="qadaa-row">
+                <div class="qadaa-info">
+                  <strong style="font-size:0.9375rem">${item.action.title}</strong>
+                  <div class="qadaa-meta">
+                    <span>${item.dayLabel}</span>
+                    ${item.targetLabel ? `<span class="qadaa-snapshot nums">هدف ذلك اليوم: ${item.targetLabel}</span>` : ''}
+                    <span class="nums">منذ ${item.ageDays === 0 ? 'اليوم' : item.ageDays + ' أيام'}</span>
+                  </div>
+                </div>
+                <button class="btn btn-live" type="button"
+                  data-resolve-qadaa="${item.isHistorical ? 'H::' + item.id : item.action.id + '::' + item.date}">
+                  ${ICONS.qadaaSm}
+                  <span>تم القضاء</span>
+                </button>
+              </div>
+            `).join('');
+      } else if (state.qadaaTab === 'unlogged') {
+        bodyHtml = unlogged.length === 0
+          ? `<div class="empty-state">${ICONS.check}<span>كل الخانات المنتهية خلال آخر 48 ساعة مسجلة</span></div>`
+          : unlogged.map(item => `
+              <div class="qadaa-row">
+                <div class="qadaa-info">
+                  <strong style="font-size:0.9375rem">${item.action.title}</strong>
+                  <div class="qadaa-meta">
+                    <span>${DAYS[item.dayIdx].short} ${DAYS[item.dayIdx].num} نوفمبر</span>
+                    <span>غير مسجل بعد خروج الوقت</span>
+                  </div>
+                </div>
+                <div class="action-controls">
+                  <button class="btn" type="button" data-quick-resolve="${item.action.id}::${item.date}::DONE">${ICONS.checkSm}<span>تم</span></button>
+                  <button class="btn" type="button" data-quick-resolve="${item.action.id}::${item.date}::MISSED">${ICONS.crossSm}<span>فات</span></button>
+                  <button class="btn" type="button" data-quick-resolve="${item.action.id}::${item.date}::DISABLED">معذور</button>
+                </div>
+              </div>
+            `).join('');
+      } else {
+        bodyHtml = coreMisses.length === 0
+          ? `<div class="empty-state">${ICONS.check}<span>لا توجد فوات غير قابلة للقضاء هذا الأسبوع</span></div>`
+          : coreMisses.map(item => `
+              <div class="qadaa-row">
+                <div class="qadaa-info">
+                  <strong style="font-size:0.9375rem">${item.action.title}</strong>
+                  <div class="qadaa-meta"><span>${item.dayLabel}</span><span>لا يُقضى (للمتابعة والانتباه فقط)</span></div>
+                </div>
+                <span class="count-chip alert">فات</span>
+              </div>
+            `).join('');
+      }
+
+      return `
+        <div class="seg-tabs" role="tablist">
+          <button class="seg-tab" type="button" role="tab" data-qtab="open" aria-selected="${state.qadaaTab === 'open'}">
+            <span>عليّ قضاؤه</span>
+            <span class="count-chip ${openQadaa.length ? 'alert' : ''} nums">${openQadaa.length}</span>
+          </button>
+          <button class="seg-tab" type="button" role="tab" data-qtab="unlogged" aria-selected="${state.qadaaTab === 'unlogged'}">
+            <span>غير مسجل (48 ساعة)</span>
+            <span class="count-chip nums">${unlogged.length}</span>
+          </button>
+          <button class="seg-tab" type="button" role="tab" data-qtab="core" aria-selected="${state.qadaaTab === 'core'}">
+            <span>فوات لا تُقضى</span>
+            <span class="count-chip nums">${coreMisses.length}</span>
+          </button>
+        </div>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h3 class="panel-title">
+              ${state.qadaaTab === 'open' ? 'قائمة القضاء المفتوحة عبر الأسابيع' : state.qadaaTab === 'unlogged' ? 'استدراك الخانات غير المسجلة' : 'فوات الأعمال غير القابلة للقضاء'}
+            </h3>
+            <span class="panel-meta">القضاء يراعي هدف اليوم الأصلي دائماً</span>
+          </div>
+          <div>${bodyHtml}</div>
+        </section>
+      `;
+    }
+
+    function wireQadaaEvents() {
+      document.querySelectorAll('[data-qtab]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.qadaaTab = btn.dataset.qtab;
+          render();
+        });
+      });
+
+      document.querySelectorAll('[data-resolve-qadaa]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.resolveQadaa;
+          if (val.startsWith('H::')) {
+            const hid = val.slice(3);
+            const rec = state.historicalQadaa.find(x => x.id === hid);
+            if (!rec) return;
+            rec.status = 'QADAA_DONE';
+            if (state.syncMode !== 'synced') state.pendingOutbox++;
+            showUndo(`تم قضاء ${getAction(rec.actionId).title} (${rec.targetLabel})`, () => {
+              rec.status = 'MISSED';
+              render();
+            });
+            render();
+          } else {
+            const [aid, date] = val.split('::');
+            const prev = state.logs[val] ? { ...state.logs[val] } : null;
+            mutateCell(aid, date, { ...prev, status: 'QADAA_DONE', pct: null }, `تم قضاء ${getAction(aid).title}`);
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-quick-resolve]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const [aid, date, status] = btn.dataset.quickResolve.split('::');
+          mutateCell(aid, date, { status, pct: null, note: '', enabledOverride: status !== 'DISABLED' }, `تم تسجيل ${getAction(aid).title}`);
+        });
+      });
+    }
+
+    // =========================================================================
+    // Screen 4: Analytics & Weakness Insights (3 Lean MVP Modules Only)
+    // =========================================================================
+    function renderAnalyticsScreen() {
+      // Compute per-action scores over Sat..Thu
+      const actionStats = state.actions.map(a => {
+        let sum = 0; let logged = 0; let missed = 0;
+        for (let i = 0; i <= 5; i++) {
+          const st = getCellDisplayState(a, i);
+          const sc = getScore(st);
+          if (sc !== null) { sum += sc; logged++; }
+          if (st.status === 'MISSED') missed++;
+        }
+        const rate = logged > 0 ? Math.round((sum / logged) * 100) : null;
+        return { action: a, rate, logged, missed, grace: isNewTargetGrace(a) };
+      });
+
+      const weakSpots = actionStats
+        .filter(x => x.logged >= 3 && x.rate < 85 && !x.grace)
+        .sort((a, b) => a.rate - b.rate || b.missed - a.missed)
+        .slice(0, 5);
+
+      const weakIds = new Set(weakSpots.map(w => w.action.id));
+      const graceOnlyItems = actionStats.filter(x => (x.grace || x.action.targets.length >= 2) && !weakIds.has(x.action.id));
+
+      // Module 2: Strictly Isolated Right Time-Bound Windows vs Left Daily Groups
+      const rightWindows = PERIODS.filter(p => p.side === 'right').map(p => {
+        const acts = state.actions.filter(a => a.side === 'right' && a.periodId === p.id);
+        let sum = 0, logged = 0, jSum = 0, jCount = 0, sSum = 0, sCount = 0;
+        acts.forEach(a => {
+          for (let i = 0; i <= 5; i++) {
+            const sc = getScore(getCellDisplayState(a, i));
+            if (sc !== null) {
+              sum += sc; logged++;
+              if (a.title.includes('الجماعة')) { jSum += sc; jCount++; }
+              else { sSum += sc; sCount++; }
+            }
+          }
+        });
+        return {
+          name: p.name,
+          rate: logged ? Math.round((sum / logged) * 100) : 0,
+          jamaahRate: jCount ? Math.round((jSum / jCount) * 100) : null,
+          sunanRate: sCount ? Math.round((sSum / sCount) * 100) : null
+        };
+      });
+
+      const leftGroups = PERIODS.filter(p => p.side === 'left').map(p => {
+        const acts = state.actions.filter(a => a.side === 'left' && a.periodId === p.id);
+        let sum = 0, logged = 0;
+        acts.forEach(a => {
+          for (let i = 0; i <= 5; i++) {
+            const sc = getScore(getCellDisplayState(a, i));
+            if (sc !== null) { sum += sc; logged++; }
+          }
+        });
+        return { name: p.name, rate: logged ? Math.round((sum / logged) * 100) : null, logged };
+      });
+
+      // Module 3: Qadaa & Backlog Pulse
+      const openQ = countOpenQadaa();
+      let clearedThisWeek = state.historicalQadaa.filter(h => h.status === 'QADAA_DONE').length;
+      let coreMisses = 0;
+      let totalExpiredActive = 0;
+      let loggedExpired = 0;
+      for (let i = 0; i <= 5; i++) {
+        state.actions.forEach(a => {
+          const st = getCellDisplayState(a, i);
+          if (st.status === 'QADAA_DONE') clearedThisWeek++;
+          if (st.status === 'MISSED' && !a.qadaa) coreMisses++;
+          if (st.status !== 'DISABLED' && isWindowExpired(a, i)) {
+            totalExpiredActive++;
+            if (st.status !== 'UNLOGGED_EXPIRED') loggedExpired++;
+          }
+        });
+      }
+      const coveragePct = totalExpiredActive ? Math.round((loggedExpired / totalExpiredActive) * 100) : 100;
+      const unloggedCount = totalExpiredActive - loggedExpired;
+
+      return `
+        <!-- Module 3: Qadaa & Backlog Pulse -->
+        <section class="panel">
+          <div class="panel-header">
+            <h3 class="panel-title">نبض القضاء والتراكم (آخر 7 أيام)</h3>
+            <span class="panel-meta">الأرقام تفصل بين القضاء الفعلي ونسيان التسجيل</span>
+          </div>
+          <div class="pulse-grid">
+            <div class="pulse-cell">
+              <span class="pulse-label">ديون القضاء المفتوحة</span>
+              <span class="pulse-num nums">${openQ}</span>
+              <span class="pulse-detail nums">تم قضاء ${clearedThisWeek} هذا الأسبوع</span>
+            </div>
+            <div class="pulse-cell">
+              <span class="pulse-label">تغطية التسجيل (ضد المراكمة)</span>
+              <span class="pulse-num nums">${coveragePct}%</span>
+              <span class="pulse-detail nums">${unloggedCount} خانات منتهية غير مسجلة</span>
+            </div>
+            <div class="pulse-cell">
+              <span class="pulse-label">فوات لا تُقضى (للمتابعة)</span>
+              <span class="pulse-num nums">${coreMisses}</span>
+              <span class="pulse-detail">الجماعة الأولى والغفوة وملئ الجدول</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Module 1: Top Weakest Spots + Target Evolution Trail -->
+        <section class="panel">
+          <div class="panel-header">
+            <h3 class="panel-title">أضعف الأعمال حالياً (أقل من 85%)</h3>
+            <span class="panel-meta">الأهداف المطورة حديثاً معفاة من الإنذار لأول 5 تسجيلات</span>
+          </div>
+          <div>
+            ${weakSpots.length === 0
+              ? '<div class="empty-state">كل الأعمال المستقرة فوق 85% حالياً</div>'
+              : weakSpots.map(w => {
+                const hasTrail = w.action.targets.length >= 2;
+                const first = hasTrail ? w.action.targets[0] : null;
+                const last = hasTrail ? w.action.targets[w.action.targets.length - 1] : null;
+                return `
+                  <div class="bar-row">
+                    <div class="bar-row-top">
+                      <span style="font-weight:500">${w.action.title}</span>
+                      <span class="nums" style="font-weight:700;color:var(--missed-ink)">${w.rate}%</span>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill ${w.rate < 65 ? 'weak' : 'mid'}" style="width:${w.rate}%"></div></div>
+                    ${hasTrail ? `<span class="progression-trail nums">${ICONS.trendUp}<span>تطوّر الهدف: ${first.label} ← ${last.label} (منذ ${last.from})</span></span>` : ''}
+                  </div>
+                `;
+              }).join('')}
+
+            ${graceOnlyItems.map(g => {
+              const first = g.action.targets[0];
+              const last = g.action.targets[g.action.targets.length - 1];
+              return `
+                <div class="bar-row" style="background:var(--bg-canvas)">
+                  <div class="bar-row-top">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                      <span style="font-weight:600">${g.action.title}</span>
+                      ${g.grace ? '<span class="target-tag new-target-tag">هدف جديد (فترة تأقلم)</span>' : ''}
+                    </div>
+                    <span class="nums" style="font-weight:600">${g.rate ?? 0}%</span>
+                  </div>
+                  <span class="progression-trail nums">
+                    ${ICONS.trendUp}
+                    <span>تطوّر الهدف: ${first.label} ← ${last.label} (منذ ${last.from})</span>
+                  </span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+
+        <!-- Module 2: Strictly Isolated Time-Bound Windows vs Left Daily Groups -->
+        <div class="analytics-split">
+          <section class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">الفترات الزمنية الموقوتة</h3>
+              <div class="seg-tabs">
+                <button class="seg-tab" type="button" data-horizon="7d" aria-selected="${state.analyticsHorizon === '7d'}">7 أيام</button>
+                <button class="seg-tab" type="button" data-horizon="30d" aria-selected="${state.analyticsHorizon === '30d'}">30 يوم</button>
+              </div>
+            </div>
+            <div>
+              ${rightWindows.map(w => `
+                <div class="bar-row">
+                  <div class="bar-row-top">
+                    <span style="font-weight:500">${w.name}</span>
+                    <span class="nums" style="font-weight:600">${w.rate}%</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill ${w.rate >= 85 ? 'good' : (w.rate >= 65 ? 'mid' : 'weak')}" style="width:${w.rate}%"></div></div>
+                  ${w.jamaahRate !== null ? `
+                    <div class="sub-split-note nums">
+                      <span>الجماعة الأولى: <strong>${w.jamaahRate}%</strong></span>
+                      <span>السنن والأذكار: <strong>${w.sunanRate}%</strong></span>
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">مجموعات العادات اليومية (معزولة عن العشاء)</h3>
+            </div>
+            <div>
+              ${leftGroups.map(g => `
+                <div class="bar-row">
+                  <div class="bar-row-top">
+                    <span style="font-weight:500">${g.name}</span>
+                    <span class="nums" style="font-weight:600">${g.rate !== null ? g.rate + '%' : 'لا توجد بيانات بعد'}</span>
+                  </div>
+                  <div class="bar-track"><div class="bar-fill ${g.rate >= 85 ? 'good' : 'mid'}" style="width:${g.rate || 0}%"></div></div>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function wireAnalyticsEvents() {
+      document.querySelectorAll('[data-horizon]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.analyticsHorizon = btn.dataset.horizon;
+          render();
+        });
+      });
+    }
+
+    // =========================================================================
+    // Screen 5: Settings, Target Evolution & Customizable ntfy (Online-Only CRUD)
+    // =========================================================================
+    function renderSettingsScreen() {
+      const offline = state.syncMode !== 'synced';
+      const rightPeriods = PERIODS.filter(p => p.side === 'right');
+      const targetableActions = state.actions.filter(a => a.targets.length > 0 || ['quran_wird', 'morning_duha', 'isha_witr', 'maghrib_duaa', 'morning_istighfar'].includes(a.id));
+
+      return `
+        ${offline ? `
+          <div class="offline-guard">
+            ${ICONS.alert}
+            <span>تعديل الهيكل وتطوير الأهداف يتطلب اتصالاً بالإنترنت لحماية المزامنة. التصدير الاحتياطي JSON متاح دائماً بدون نت.</span>
+          </div>
+        ` : ''}
+
+        <div class="settings-grid">
+          <!-- Column 1: Action Target Evolution + Rollover -->
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <section class="panel">
+              <div class="panel-header">
+                <h3 class="panel-title">تطوير الأهداف لنفس العمل</h3>
+                <span class="panel-meta">التاريخ القديم يظل محفوظاً على هدفه الأصلي</span>
+              </div>
+              <div>
+                ${targetableActions.map(a => {
+                  const latest = a.targets[a.targets.length - 1];
+                  return `
+                    <div class="setting-row">
+                      <div style="display:flex;flex-direction:column;gap:4px">
+                        <strong style="font-size:0.875rem">${a.title}</strong>
+                        <span class="panel-meta nums">
+                          ${a.targets.length ? a.targets.map(t => t.label).join(' ← ') : 'بدون هدف رقمي محدد'}
+                        </span>
+                      </div>
+                      <button class="btn" type="button" data-evolve-action="${a.id}" ${offline ? 'disabled' : ''}>
+                        ${ICONS.trendUp}
+                        <span>تطوير الهدف</span>
+                      </button>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3 class="panel-title">المواقيت وقلب اليوم والنسخ الاحتياطي</h3>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <strong style="font-size:0.875rem">بداية اليوم المحاسبي</strong>
+                  <div class="panel-meta">وضع الفجر يحفظ تسجيل الوتر وأذكار النوم بعد منتصف الليل في يومها الصحيح</div>
+                </div>
+                <select class="field-select" id="rollover-select" ${offline ? 'disabled' : ''}>
+                  <option value="FAJR" ${state.rolloverMode === 'FAJR' ? 'selected' : ''}>من الفجر للفجر (افتراضي)</option>
+                  <option value="MIDNIGHT" ${state.rolloverMode === 'MIDNIGHT' ? 'selected' : ''}>منتصف الليل (00:00)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <strong style="font-size:0.875rem">تصدير نسخة احتياطية (JSON)</strong>
+                  <div class="panel-meta">يعمل حتى بدون إنترنت لحماية المسجّلات المحلية قبل المسح أو النقل</div>
+                </div>
+                <button class="btn" type="button" id="btn-export-json">
+                  ${ICONS.download}
+                  <span>تصدير JSON</span>
+                </button>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <strong style="font-size:0.875rem">تثبيت التطبيق على iOS / Android</strong>
+                  <div class="panel-meta">أضف التطبيق للشاشة الرئيسية (Add to Home Screen) لحماية التخزين المحلي من الحذف بعد 7 أيام في Safari</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Column 2: Rich Customizable ntfy Settings -->
+          <section class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">تخصيص تنبيهات ntfy</h3>
+              <label class="switch-toggle">
+                <input type="checkbox" id="ntfy-master" ${state.ntfyMaster ? 'checked' : ''} ${offline ? 'disabled' : ''} />
+                <span>تفعيل التنبيهات</span>
+              </label>
+            </div>
+
+            ${rightPeriods.map(p => `
+              <div class="setting-row">
+                <label class="switch-toggle">
+                  <input type="checkbox" data-ntfy-period="${p.id}" ${p.ntfyEnabled ? 'checked' : ''} ${(!state.ntfyMaster || offline) ? 'disabled' : ''} />
+                  <span style="font-weight:500">${p.name}</span>
+                </label>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span class="panel-meta">قبل النهاية بـ</span>
+                  <input class="field-input nums" type="number" min="5" max="90" step="5" style="width:68px"
+                    data-ntfy-lead="${p.id}" value="${p.ntfyLead}" ${(!state.ntfyMaster || !p.ntfyEnabled || offline) ? 'disabled' : ''} />
+                  <span class="panel-meta">دقيقة</span>
+                </div>
+              </div>
+            `).join('')}
+
+            <div class="setting-row">
+              <span style="font-weight:500">ساعات الهدوء (Quiet Hours)</span>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input class="field-input nums" type="time" id="quiet-start" value="${state.ntfyQuietStart}" ${offline ? 'disabled' : ''} />
+                <span class="panel-meta">إلى</span>
+                <input class="field-input nums" type="time" id="quiet-end" value="${state.ntfyQuietEnd}" ${offline ? 'disabled' : ''} />
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label class="switch-toggle">
+                <input type="checkbox" id="ntfy-digest" ${state.ntfyDigest ? 'checked' : ''} ${offline ? 'disabled' : ''} />
+                <span>ملخص مسائي بالخانات غير المسجلة</span>
+              </label>
+              <input class="field-input nums" type="time" id="digest-time" value="${state.ntfyDigestTime}" ${(!state.ntfyDigest || offline) ? 'disabled' : ''} />
+            </div>
+
+            <div class="ntfy-preview">
+              <strong style="display:block;margin-bottom:4px">معاينة نص التنبيه</strong>
+              <span style="color:var(--ink-secondary)">اقترب انتهاء وقت العصر — تذكير بالمحاسبة (تجاهله إن كنت قد سجلت دون إنترنت)</span>
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function wireSettingsEvents() {
+      const ro = document.getElementById('rollover-select');
+      if (ro) ro.addEventListener('change', () => { state.rolloverMode = ro.value; });
+
+      const nm = document.getElementById('ntfy-master');
+      if (nm) nm.addEventListener('change', () => { state.ntfyMaster = nm.checked; render(); });
+
+      document.querySelectorAll('[data-ntfy-period]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const p = PERIODS.find(x => x.id === cb.dataset.ntfyPeriod);
+          if (p) { p.ntfyEnabled = cb.checked; render(); }
+        });
+      });
+
+      document.querySelectorAll('[data-ntfy-lead]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          const p = PERIODS.find(x => x.id === inp.dataset.ntfyLead);
+          if (p) p.ntfyLead = Number(inp.value) || 25;
+        });
+      });
+
+      const nd = document.getElementById('ntfy-digest');
+      if (nd) nd.addEventListener('change', () => { state.ntfyDigest = nd.checked; render(); });
+
+      const exp = document.getElementById('btn-export-json');
+      if (exp) {
+        exp.addEventListener('click', () => {
+          const payload = JSON.stringify({ exportedAt: new Date().toISOString(), rolloverMode: state.rolloverMode, actions: state.actions, logs: state.logs }, null, 2);
+          const blob = new Blob([payload], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = 'mohasba-prototype-backup.json'; a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
+
+      document.querySelectorAll('[data-evolve-action]').forEach(btn => {
+        btn.addEventListener('click', () => openEvolveDialog(btn.dataset.evolveAction));
+      });
+    }
+
+    // =========================================================================
+    // Native <dialog> Modals (Cell Editor, Normal Day Preview, Target Evolution)
+    // =========================================================================
+    const cellDialog = document.getElementById('cell-dialog');
+    let activeCellEdit = null;
+
+    function wireCellOpenButtons() {
+      document.querySelectorAll('[data-open-cell]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const [aid, dIdxStr] = btn.dataset.openCell.split('::');
+          openCellDialog(aid, Number(dIdxStr));
+        });
+      });
+    }
+
+    function openCellDialog(actionId, dayIdx) {
+      const action = getAction(actionId);
+      const day = DAYS[dayIdx];
+      const st = getCellDisplayState(action, dayIdx);
+      const isOffDefault = action.offDays.includes(dayIdx);
+      const tv = getTargetById(actionId, st.targetVersionId) || getActiveTarget(actionId, day.date);
+
+      activeCellEdit = {
+        actionId,
+        dayIdx,
+        date: day.date,
+        status: ['PENDING', 'UNLOGGED_EXPIRED'].includes(st.status) ? 'EMPTY' : st.status,
+        pct: st.pct || 50,
+        note: st.note || ''
+      };
+
+      document.getElementById('cell-dialog-title').textContent = `${action.title} (${day.short} ${day.num} نوفمبر)`;
+      const body = document.getElementById('cell-dialog-body');
+
+      const renderDialogState = () => {
+        body.innerHTML = `
+          ${tv ? `<div class="panel-meta nums">الهدف الفعال لهذا اليوم: <strong>${tv.label}</strong></div>` : ''}
+          <div class="state-grid">
+            <button class="btn ${activeCellEdit.status === 'DONE' ? 'btn-live' : ''}" type="button" data-pick-st="DONE">${ICONS.checkSm}<span>تم</span></button>
+            <button class="btn ${activeCellEdit.status === 'MISSED' ? 'btn-primary' : ''}" type="button" data-pick-st="MISSED">${ICONS.crossSm}<span>فات</span></button>
+            ${action.qadaa ? `<button class="btn ${activeCellEdit.status === 'QADAA_DONE' ? 'btn-live' : ''}" type="button" data-pick-st="QADAA_DONE">${ICONS.qadaaSm}<span>تم القضاء</span></button>` : ''}
+            <button class="btn ${activeCellEdit.status === 'DISABLED' ? 'btn-primary' : ''}" type="button" data-pick-st="DISABLED">${ICONS.dashSm}<span>معذور / تعطيل اليوم</span></button>
+            <button class="btn ${activeCellEdit.status === 'EMPTY' ? 'btn-primary' : ''}" type="button" data-pick-st="EMPTY">
+              ${isOffDefault ? 'تفعيل هذا اليوم (فارغ)' : 'مسح الحالة (فارغ)'}
+            </button>
+          </div>
+
+          ${action.pct ? `
+            <div style="display:flex;flex-direction:column;gap:6px;padding-top:4px">
+              <div style="display:flex;justify-content:space-between">
+                <span>تحديد نسبة مئوية (خطوات 10%)</span>
+                <strong class="nums" id="dlg-pct-val">${activeCellEdit.status === 'PERCENT' ? activeCellEdit.pct + '%' : '—'}</strong>
+              </div>
+              <input type="range" min="0" max="100" step="10" value="${activeCellEdit.pct}" id="dlg-pct-range" style="accent-color:var(--accent-live)" />
+            </div>
+          ` : ''}
+
+          <label style="display:flex;flex-direction:column;gap:4px">
+            <span>ملاحظة اختيارية</span>
+            <input class="field-input" type="text" id="dlg-note" value="${activeCellEdit.note.replace(/"/g, '&quot;')}" placeholder="مثال: سفر أو عذر أو تفاصيل الورد" />
+          </label>
+        `;
+
+        body.querySelectorAll('[data-pick-st]').forEach(b => {
+          b.addEventListener('click', () => {
+            activeCellEdit.status = b.dataset.pickSt;
+            renderDialogState();
+          });
+        });
+
+        const rng = body.querySelector('#dlg-pct-range');
+        if (rng) {
+          rng.addEventListener('input', () => {
+            activeCellEdit.status = 'PERCENT';
+            activeCellEdit.pct = Number(rng.value);
+            body.querySelector('#dlg-pct-val').textContent = `${activeCellEdit.pct}%`;
+          });
+        }
+
+        const noteInp = body.querySelector('#dlg-note');
+        if (noteInp) {
+          noteInp.addEventListener('input', () => { activeCellEdit.note = noteInp.value; });
+        }
+      };
+
+      renderDialogState();
+      cellDialog.showModal();
+    }
+
+    document.getElementById('cell-dialog-close').innerHTML = ICONS.crossSm;
+    document.getElementById('cell-dialog-close').addEventListener('click', () => cellDialog.close());
+    document.getElementById('cell-dialog-cancel').addEventListener('click', () => cellDialog.close());
+    document.getElementById('cell-dialog-save').addEventListener('click', () => {
+      if (!activeCellEdit) return;
+      const { actionId, date, status, pct, note } = activeCellEdit;
+      if (status === 'EMPTY') {
+        mutateCell(actionId, date, { status: 'EMPTY', pct: null, note, enabledOverride: true }, 'تم تحديث حالة الخلية');
+      } else {
+        mutateCell(actionId, date, { status, pct: status === 'PERCENT' ? pct : null, note, enabledOverride: status !== 'DISABLED' }, 'تم حفظ تعديل الخلية');
+      }
+      cellDialog.close();
+    });
+
+    // Normal Day Dialog
+    const normalDialog = document.getElementById('normal-day-dialog');
+    document.getElementById('normal-dialog-close').innerHTML = ICONS.crossSm;
+    document.getElementById('normal-dialog-close').addEventListener('click', () => normalDialog.close());
+    document.getElementById('normal-dialog-cancel').addEventListener('click', () => normalDialog.close());
+
+    function openNormalDayDialog() {
+      const day = DAYS[state.selectedDayIdx];
+      const eligible = state.actions.filter(a =>
+        a.normalDay && !isCellDisabled(a, day.idx) && ['PENDING', 'UNLOGGED_EXPIRED'].includes(getCellDisplayState(a, day.idx).status)
+      );
+      document.getElementById('normal-day-body').innerHTML = `
+        <p style="margin:0">سيتم تعبئة <strong class="nums">${eligible.length}</strong> خانات فارغة فقط ليوم <strong>${day.short} ${day.num} نوفمبر</strong> بحالة «تم».</p>
+        <p style="margin:0;color:var(--ink-secondary)">الأعمال الجوهرية (الجماعة الأولى، الاستيقاظ بدون غفوة، وملئ الجدول) مستثناة افتراضياً ولا تُعلّم تلقائياً أبداً.</p>
+      `;
+      document.getElementById('normal-dialog-apply').disabled = eligible.length === 0;
+      document.getElementById('normal-dialog-apply').onclick = () => {
+        const prevMap = {};
+        eligible.forEach(a => {
+          const k = `${a.id}::${day.date}`;
+          prevMap[k] = state.logs[k] ? { ...state.logs[k] } : null;
+          state.logs[k] = { status: 'DONE', pct: null, note: '', targetVersionId: getActiveTarget(a.id, day.date)?.id || null };
+          if (state.syncMode !== 'synced') state.pendingOutbox++;
+        });
+        normalDialog.close();
+        showUndo(`تم تطبيق يوم اعتيادي (${eligible.length} خانات)`, () => {
+          Object.entries(prevMap).forEach(([k, v]) => { if (v) state.logs[k] = v; else delete state.logs[k]; });
+          render();
+        });
+        render();
+      };
+      normalDialog.showModal();
+    }
+
+    // Target Evolution Dialog (Same-Day D vs Tomorrow D+1 Rule!)
+    const evolveDialog = document.getElementById('evolve-dialog');
+    document.getElementById('evolve-dialog-close').innerHTML = ICONS.crossSm;
+    document.getElementById('evolve-dialog-close').addEventListener('click', () => evolveDialog.close());
+    document.getElementById('evolve-dialog-cancel').addEventListener('click', () => evolveDialog.close());
+
+    function openEvolveDialog(actionId) {
+      const a = getAction(actionId);
+      const todayRec = state.logs[`${actionId}::${TODAY_DATE}`];
+      const todayLogged = !!(todayRec && ['DONE', 'MISSED', 'QADAA_DONE', 'PERCENT'].includes(todayRec.status));
+      const defaultDate = todayLogged ? '2026-11-20' : TODAY_DATE;
+      const latest = a.targets[a.targets.length - 1];
+
+      document.getElementById('evolve-dialog-title').textContent = `تطوير هدف: ${a.title}`;
+      document.getElementById('evolve-dialog-body').innerHTML = `
+        <div class="panel-meta">الهدف الحالي: <strong>${latest ? latest.label : 'بدون هدف محدد'}</strong></div>
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span>الهدف الجديد</span>
+          <input class="field-input" type="text" id="ev-label" placeholder="مثال: 30 صفحة أو 6 ركعات" />
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span>نوع التغيير</span>
+          <select class="field-select" id="ev-dir">
+            <option value="level_up">ترقية للأعلى (يفعّل فترة تأقلم هدف جديد)</option>
+            <option value="step_down">تخفيف مؤقت (امتحانات / سفر)</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span>يسري بدايةً من</span>
+          <input class="field-input nums" type="date" id="ev-from" value="${defaultDate}" />
+        </label>
+        <div class="panel-meta">
+          ${todayLogged
+            ? 'تم اختيار الغد (20 نوفمبر) افتراضياً لأن اليوم مسجّل بالفعل على الهدف السابق.'
+            : 'اليوم فارغ، لذلك يسري الهدف الجديد بدايةً من اليوم.'}
+        </div>
+      `;
+
+      document.getElementById('evolve-dialog-save').onclick = () => {
+        const lbl = document.getElementById('ev-label').value.trim();
+        const from = document.getElementById('ev-from').value;
+        const dir = document.getElementById('ev-dir').value;
+        if (!lbl || !from) return;
+        const existingIdx = a.targets.findIndex(t => t.from === from);
+        const newV = { id: `tv_${Date.now()}`, from, label: lbl, dir };
+        if (existingIdx >= 0) a.targets[existingIdx] = newV;
+        else a.targets.push(newV);
+        evolveDialog.close();
+        showUndo(`تم تطوير هدف ${a.title} إلى ${lbl}`, () => {
+          a.targets = a.targets.filter(t => t.id !== newV.id);
+          render();
+        });
+        render();
+      };
+
+      evolveDialog.showModal();
+    }
+
+    // =========================================================================
+    // Main Render Loop
+    // =========================================================================
+    function render() {
+      renderChrome();
+      const main = document.getElementById('app-main');
+      if (state.screen === 'now') {
+        main.innerHTML = renderNowScreen();
+        wireNowEvents();
+      } else if (state.screen === 'matrix') {
+        main.innerHTML = renderMatrixScreen();
+        wireMatrixEvents();
+      } else if (state.screen === 'qadaa') {
+        main.innerHTML = renderQadaaScreen();
+        wireQadaaEvents();
+      } else if (state.screen === 'analytics') {
+        main.innerHTML = renderAnalyticsScreen();
+        wireAnalyticsEvents();
+      } else {
+        main.innerHTML = renderSettingsScreen();
+        wireSettingsEvents();
+      }
+    }
+
+    seedInitialLogs();
+    render();
+  </script>
+</body>
+</html>

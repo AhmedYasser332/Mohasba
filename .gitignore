@@ -1,0 +1,32 @@
+# Private local archives & scratch exports (NEVER commit to public OSS repo)
+_archive_v1_sheets/
+*.rar
+*.zip
+*.xlsx
+*.bak
+backups/
+
+# Environment & secrets (keep only .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Dependencies & Next.js / Cloudflare build artifacts
+node_modules/
+.next/
+out/
+.open-next/
+.wrangler/
+.vercel/
+build/
+dist/
+coverage/
+
+# Local tooling & OS files
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.vscode/
+.idea/
