@@ -18,7 +18,7 @@ An **open-source, personal, single-instance, offline-first PWA** for daily Islam
 
 - **Stack:** Next.js App Router (TypeScript strict, `output: 'standalone'`), Tailwind CSS v4, pure TypeScript `src/domain/*`, Supabase PostgreSQL 15+/17 (HTTP `@supabase/supabase-js` only, 9 tables + 2 logic-free persistence RPCs).
 - **Primary Self-Hosting Target:** Any Linux / Oracle Always-Free VPS running **Docker (`127.0.0.1:3000`) + Cloudflare Tunnel (`cloudflared`)** with zero open inbound ports (`80`/`443`).
-- **Web-Standard Portable Codebase:** `src/domain/*` has zero runtime dependencies, `src/server/*` uses Web Crypto (`crypto.subtle`), standard Web `Request`, HTTP Supabase, and zero `next/headers` or `import 'server-only'` — keeping it portable across Node 20 Docker and standard Web runtimes *(note: MVP launch verification targets Docker + Node 20; Cloudflare Workers Free CPU benchmarking is not claimed as part of MVP)*.
+- **Web-Standard Portable Codebase:** `src/domain/*` has zero runtime dependencies, `src/server/*` uses Web Crypto (`crypto.subtle`), standard Web `Request`, HTTP Supabase, and zero `next/headers` or `import 'server-only'` — keeping it portable across Node 22 Docker and standard Web runtimes *(note: MVP launch verification targets Docker + Node 22; Cloudflare Workers Free CPU benchmarking is not claimed as part of MVP)*.
 
 ---
 
