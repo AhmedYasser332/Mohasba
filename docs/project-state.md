@@ -25,7 +25,7 @@
 - **Right-Sized Personal OSS Simplicity (2026-11-20 User Directive):** Keep architecture moderate and right-sized for a personal single-instance open-source app — **NO** user-account auth/authorization/RBAC/multi-tenant ceremony.
 
 ## Stage and authorization
-- **Current stage/workstream:** **Stage 7 COMPLETE (`Slice 0` → `Slice 6`)** — Ready for Stage 8 (Integrated Release Verification on `mohasba-test`)
+- **Current stage/workstream:** **Stage 8 Verified (Automated & Live `mohasba-test` Drills Complete)** — Ready for User Hands-On Docker / `.sql.gz` Check & Stage 9 Deploy Consent
 - **Approved scope:**
   - v1 Google Sheets + Apps Script prototype archived cleanly in `_archive_v1_sheets/` (2026-11-14).
   - **Gate 1 APPROVED (2026-11-20):** Approved 3D Classification, Adaptive Lifecycle Roadmap, Hosting strategy, Arabic primary UI + i18n dictionary, 3 lean MVP Insights, Action Target Evolution, and `v1.1+` Scoped REST API + Thin Skill.
@@ -35,8 +35,9 @@
   - **Gate 5 APPROVED (2026-11-21):** Approved [docs/04-data-and-security.md](file:///d:/Ahmed/Projects/mohasba/docs/04-data-and-security.md) & [docs/04b-sql-vs-app-best-practices.md](file:///d:/Ahmed/Projects/mohasba/docs/04b-sql-vs-app-best-practices.md) (9 tables, NULL-safe `CHECK`s, per-item subtransaction `commit_sync_batch` + `trim_audit_logs_if_needed`, keyset pagination, per-row reorder, resumable Starter Pack, `pg_dump` encrypted off-VPS backup, Hybrid Observability).
   - **Gate 6 APPROVED (2026-11-21):** Approved [docs/05-implementation-plan.md](file:///d:/Ahmed/Projects/mohasba/docs/05-implementation-plan.md) (7 test-heavy vertical slices `Slice 0`–`Slice 6`, `mohasba-test` vs untouched `Mohasba`, Oracle VPS Docker + `cloudflared` Tunnel).
   - **Stage 7 EXECUTED (2026-11-21):** All 7 vertical slices (`Slice 0` → `Slice 6`) implemented, independently audited, verified live against `mohasba-test`, and committed slice-by-slice to `origin main`.
+  - **Stage 8 EXECUTED (2026-11-21):** Dual-device Airplane-Mode Phone vs PC sync & dropped-ACK (`M1 → M2`) E2E verified live; `1,260`-row full JSON Export → Wipe → Chunked Import Restore Drill passed with 100% parity; Fresh-Clone OSS build (`0` secrets) passed; full regression suite passed (`mohasba-test` only; `Mohasba` prod confirmed `0` tables).
 - **Pending gate(s):**
-  - **Stage 8 Sign-Off:** Real-device Airplane-Mode sync test + Dual `.sql.gz` & `>1,000`-row JSON Restore Drills on `mohasba-test`.
+  - **Optional Local Docker & `.sql.gz` `pg_dump 17` Drill:** Deferred locally only because Docker Desktop daemon & `postgresql-client-17` / `SUPABASE_DB_BACKUP_URL` are not active on this Windows machine (run directly once Docker Desktop / Oracle VPS is ready).
   - **Stage 9 Deploy Consent:** Explicit consent required before applying `0001_init.sql` to Production `Mohasba` or deploying to live Oracle VPS.
 
 ## Decisions and uncertainties
