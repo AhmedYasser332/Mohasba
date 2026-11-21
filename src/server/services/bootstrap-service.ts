@@ -169,7 +169,9 @@ export async function initStarterPack(params: {
   }
 
   if (mode === 'starter_pack') {
-    const bundle = buildStarterPack(activeFromIso);
+    const effectiveActiveFrom =
+      activeFromIso ?? resolveIslamicDate(Date.now(), settings);
+    const bundle = buildStarterPack(effectiveActiveFrom);
 
     const { error: pErr } = await supabase
       .from('periods')

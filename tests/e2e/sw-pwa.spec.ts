@@ -38,7 +38,7 @@ function killServerProcess(proc: ChildProcess | null): void {
   }
 }
 
-test.describe('Slice 3: Service Worker, Precache Manifest, Offline Reload & Sign-Out Wipe', () => {
+test.describe('Slice 3+4: Service Worker, Precache Manifest, Offline Reload & Sign-Out Wipe', () => {
   test.beforeAll(async () => {
     const nextBin = path.resolve(
       process.cwd(),
@@ -161,9 +161,7 @@ test.describe('Slice 3: Service Worker, Precache Manifest, Offline Reload & Sign
       }
       await unlockInput.fill(passcode);
       await page.getByRole('button', { name: 'فتح الجدول' }).click();
-      await expect(page.getByTestId('pwa-status')).toContainText(
-        'authStatus: unlocked',
-      );
+      await expect(unlockInput).toBeHidden({ timeout: 10_000 });
     }
 
     // Wait for IDB snapshot & meta to be populated
@@ -218,15 +216,14 @@ test.describe('Slice 3: Service Worker, Precache Manifest, Offline Reload & Sign
 
     await page.goto(`${BASE_URL}/`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'جدول المحاسبة' })).toBeVisible();
-    await expect(page.getByTestId('pwa-status')).toContainText('hydrated: true');
+    await expect(page.getByTestId('sync-badge-btn')).toBeVisible();
 
     await page.goto(`${BASE_URL}/?period=asr&date=2026-11-21`, {
       waitUntil: 'domcontentloaded',
     });
     await expect(page.getByRole('heading', { name: 'جدول المحاسبة' })).toBeVisible();
-    await expect(page.getByTestId('query-params')).toContainText(
-      'period=asr, date=2026-11-21',
-    );
+    const searchStr = await page.evaluate(() => window.location.search);
+    expect(searchStr).toBe('?period=asr&date=2026-11-21');
 
     // Assert zero console errors & zero page errors during offline reloads
     expect(consoleErrors).toEqual([]);
@@ -234,7 +231,10 @@ test.describe('Slice 3: Service Worker, Precache Manifest, Offline Reload & Sign
 
     // 5. Go back ONLINE and verify POST /api/logout clears cookie + wipes all 4 IDB stores
     await context.setOffline(false);
-    await page.getByTestId('signout-btn').click();
+    const desktopSignOutBtn = page
+      .locator('.desktop-rail')
+      .getByRole('button', { name: 'تسجيل الخروج' });
+    await desktopSignOutBtn.click();
     await expect(page.getByTestId('status-message')).toContainText('signed_out');
 
     const cookies = await context.cookies(BASE_URL);

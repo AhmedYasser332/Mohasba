@@ -1,5 +1,10 @@
-import { Slice3PwaHarness } from '@/client/components/slice3-pwa-harness';
+import { MohasbaAppShell } from '@/client/components/app-shell';
+import { MohasbaProvider } from '@/client/store/mohasba-provider';
 
 export default function HomePage() {
-  return <Slice3PwaHarness />;
+  return (
+    <MohasbaProvider>
+      <MohasbaAppShell />
+    </MohasbaProvider>
+  );
 }

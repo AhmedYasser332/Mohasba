@@ -278,6 +278,12 @@ describe('Slice 2: Auth, Fail-Closed 503, Rate-Limit, CSRF, Cron & Privacy', () 
     expect(liveTickBody.ok).toBe(true);
     expect(liveTickBody.pruned).toBe(true);
 
+    // Clear any wall-clock dispatches triggered by the live POST above so the injected-clock check is 100% deterministic at any hour
+    await admin
+      .from('reminder_dispatches')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
     // Deterministic ntfy anti-flood + idempotency check via runCronTick with injected `now` & mock fetch
     const { data: settingsRow } = await admin
       .from('app_settings')
