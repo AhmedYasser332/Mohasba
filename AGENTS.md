@@ -14,7 +14,8 @@ Always read the authoritative specifications in `docs/` before making architectu
 3. `docs/01-requirements.md` — Islamic day rollover, 5-state lifecycle, Qadaa, Target Evolution, Analytics, and `ntfy` rules (`Gate 2 Approved`).
 4. `docs/02-ux-design-system.md` & `docs/02b-anti-ai-slop-guide.md` — *Al-Mizan Al-Ma'dani* design tokens, Section 6 UI polish conditions, and strict Anti-AI-Slop rules (`Gate 3 Approved`).
 5. `docs/03-architecture.md` — Modular Monolith boundaries, Offline PWA Sync, Right-Sized Access, and Hosting ADRs (`Gate 4 Approved`).
-6. `docs/04-data-and-security.md` & `docs/04b-sql-vs-app-best-practices.md` — Supabase PostgreSQL 9-table DDL, 2 logic-free persistence RPCs, API contracts, Hybrid Observability, and strict SQL-vs-App boundaries.
+6. `docs/04-data-and-security.md` & `docs/04b-sql-vs-app-best-practices.md` — Supabase PostgreSQL 9-table DDL, 2 logic-free persistence RPCs, API contracts, Hybrid Observability, and strict SQL-vs-App boundaries (`Gate 5 Approved`).
+7. `docs/05-implementation-plan.md` — 7 vertical testable slices (`Slice 0`–`Slice 6`), dual Supabase isolation (`mohasba-test` vs untouched `Mohasba`), Oracle VPS Docker + `cloudflared` Tunnel prep (`Gate 6 Approved`).
 
 ---
 
