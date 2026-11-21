@@ -1,0 +1,46 @@
+services:
+  mohasba:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mohasba-app
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    networks:
+      - mohasba_net
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: mohasba-cloudflared
+    profiles:
+      - tunnel
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      mohasba:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      - mohasba_net
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  mohasba_net:
+    driver: bridge

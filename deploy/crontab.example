@@ -1,0 +1,12 @@
+# ============================================================================
+# Mohasba Tracker v2 — Linux VPS Crontab Example
+# Install with: crontab -e  (ensure /srv/mohasba/.env & .backup.env are chmod 600)
+# ============================================================================
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 1. Every 10 minutes: ntfy prayer reminders + Supabase Free-tier keep-alive + daily prune
+*/10 * * * * . /srv/mohasba/.env && curl -fsS --max-time 25 -X POST -H "Authorization: Bearer ${CRON_SECRET}" http://127.0.0.1:3000/api/cron/tick >> /var/log/mohasba-cron.log 2>&1
+
+# 2. Every Sunday at 03:15 UTC: Verified & encrypted pg_dump 17 off-VPS backup
+15 3 * * 0 /srv/mohasba/scripts/backup-supabase.sh >> /var/log/mohasba-backup.log 2>&1
