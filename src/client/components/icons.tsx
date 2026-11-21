@@ -265,3 +265,78 @@ export function IconUpload(props: IconProps) {
     </SvgIcon>
   );
 }
+
+export function IconPlus(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </SvgIcon>
+  );
+}
+
+export function IconEdit(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+    </SvgIcon>
+  );
+}
+
+export function IconArrowUp(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="6 11 12 5 18 11" />
+    </SvgIcon>
+  );
+}
+
+export function IconArrowDown(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <polyline points="6 13 12 19 18 13" />
+    </SvgIcon>
+  );
+}
+
+export function IconArchive(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      <line x1="10" y1="13" x2="14" y2="13" />
+    </SvgIcon>
+  );
+}
+
+export function IconTrash(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+      <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
+    </SvgIcon>
+  );
+}
+
+export function IconBell(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </SvgIcon>
+  );
+}
+
+export function IconTarget(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1.5" />
+    </SvgIcon>
+  );
+}

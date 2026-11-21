@@ -1,0 +1,659 @@
+'use client';
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type NtfyMode,
+  type Period,
+  type PeriodSide,
+  type PrayerAnchor,
+} from '@/domain';
+import { useMohasba } from '../../store/mohasba-provider';
+import {
+  IconArchive,
+  IconArrowDown,
+  IconArrowUp,
+  IconCross,
+  IconEdit,
+  IconPlus,
+  IconRefresh,
+} from '../icons';
+
+const ANCHOR_LABELS: ReadonlyArray<{ value: PrayerAnchor; label: string }> = [
+  { value: 'FAJR', label: 'الفجر' },
+  { value: 'SUNRISE', label: 'الشروق' },
+  { value: 'DHUHR', label: 'الظهر' },
+  { value: 'ASR', label: 'العصر' },
+  { value: 'MAGHRIB', label: 'المغرب' },
+  { value: 'ISHA', label: 'العشاء' },
+  { value: 'FIXED_TIME', label: 'وقت ثابت' },
+];
+
+function formatAnchorSummary(period: Period): string {
+  if (period.side === 'DAILY_GROUP') return 'مجموعة يومية';
+  const startLabel =
+    period.start_anchor === 'FIXED_TIME'
+      ? (period.start_fixed_hhmm ?? '00:00')
+      : (ANCHOR_LABELS.find((a) => a.value === period.start_anchor)?.label ??
+          '');
+  const endLabel =
+    period.end_anchor === 'FIXED_TIME'
+      ? (period.end_fixed_hhmm ?? '00:00')
+      : (ANCHOR_LABELS.find((a) => a.value === period.end_anchor)?.label ?? '');
+  return `من ${startLabel} إلى ${endLabel}`;
+}
+
+interface PeriodFormState {
+  id: string | null;
+  title: string;
+  side: PeriodSide;
+  start_anchor: PrayerAnchor;
+  start_offset_min: number;
+  start_fixed_hhmm: string;
+  end_anchor: PrayerAnchor;
+  end_offset_min: number;
+  end_fixed_hhmm: string;
+  ntfy_enabled: boolean;
+  ntfy_mode: NtfyMode;
+  ntfy_offset_min: number;
+}
+
+const DEFAULT_FORM: PeriodFormState = {
+  id: null,
+  title: '',
+  side: 'TIME_BOUND',
+  start_anchor: 'ISHA',
+  start_offset_min: 0,
+  start_fixed_hhmm: '21:00',
+  end_anchor: 'FAJR',
+  end_offset_min: 0,
+  end_fixed_hhmm: '23:30',
+  ntfy_enabled: true,
+  ntfy_mode: 'pre_expiry',
+  ntfy_offset_min: 25,
+};
+
+export function PeriodsSection() {
+  const {
+    periods,
+    isOnline,
+    todayIslamicDate,
+    createPeriod,
+    updatePeriod,
+    reorderSchema,
+  } = useMohasba();
+
+  const [showArchived, setShowArchived] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    text: string;
+    isError: boolean;
+  } | null>(null);
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [form, setForm] = useState<PeriodFormState>(DEFAULT_FORM);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (dialogOpen) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [dialogOpen]);
+
+  const sortedPeriods = useMemo(() => {
+    return [...periods].sort((a, b) => a.sort_order - b.sort_order);
+  }, [periods]);
+
+  const visiblePeriods = useMemo(() => {
+    if (showArchived) return sortedPeriods;
+    return sortedPeriods.filter((p) => p.archived_at === null);
+  }, [showArchived, sortedPeriods]);
+
+  const archivedCount = useMemo(
+    () => periods.filter((p) => p.archived_at !== null).length,
+    [periods],
+  );
+
+  const openCreateDialog = () => {
+    setFeedback(null);
+    setForm(DEFAULT_FORM);
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (period: Period) => {
+    setFeedback(null);
+    setForm({
+      id: period.id,
+      title: period.title,
+      side: period.side,
+      start_anchor: period.start_anchor ?? 'FAJR',
+      start_offset_min: period.start_offset_min,
+      start_fixed_hhmm: period.start_fixed_hhmm ?? '05:00',
+      end_anchor: period.end_anchor ?? 'SUNRISE',
+      end_offset_min: period.end_offset_min,
+      end_fixed_hhmm: period.end_fixed_hhmm ?? '06:00',
+      ntfy_enabled: period.ntfy_enabled,
+      ntfy_mode: period.ntfy_mode ?? 'pre_expiry',
+      ntfy_offset_min: period.ntfy_offset_min,
+    });
+    setDialogOpen(true);
+  };
+
+  const handleSaveForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isOnline || busy || !form.title.trim()) return;
+    setBusy(true);
+    setFeedback(null);
+
+    try {
+      const isTimeBound = form.side === 'TIME_BOUND';
+      const payloadBase = {
+        title: form.title.trim(),
+        start_anchor: isTimeBound ? form.start_anchor : null,
+        start_offset_min: isTimeBound ? Number(form.start_offset_min) || 0 : 0,
+        start_fixed_hhmm:
+          isTimeBound && form.start_anchor === 'FIXED_TIME'
+            ? form.start_fixed_hhmm
+            : null,
+        end_anchor: isTimeBound ? form.end_anchor : null,
+        end_offset_min: isTimeBound ? Number(form.end_offset_min) || 0 : 0,
+        end_fixed_hhmm:
+          isTimeBound && form.end_anchor === 'FIXED_TIME'
+            ? form.end_fixed_hhmm
+            : null,
+        ntfy_enabled: isTimeBound ? form.ntfy_enabled : false,
+        ntfy_mode: isTimeBound ? form.ntfy_mode : null,
+        ntfy_offset_min: Math.min(
+          180,
+          Math.max(1, Number(form.ntfy_offset_min) || 25),
+        ),
+      };
+
+      let res;
+      if (form.id) {
+        res = await updatePeriod(form.id, payloadBase);
+      } else {
+        const sameSide = periods.filter((p) => p.side === form.side);
+        const maxOrder = sameSide.reduce(
+          (acc, p) => Math.max(acc, p.sort_order),
+          form.side === 'TIME_BOUND' ? 0 : 100,
+        );
+        res = await createPeriod({
+          ...payloadBase,
+          side: form.side,
+          sort_order: maxOrder + 1,
+        });
+      }
+
+      if (res.ok) {
+        setDialogOpen(false);
+        setFeedback({
+          text: form.id ? 'تم تحديث الفترة بنجاح.' : 'تمت إضافة الفترة بنجاح.',
+          isError: false,
+        });
+      } else {
+        setFeedback({
+          text: res.errorMessage ?? 'تعذر حفظ الفترة.',
+          isError: true,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMovePeriod = async (period: Period, direction: 'up' | 'down') => {
+    if (!isOnline || busy) return;
+    const sameSide = sortedPeriods.filter((p) => p.side === period.side);
+    const idx = sameSide.findIndex((p) => p.id === period.id);
+    if (idx === -1) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= sameSide.length) return;
+
+    const reordered = [...sameSide];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(targetIdx, 0, moved!);
+
+    const baseOrder = period.side === 'TIME_BOUND' ? 1 : 101;
+    const items = reordered.map((p, i) => ({
+      id: p.id,
+      sort_order: baseOrder + i,
+    }));
+
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await reorderSchema({ target: 'periods', items });
+      if (!res.ok) {
+        setFeedback({
+          text: res.errorMessage ?? 'تعذر إعادة ترتيب الفترات.',
+          isError: true,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleToggleArchive = async (period: Period) => {
+    if (!isOnline || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const isArchived = period.archived_at !== null;
+      const fallbackDate = new Date().toISOString().slice(0, 10);
+      const res = await updatePeriod(period.id, {
+        archived_at: isArchived ? null : (todayIslamicDate ?? fallbackDate),
+      });
+      if (res.ok) {
+        setFeedback({
+          text: isArchived
+            ? `تمت استعادة الفترة: ${period.title}`
+            : `تمت أرشفة الفترة: ${period.title}`,
+          isError: false,
+        });
+      } else {
+        setFeedback({
+          text: res.errorMessage ?? 'تعذر تغيير حالة الأرشفة.',
+          isError: true,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel" data-testid="settings-periods-section">
+      <div className="panel-header">
+        <div>
+          <h3 className="panel-title">الفترات والمجموعات</h3>
+          <span className="panel-meta nums">
+            {periods.filter((p) => p.archived_at === null).length} نشطة /{' '}
+            {archivedCount} مؤرشفة
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {archivedCount > 0 && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setShowArchived((prev) => !prev)}
+            >
+              {showArchived ? 'إخفاء المؤرشف' : `عرض المؤرشف (${archivedCount})`}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-live"
+            data-testid="add-period-btn"
+            disabled={!isOnline || busy}
+            onClick={openCreateDialog}
+          >
+            <IconPlus size="sm" />
+            <span>إضافة فترة</span>
+          </button>
+        </div>
+      </div>
+
+      {feedback && (
+        <div className="p-3 pb-0">
+          <div className={`status-note ${feedback.isError ? 'is-error' : ''}`}>
+            {feedback.text}
+          </div>
+        </div>
+      )}
+
+      <div className="action-list">
+        {visiblePeriods.map((period) => {
+          const sameSide = sortedPeriods.filter((p) => p.side === period.side);
+          const sideIdx = sameSide.findIndex((p) => p.id === period.id);
+          const isArchived = period.archived_at !== null;
+
+          return (
+            <div
+              key={period.id}
+              className={`schema-item-row ${isArchived ? 'is-archived' : ''}`}
+              data-testid={`period-row-${period.id}`}
+            >
+              <div className="schema-item-main">
+                <div className="action-title-line">
+                  <span className="action-title">{period.title}</span>
+                  <span className="target-tag">
+                    {period.side === 'TIME_BOUND' ? 'فترة موقوتة' : 'مجموعة يومية'}
+                  </span>
+                  {isArchived && <span className="target-tag">مؤرشفة</span>}
+                </div>
+                <div className="schema-item-meta nums">
+                  <span>{formatAnchorSummary(period)}</span>
+                  {period.side === 'TIME_BOUND' && (
+                    <span>
+                      التنبيه:{' '}
+                      {period.ntfy_enabled
+                        ? `${period.ntfy_mode === 'post_start' ? 'بعد البداية' : 'قبل الانتهاء'} (${period.ntfy_offset_min} د)`
+                        : 'متوقف'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="schema-item-actions">
+                <button
+                  type="button"
+                  className="btn btn-icon"
+                  data-testid={`period-move-up-${period.id}`}
+                  aria-label={`تحريك ${period.title} لأعلى`}
+                  disabled={!isOnline || busy || sideIdx <= 0}
+                  onClick={() => {
+                    void handleMovePeriod(period, 'up');
+                  }}
+                >
+                  <IconArrowUp size="sm" />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-icon"
+                  data-testid={`period-move-down-${period.id}`}
+                  aria-label={`تحريك ${period.title} لأسفل`}
+                  disabled={
+                    !isOnline || busy || sideIdx === sameSide.length - 1
+                  }
+                  onClick={() => {
+                    void handleMovePeriod(period, 'down');
+                  }}
+                >
+                  <IconArrowDown size="sm" />
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!isOnline || busy}
+                  onClick={() => openEditDialog(period)}
+                >
+                  <IconEdit size="sm" />
+                  <span>تعديل</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!isOnline || busy}
+                  onClick={() => {
+                    void handleToggleArchive(period);
+                  }}
+                >
+                  {isArchived ? (
+                    <>
+                      <IconRefresh size="sm" />
+                      <span>استعادة</span>
+                    </>
+                  ) : (
+                    <>
+                      <IconArchive size="sm" />
+                      <span>أرشفة</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Period Create / Edit Dialog */}
+      <dialog
+        ref={dialogRef}
+        className="app-dialog dialog-wide"
+        aria-labelledby="period-dialog-title"
+        onClose={() => setDialogOpen(false)}
+      >
+        {dialogOpen && (
+          <form
+            onSubmit={(e) => {
+              void handleSaveForm(e);
+            }}
+          >
+            <div className="dialog-head">
+              <h3 className="dialog-title" id="period-dialog-title">
+                {form.id ? `تعديل فترة: ${form.title}` : 'إضافة فترة جديدة'}
+              </h3>
+              <button
+                type="button"
+                className="btn btn-icon"
+                aria-label="إغلاق"
+                onClick={() => setDialogOpen(false)}
+              >
+                <IconCross size="sm" />
+              </button>
+            </div>
+
+            <div className="dialog-body dialog-body-scroll">
+              <div className="field-grid">
+                <label className="field-label">
+                  <span>اسم الفترة</span>
+                  <input
+                    type="text"
+                    className="field-input"
+                    required
+                    maxLength={80}
+                    value={form.title}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, title: e.target.value }))
+                    }
+                  />
+                </label>
+
+                <label className="field-label">
+                  <span>النوع</span>
+                  <select
+                    className="field-select"
+                    disabled={form.id !== null}
+                    value={form.side}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        side: e.target.value as PeriodSide,
+                      }))
+                    }
+                  >
+                    <option value="TIME_BOUND">فترة صلاة موقوتة</option>
+                    <option value="DAILY_GROUP">مجموعة يومية</option>
+                  </select>
+                </label>
+              </div>
+
+              {form.side === 'TIME_BOUND' && (
+                <>
+                  <div className="field-grid-3">
+                    <label className="field-label">
+                      <span>مرجع البداية</span>
+                      <select
+                        className="field-select"
+                        value={form.start_anchor}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            start_anchor: e.target.value as PrayerAnchor,
+                          }))
+                        }
+                      >
+                        {ANCHOR_LABELS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field-label">
+                      <span>إزاحة البداية (دقيقة)</span>
+                      <input
+                        type="number"
+                        className="field-input nums"
+                        min={-360}
+                        max={360}
+                        value={form.start_offset_min}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            start_offset_min: Number(e.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+
+                    {form.start_anchor === 'FIXED_TIME' && (
+                      <label className="field-label">
+                        <span>وقت البداية الثابت</span>
+                        <input
+                          type="time"
+                          className="field-input nums"
+                          required
+                          value={form.start_fixed_hhmm}
+                          onChange={(e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              start_fixed_hhmm: e.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  <div className="field-grid-3">
+                    <label className="field-label">
+                      <span>مرجع النهاية</span>
+                      <select
+                        className="field-select"
+                        value={form.end_anchor}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            end_anchor: e.target.value as PrayerAnchor,
+                          }))
+                        }
+                      >
+                        {ANCHOR_LABELS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field-label">
+                      <span>إزاحة النهاية (دقيقة)</span>
+                      <input
+                        type="number"
+                        className="field-input nums"
+                        min={-360}
+                        max={360}
+                        value={form.end_offset_min}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            end_offset_min: Number(e.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+
+                    {form.end_anchor === 'FIXED_TIME' && (
+                      <label className="field-label">
+                        <span>وقت النهاية الثابت</span>
+                        <input
+                          type="time"
+                          className="field-input nums"
+                          required
+                          value={form.end_fixed_hhmm}
+                          onChange={(e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              end_fixed_hhmm: e.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  <div className="field-grid-3">
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={form.ntfy_enabled}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            ntfy_enabled: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>تفعيل تذكير ntfy</span>
+                    </label>
+
+                    <label className="field-label">
+                      <span>نمط التذكير</span>
+                      <select
+                        className="field-select"
+                        value={form.ntfy_mode}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            ntfy_mode: e.target.value as NtfyMode,
+                          }))
+                        }
+                      >
+                        <option value="pre_expiry">قبل انتهاء الوقت</option>
+                        <option value="post_start">بعد دخول الوقت</option>
+                      </select>
+                    </label>
+
+                    <label className="field-label">
+                      <span>المدة (دقيقة)</span>
+                      <input
+                        type="number"
+                        className="field-input nums"
+                        min={1}
+                        max={180}
+                        value={form.ntfy_offset_min}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            ntfy_offset_min: Number(e.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="dialog-foot">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setDialogOpen(false)}
+                disabled={busy}
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="btn btn-live"
+                disabled={!isOnline || busy}
+              >
+                حفظ الفترة
+              </button>
+            </div>
+          </form>
+        )}
+      </dialog>
+    </section>
+  );
+}

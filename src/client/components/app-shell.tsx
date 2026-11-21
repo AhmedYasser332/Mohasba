@@ -930,6 +930,8 @@ export function MohasbaAppShell() {
                   'replace',
                 )
               }
+              onOpenCellEditor={(target) => setCellEditorTarget(target)}
+              onActionFeedback={(msg) => setUndoLabel(msg)}
             />
           )}
 
