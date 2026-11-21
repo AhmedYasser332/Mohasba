@@ -246,9 +246,9 @@ Zero Vercel dependency. Both targets run from the **exact same repository and pu
 
 ### 7.3 Off-Supabase Backup & Restore Strategy (Pre-Launch Requirement)
 Because Supabase Free Tier does not retain automated daily backups:
-- **Oracle VPS (Primary):** Automated weekly `cron` script calls `GET /api/export` (or `pg_dump`) into date-stamped files (`mohasba-YYYY-MM-DD.json.gz`), rotating the last 12 snapshots off-Supabase.
+- **Oracle VPS (Primary):** Automated weekly `cron` script runs verified `pg_dump` (`set -euo pipefail`, `gzip -t` + size check, sourcing `SUPABASE_DB_BACKUP_URL` from `chmod 600` `.backup.env`), encrypts the dated archive (`rclone crypt` or `age`), and copies it **off-VPS** (Drive / Cloudflare R2 Free 10 GB / encrypted private repo), rotating the last 12 snapshots.
 - **Cloudflare-Only OSS Users:** Default biweekly `ntfy` backup reminder + 1-click dated `GET /api/export` download (plus optional GitHub Actions `pg_dump` workflow template).
-- **Mandatory Pre-Launch Restore Drill (Stage 8/9):** Execute **one real end-to-end Restore test** importing a full JSON backup into a fresh empty Supabase database and verifying exact row/target/Qadaa parity before relying on the app in production.
+- **Mandatory Pre-Launch Restore Drill (Stage 8/9):** Execute real restore tests onto a fresh empty Supabase DB for **both** `.sql.gz` (`pg_dump`) and `GET /api/export` JSON (`>1,000` rows), verifying exact row/target/Qadaa parity before relying on the app in production.
 
 ### 7.4 Capacity, Cost & 5-Minute Open-Source `.env.example`
 - **Data Volume:** `50 actions × 365 days = 18,250 daily_logs/year` ≈ **4–5 MB/year** (`<55 MB` over **10 years** — `<11%` of Supabase's 500 MB free tier).

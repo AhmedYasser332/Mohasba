@@ -13,7 +13,8 @@ Always read the authoritative specifications in `docs/` before making architectu
 2. `docs/00-discovery-qa.md` — Product scope, 3D Classification, and rejections (`Gate 1 Approved`).
 3. `docs/01-requirements.md` — Islamic day rollover, 5-state lifecycle, Qadaa, Target Evolution, Analytics, and `ntfy` rules (`Gate 2 Approved`).
 4. `docs/02-ux-design-system.md` & `docs/02b-anti-ai-slop-guide.md` — *Al-Mizan Al-Ma'dani* design tokens, Section 6 UI polish conditions, and strict Anti-AI-Slop rules (`Gate 3 Approved`).
-5. `docs/03-architecture.md` — Modular Monolith boundaries, Offline PWA Sync, Right-Sized Access, and Hosting ADRs.
+5. `docs/03-architecture.md` — Modular Monolith boundaries, Offline PWA Sync, Right-Sized Access, and Hosting ADRs (`Gate 4 Approved`).
+6. `docs/04-data-and-security.md` & `docs/04b-sql-vs-app-best-practices.md` — Supabase PostgreSQL 9-table DDL, 2 logic-free persistence RPCs, API contracts, Hybrid Observability, and strict SQL-vs-App boundaries.
 
 ---
 
