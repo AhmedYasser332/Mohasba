@@ -17,21 +17,23 @@
     - `Financial correctness`: Inactive
 
 ## Mandatory Project Rules
-- **Strict Phase Gates:** Remain inside **Stage 4 (System Architecture)** until the user explicitly authorizes transitioning to **Stage 5 (Data, Interfaces & Security)**.
+- **Strict Phase Gates:** Remain inside **Stage 5 (Data, Interfaces & Security)** until the user explicitly authorizes transitioning to **Stage 6 (Implementation Planning)**.
 - **Gate Commit & Push Rule:** Every time a phase Gate is explicitly closed/approved by the user, create a clean Git commit and push to `origin main` (`git@github-ahmedyasser332:AhmedYasser332/Mohasba.git`) — strictly verifying no private archives (`_archive_v1_sheets/`), `*.rar`, or `.env*` secrets are staged.
+- **Consult-First Rule (2026-11-21 User Directive):** Walk through Stage 5+ design decisions interactively in `/grilling` rounds BEFORE writing the stage specification file (`docs/04-data-and-security.md`).
 - **Agent / Swarm Model Rule:** Every swarm worker and helper MUST explicitly specify a `gemini-4-hydrogen-*` model (`gemini-4-hydrogen-high` default), NEVER Argon/Neon/Claude unless explicitly requested by the user.
-- **No Premature Artifacts or Coding:** Do NOT create Stage 5 SQL DDL or production application code before Stage 4 Architecture Gate is explicitly approved.
+- **No Premature Artifacts or Coding:** Do NOT write `docs/04-data-and-security.md` until Stage 5 `/grilling` rounds reach shared understanding, and do NOT write production application code before Stage 6 Plan Approval.
 - **Right-Sized Personal OSS Simplicity (2026-11-20 User Directive):** Keep architecture moderate and right-sized for a personal single-instance open-source app — **NO** user-account auth/authorization/RBAC/multi-tenant ceremony.
 
 ## Stage and authorization
-- **Current stage/workstream:** Stage 4 — System Architecture (`Full Targeted`: Modular Monolith, Offline PWA Sync, Zero-API Prayer Engine, Right-Sized Access Boundary, Hosting & `ntfy` Cron)
+- **Current stage/workstream:** Stage 5 — Data, Interfaces & Security (Interactive `/grilling` Decision Rounds before authoring `docs/04-data-and-security.md`)
 - **Approved scope:**
   - v1 Google Sheets + Apps Script prototype archived cleanly in `_archive_v1_sheets/` (2026-11-14).
   - **Gate 1 APPROVED (2026-11-20):** Approved 3D Classification, Adaptive Lifecycle Roadmap, Hosting strategy, Arabic primary UI + i18n dictionary, 3 lean MVP Insights, Action Target Evolution, and `v1.1+` Scoped REST API + Thin Skill.
   - **Gate 2 APPROVED (2026-11-20):** Approved [docs/01-requirements.md](file:///d:/Ahmed/Projects/mohasba/docs/01-requirements.md) and all 6 business-rule decisions (with expanded in-app `ntfy` customization).
   - **Gate 3 APPROVED (2026-11-20):** Approved [docs/02-ux-design-system.md](file:///d:/Ahmed/Projects/mohasba/docs/02-ux-design-system.md), [docs/02b-anti-ai-slop-guide.md](file:///d:/Ahmed/Projects/mohasba/docs/02b-anti-ai-slop-guide.md), and [docs/prototype/index.html](file:///d:/Ahmed/Projects/mohasba/docs/prototype/index.html) with 3 production UI polish conditions locked in Section 6.
+  - **Gate 4 APPROVED (2026-11-21):** Approved [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md) (Primary Launch: Oracle VPS Docker + Cloudflare Tunnel; Supported OSS Target: Cloudflare Workers; Frozen-on-send `mutation_id` + causal `parent_mutation_id` + `row_version` + `commit_sync_batch` RPC; Fail-closed `APP_PASSCODE`).
 - **Pending gate(s):**
-  - **Gate 4 (Stage 4 System Architecture Sign-off):** Review and approve `docs/03-architecture.md` (system boundaries, offline PWA sync state machine, right-sized single-instance access boundary, Zero-API prayer engine, hosting & cron topology) before entering Stage 5 (Data, Interfaces & Security).
+  - **Gate 5 (Stage 5 Data, Interfaces & Security Sign-off):** Complete `/grilling` rounds on DB engine/driver, schema tables & invariants, `commit_sync_batch` RPC contract, API payloads, and security rules; then draft and approve `docs/04-data-and-security.md`.
 
 ## Decisions and uncertainties
 - **Confirmed decisions (`[CONFIRMED]`):**
@@ -44,12 +46,12 @@
   - Google Sheets / Apps Script; `ورقة الأوقات` & `ورقة الذنوب`; Hosted Multi-Tenant SaaS; Supabase Auth / RBAC / multi-user accounts; Vercel hosting; Super-app bloat; Naive binary streaks; Heavy MCP server.
 
 ## Implementation and verification
-- **Current milestone/slice/task:** Stage 4 System Architecture finalized after Gemini 4 Neon High Audit (`#47`) + cross-model targeted revisions in [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md) — **Gate 4 still OPEN** awaiting user's explicit sign-off.
+- **Current milestone/slice/task:** Stage 5 — Data, Interfaces & Security (`/grilling` Round 1 in progress before writing `docs/04-data-and-security.md`).
 - **Verified completed tasks:**
   - Gate 1 formally closed (2026-11-20).
   - Gate 2 formally closed (2026-11-20) in [docs/01-requirements.md](file:///d:/Ahmed/Projects/mohasba/docs/01-requirements.md).
   - Gate 3 formally closed (2026-11-20) in [docs/02-ux-design-system.md](file:///d:/Ahmed/Projects/mohasba/docs/02-ux-design-system.md) (with Section 6 polish conditions locked for Stage 7).
-  - Completed Hydrogen Swarm Stage 4 Architecture (`#41`–`#43`), Gemini 4 Neon High Audit (`#47`), and cross-model targeted hardening (frozen-on-send `mutation_id` + causal `parent_mutation_id`, deadlock-free Drain-Before-CRUD, `base_row_version` + RPC `REVOKE`, fail-closed `APP_PASSCODE` + per-IP hashed rate-limit, Oracle VPS Docker + Cloudflare Tunnel primary + Cloudflare Workers OSS target) in [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md).
+  - Gate 4 formally closed (2026-11-21) in [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md) and pushed to `origin main`.
   - Initialized public Git repository with `.gitignore` (excluding private `_archive_v1_sheets/` & archives) and `AGENTS.md`.
 - **Actual test evidence:**
   - Stage 3 prototype verified with `impeccable.cmd detect --json` (`[]`) and Playwright desktop/mobile checks; Stage 4 is pure architecture specification (zero production code written yet).

@@ -1,6 +1,6 @@
 # Stage 4: System Architecture & Design — Mohasba Tracker v2
 
-**Status:** Targeted Revision Applied (Neon High Audit `#47` + Cross-Model Review Hardening) — Awaiting User Review & Explicit Gate 4 Sign-Off  
+**Status:** **GATE 4 APPROVED (2026-11-21)** — Transitioned to Stage 5 (Data, Interfaces & Security)  
 **Governance Mode:** Strict (Architecture & ADRs only; Stage 5 covers SQL DDL, RPC & API contracts; zero production code until Stage 7)  
 **Architecture Style:** **Right-Sized Personal Open-Source Modular Monolith** (Next.js App Router + Server-Only Supabase Postgres + Offline-First Client PWA)  
 **Last Updated:** 2026-11-21  
