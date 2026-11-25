@@ -7,8 +7,6 @@ import {
   diffDaysIso,
   getIsoDayOfWeek,
   getWeekDates,
-  isActionActiveOnDate,
-  isPeriodActiveOnDate,
   makeCellKey,
   matchesShortcutEvent,
   parseIsoDateParts,
@@ -57,6 +55,7 @@ import {
   IconDash,
   IconGripVertical,
   IconQadaa,
+  IconX,
 } from '../icons';
 
 interface WeekViewProps {
@@ -109,6 +108,15 @@ interface ClipboardMatrix {
   cells: ClipboardCellSnapshot[][];
 }
 
+interface FillDragState {
+  source: GridCoord;
+  startX: number;
+  startY: number;
+  target: GridCoord;
+  sourceSnapshot: ClipboardCellSnapshot;
+  sourceSide: 'TIME_BOUND' | 'DAILY_GROUP';
+}
+
 interface SessionUndoEntry {
   batchId: string | null;
   mutationId: string | null;
@@ -138,6 +146,81 @@ function normalizeRect(selection: GridSelection): GridRect {
 function isCoordInRect(row: number, col: number, rect: GridRect | null): boolean {
   if (!rect) return false;
   return row >= rect.r1 && row <= rect.r2 && col >= rect.c1 && col <= rect.c2;
+}
+
+function isCoordInFillDrag(
+  row: number,
+  col: number,
+  fillDrag: FillDragState | null,
+): boolean {
+  if (!fillDrag) return false;
+  const { source, target } = fillDrag;
+  if (target.row !== source.row) {
+    return (
+      col === source.col &&
+      row >= Math.min(source.row, target.row) &&
+      row <= Math.max(source.row, target.row)
+    );
+  }
+  if (target.col !== source.col) {
+    return (
+      row === source.row &&
+      col >= Math.min(source.col, target.col) &&
+      col <= Math.max(source.col, target.col)
+    );
+  }
+  return row === source.row && col === source.col;
+}
+
+function getFillTargetCoords(fillDrag: FillDragState): GridCoord[] {
+  const { source, target } = fillDrag;
+  const coords: GridCoord[] = [];
+  if (target.row !== source.row) {
+    const rMin = Math.min(source.row, target.row);
+    const rMax = Math.max(source.row, target.row);
+    for (let r = rMin; r <= rMax; r += 1) {
+      if (r === source.row) continue;
+      coords.push({ row: r, col: source.col });
+    }
+  } else if (target.col !== source.col) {
+    const cMin = Math.min(source.col, target.col);
+    const cMax = Math.max(source.col, target.col);
+    for (let c = cMin; c <= cMax; c += 1) {
+      if (c === source.col) continue;
+      coords.push({ row: source.row, col: c });
+    }
+  }
+  return coords;
+}
+
+function snapshotCellFromDisplay(display: CellDisplayInfo): ClipboardCellSnapshot {
+  switch (display.state) {
+    case 'DONE':
+      return { kind: 'DONE', percentValue: null };
+    case 'MISSED':
+      return { kind: 'MISSED', percentValue: null };
+    case 'QADAA_DONE':
+      return { kind: 'QADAA_DONE', percentValue: null };
+    case 'PERCENT':
+      return { kind: 'PERCENT', percentValue: display.percentValue ?? 50 };
+    case 'DISABLED':
+      return { kind: 'DISABLED', percentValue: null };
+    default:
+      return { kind: 'EMPTY', percentValue: null };
+  }
+}
+
+function isCellPostArchived(action: Action, logDate: string): boolean {
+  return action.archived_at !== null && logDate > action.archived_at;
+}
+
+function isVisibleInWeek(
+  item: { archived_at: string | null },
+  weekDates: readonly string[],
+): boolean {
+  return (
+    item.archived_at === null || weekDates.some((d) => d <= item.archived_at!)
+  );
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -304,11 +387,12 @@ export function WeekView({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dndSaving, setDndSaving] = useState(false);
 
-  // Desktop spreadsheet grid focus, selection, copy marquee & clipboard
+  // Desktop spreadsheet grid focus, selection, copy marquee, fill drag & clipboard
   const [focusedCell, setFocusedCell] = useState<GridCoord | null>(null);
   const [selection, setSelection] = useState<GridSelection | null>(null);
   const [copiedRect, setCopiedRect] = useState<GridRect | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
+  const [fillDrag, setFillDrag] = useState<FillDragState | null>(null);
 
   const fetchedRangesRef = useRef<Set<string>>(new Set());
   const normalDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -316,10 +400,14 @@ export function WeekView({
   const clipboardRef = useRef<ClipboardMatrix | null>(null);
   const undoStackRef = useRef<SessionUndoEntry[]>([]);
   const cellButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const desktopGridAreaRef = useRef<HTMLDivElement | null>(null);
+  const bulkBarRef = useRef<HTMLDivElement | null>(null);
+  const fillDragRef = useRef<FillDragState | null>(null);
   const dragSelectRef = useRef<{
     startX: number;
     startY: number;
     anchor: GridCoord;
+    anchorSide: 'TIME_BOUND' | 'DAILY_GROUP';
     active: boolean;
   } | null>(null);
   const suppressNextClickRef = useRef(false);
@@ -396,23 +484,19 @@ export function WeekView({
 
   const activeGroups = useMemo(() => {
     if (weekDates.length === 0) return { right: [] as Period[], left: [] as Period[] };
-    const isVisibleInWeek = (p: Period) =>
-      weekDates.some((d) => isPeriodActiveOnDate(p, d));
     const right = periods
-      .filter((p) => p.side === 'TIME_BOUND' && isVisibleInWeek(p))
+      .filter((p) => p.side === 'TIME_BOUND' && isVisibleInWeek(p, weekDates))
       .sort((a, b) => a.sort_order - b.sort_order);
     const left = periods
-      .filter((p) => p.side === 'DAILY_GROUP' && isVisibleInWeek(p))
+      .filter((p) => p.side === 'DAILY_GROUP' && isVisibleInWeek(p, weekDates))
       .sort((a, b) => a.sort_order - b.sort_order);
     return { right, left };
   }, [periods, weekDates]);
 
   const actionsByPeriodId = useMemo(() => {
     const map = new Map<string, Action[]>();
-    const isVisibleInWeek = (a: Action) =>
-      weekDates.some((d) => isActionActiveOnDate(a, d));
     for (const action of [...actions].sort((a, b) => a.sort_order - b.sort_order)) {
-      if (!isVisibleInWeek(action)) continue;
+      if (!isVisibleInWeek(action, weekDates)) continue;
       const list = map.get(action.period_id) ?? [];
       list.push(action);
       map.set(action.period_id, list);
@@ -520,17 +604,56 @@ export function WeekView({
     return false;
   }, [selectedRect, visibleGridRows]);
 
+  const selectedHasPercentageEligible = useMemo(() => {
+    if (!selectedRect) return false;
+    for (let r = selectedRect.r1; r <= selectedRect.r2; r += 1) {
+      if (visibleGridRows[r]?.action.supports_percentage) return true;
+    }
+    return false;
+  }, [selectedRect, visibleGridRows]);
+
+  const gridBoundsRef = useRef({
+    oneGlanceMode: false,
+    rightRowCount: 0,
+    totalRows: 0,
+    visibleSides: [] as ('TIME_BOUND' | 'DAILY_GROUP')[],
+  });
+
+  useEffect(() => {
+    gridBoundsRef.current = {
+      oneGlanceMode,
+      rightRowCount,
+      totalRows: visibleGridRows.length,
+      visibleSides: visibleGridRows.map((r) => r.side),
+    };
+  }, [oneGlanceMode, rightRowCount, visibleGridRows]);
+
+  const fillCommitHandlerRef = useRef<(fd: FillDragState) => void>(() => {});
+
+  const clearAllInteractionState = useCallback(() => {
+    fillDragRef.current = null;
+    setFillDrag(null);
+    dragSelectRef.current = null;
+    setSelection(null);
+    setCopiedRect(null);
+    document.body.style.cursor = '';
+  }, []);
+
   const navigateWeek = useCallback((nextAnchor: string) => {
     setWeekAnchorDate(nextAnchor);
     setSelection(null);
     setCopiedRect(null);
   }, []);
 
-  // Mouse drag-select window listeners (>6px activation)
+  // Mouse drag-select (>6px activation) & Google Sheets Fill Handle pointer tracking
   useEffect(() => {
     const findCoordFromPoint = (clientX: number, clientY: number): GridCoord | null => {
       const el = document.elementFromPoint(clientX, clientY);
-      const cellEl = el?.closest<HTMLElement>('[data-grid-row][data-grid-col]');
+      const cellEl =
+        el?.closest<HTMLElement>('[data-grid-row][data-grid-col]') ??
+        el
+          ?.closest<HTMLElement>('td.cell-status')
+          ?.querySelector<HTMLElement>('[data-grid-row][data-grid-col]');
       if (!cellEl) return null;
       const row = Number(cellEl.dataset.gridRow);
       const col = Number(cellEl.dataset.gridCol);
@@ -539,6 +662,38 @@ export function WeekView({
     };
 
     const onPointerMove = (event: PointerEvent) => {
+      const fd = fillDragRef.current;
+      if (fd) {
+        const over = findCoordFromPoint(event.clientX, event.clientY);
+        if (!over) return;
+        const bounds = gridBoundsRef.current;
+        if (
+          bounds.oneGlanceMode &&
+          bounds.visibleSides[over.row] !== fd.sourceSide
+        ) {
+          return;
+        }
+        const dRow = Math.abs(over.row - fd.source.row);
+        const dCol = Math.abs(over.col - fd.source.col);
+        const lockedTarget: GridCoord =
+          dRow > dCol ||
+          (dRow === dCol &&
+            Math.abs(event.clientY - fd.startY) >=
+              Math.abs(event.clientX - fd.startX))
+            ? { row: over.row, col: fd.source.col }
+            : { row: fd.source.row, col: over.col };
+
+        if (
+          lockedTarget.row !== fd.target.row ||
+          lockedTarget.col !== fd.target.col
+        ) {
+          const nextFd: FillDragState = { ...fd, target: lockedTarget };
+          fillDragRef.current = nextFd;
+          setFillDrag(nextFd);
+        }
+        return;
+      }
+
       const ds = dragSelectRef.current;
       if (!ds) return;
       if (!ds.active) {
@@ -548,16 +703,45 @@ export function WeekView({
         );
         if (dist <= DRAG_SELECT_THRESHOLD_PX) return;
         ds.active = true;
+        window.getSelection()?.removeAllRanges();
       }
 
       const over = findCoordFromPoint(event.clientX, event.clientY);
       if (over) {
-        setSelection({ anchor: ds.anchor, extent: over });
-        setFocusedCell(over);
+        const bounds = gridBoundsRef.current;
+        let clamped = over;
+        if (bounds.oneGlanceMode) {
+          const minRow =
+            ds.anchorSide === 'TIME_BOUND' ? 0 : bounds.rightRowCount;
+          const maxRow =
+            ds.anchorSide === 'TIME_BOUND'
+              ? Math.max(0, bounds.rightRowCount - 1)
+              : Math.max(bounds.rightRowCount, bounds.totalRows - 1);
+          clamped = {
+            row: Math.min(Math.max(over.row, minRow), maxRow),
+            col: over.col,
+          };
+        }
+        setSelection({ anchor: ds.anchor, extent: clamped });
+        setFocusedCell(clamped);
       }
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
+      const fd = fillDragRef.current;
+      if (fd) {
+        fillDragRef.current = null;
+        setFillDrag(null);
+        document.body.style.cursor = '';
+        suppressNextClickRef.current = true;
+        setTimeout(() => {
+          suppressNextClickRef.current = false;
+        }, 50);
+        if (event.type !== 'pointercancel') {
+          fillCommitHandlerRef.current(fd);
+        }
+      }
+
       const ds = dragSelectRef.current;
       if (!ds) return;
       if (ds.active) {
@@ -793,10 +977,7 @@ export function WeekView({
     }
   }, []);
 
-  if (!settings || !todayIslamicDate || weekDates.length === 0) {
-    return null;
-  }
-
+  const windowKeyDownHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
   const windowCache: WindowLookupCache = new Map();
 
   const resolveDisplay = (action: Action, logDate: string): CellDisplayInfo =>
@@ -808,15 +989,10 @@ export function WeekView({
       periods,
       targetVersions,
       targetVersionsById,
-      settings,
+      settings: settings!,
       nowMs,
       windowCache,
     });
-
-  const isCellNonInteractive = (
-    display: CellDisplayInfo,
-    logDate: string,
-  ): boolean => display.state === 'INACTIVE' || logDate > todayIslamicDate;
 
   // Canonical Zero-Modal 1-Click / 1-Tap State Cycle (#106)
   const handleCellPrimaryCycle = async (
@@ -824,7 +1000,7 @@ export function WeekView({
     logDate: string,
     display: CellDisplayInfo,
   ) => {
-    if (isCellNonInteractive(display, logDate)) return;
+    if (isCellPostArchived(action, logDate)) return;
 
     // Protect historical QADAA_DONE & DISABLED cells from accidental stray overwrites
     if (display.state === 'QADAA_DONE' || display.state === 'DISABLED') {
@@ -906,7 +1082,11 @@ export function WeekView({
   const applyTargetStateToCoords = async (
     coords: readonly GridCoord[],
     target: ClipboardCellSnapshot,
-    options: { showToast?: boolean; actionNameAr?: string } = {},
+    options: {
+      showToast?: boolean;
+      actionNameAr?: string;
+      clearSelection?: boolean;
+    } = {},
   ) => {
     if (coords.length === 0) return;
     const mutations: CellMutationInput[] = [];
@@ -920,7 +1100,7 @@ export function WeekView({
       const { action } = rowMeta;
       const display = resolveDisplay(action, logDate);
 
-      if (isCellNonInteractive(display, logDate)) {
+      if (isCellPostArchived(action, logDate)) {
         continue;
       }
       if (target.kind === 'QADAA_DONE' && !action.is_qadaa_eligible) {
@@ -963,6 +1143,10 @@ export function WeekView({
       });
     }
 
+    if (options.clearSelection !== false) {
+      setSelection(null);
+    }
+
     if (isBulkOrDestructive || skippedIncompatible > 0) {
       const label = options.actionNameAr
         ? `${options.actionNameAr} (${formatArabicCells(mutations.length)})`
@@ -975,7 +1159,17 @@ export function WeekView({
     }
   };
 
-  const handleCopySelection = () => {
+  const handleFillCommit = (fd: FillDragState) => {
+    const targetCoords = getFillTargetCoords(fd);
+    if (targetCoords.length === 0) return;
+    void applyTargetStateToCoords(targetCoords, fd.sourceSnapshot, {
+      showToast: true,
+      actionNameAr: 'تم تعبئة',
+      clearSelection: true,
+    });
+  };
+
+  const handleCopySelection = (options?: { clearSelection?: boolean }) => {
     const rect: GridRect | null =
       selectedRect ??
       (effectiveFocusedCell
@@ -999,29 +1193,7 @@ export function WeekView({
           continue;
         }
         const display = resolveDisplay(rowMeta.action, logDate);
-        switch (display.state) {
-          case 'DONE':
-            rowSnaps.push({ kind: 'DONE', percentValue: null });
-            break;
-          case 'MISSED':
-            rowSnaps.push({ kind: 'MISSED', percentValue: null });
-            break;
-          case 'QADAA_DONE':
-            rowSnaps.push({ kind: 'QADAA_DONE', percentValue: null });
-            break;
-          case 'PERCENT':
-            rowSnaps.push({
-              kind: 'PERCENT',
-              percentValue: display.percentValue ?? 50,
-            });
-            break;
-          case 'DISABLED':
-            rowSnaps.push({ kind: 'DISABLED', percentValue: null });
-            break;
-          default:
-            rowSnaps.push({ kind: 'EMPTY', percentValue: null });
-            break;
-        }
+        rowSnaps.push(snapshotCellFromDisplay(display));
       }
       cells.push(rowSnaps);
     }
@@ -1034,6 +1206,10 @@ export function WeekView({
     clipboardRef.current = matrix;
     setHasClipboard(true);
     setCopiedRect(rect);
+
+    if (options?.clearSelection) {
+      setSelection(null);
+    }
 
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       const tsv = serializeClipboardToTsv(matrix);
@@ -1119,7 +1295,7 @@ export function WeekView({
         const { action } = rowMeta;
         const display = resolveDisplay(action, logDate);
 
-        if (isCellNonInteractive(display, logDate)) {
+        if (isCellPostArchived(action, logDate)) {
           continue;
         }
         if (snap.kind === 'QADAA_DONE' && !action.is_qadaa_eligible) {
@@ -1155,6 +1331,8 @@ export function WeekView({
         priorInputs,
       });
     }
+
+    setSelection(null);
 
     const skipSuffix =
       skippedIncompatible > 0
@@ -1206,6 +1384,283 @@ export function WeekView({
     focusGridCell(startRow, colIdx);
   };
 
+  const handleSelectActionRow = (rowIndex: number) => {
+    if (weekDates.length === 0) return;
+    const endCol = weekDates.length - 1;
+    const isAlreadySelected =
+      selectedRect !== null &&
+      selectedRect.r1 === rowIndex &&
+      selectedRect.r2 === rowIndex &&
+      selectedRect.c1 === 0 &&
+      selectedRect.c2 === endCol;
+
+    if (isAlreadySelected) {
+      setSelection(null);
+      return;
+    }
+
+    setSelection({
+      anchor: { row: rowIndex, col: 0 },
+      extent: { row: rowIndex, col: endCol },
+    });
+    focusGridCell(rowIndex, 0);
+  };
+
+  const handleSelectPeriodColumn = (periodId: string, colIdx: number) => {
+    const matchingRows = visibleGridRows.filter((r) => r.group.id === periodId);
+    if (matchingRows.length === 0) return;
+    const firstRow = matchingRows[0]!.rowIndex;
+    const lastRow = matchingRows[matchingRows.length - 1]!.rowIndex;
+
+    const isAlreadySelected =
+      selectedRect !== null &&
+      selectedRect.r1 === firstRow &&
+      selectedRect.r2 === lastRow &&
+      selectedRect.c1 === colIdx &&
+      selectedRect.c2 === colIdx;
+
+    if (isAlreadySelected) {
+      setSelection(null);
+      return;
+    }
+
+    setSelection({
+      anchor: { row: firstRow, col: colIdx },
+      extent: { row: lastRow, col: colIdx },
+    });
+    focusGridCell(firstRow, colIdx);
+  };
+
+  const handleQuickCompletePeriod = async (group: Period, logDate: string) => {
+    if (!logDate) return;
+    const groupActions = actionsByPeriodId.get(group.id) ?? [];
+    const mutations: CellMutationInput[] = [];
+    const priorInputs: CellMutationInput[] = [];
+
+    for (const action of groupActions) {
+      if (isCellPostArchived(action, logDate)) continue;
+      const display = resolveDisplay(action, logDate);
+      if (
+        display.state === 'DISABLED' ||
+        display.state === 'DONE' ||
+        display.state === 'QADAA_DONE'
+      ) {
+        continue;
+      }
+      priorInputs.push(capturePriorSnapshot(action, logDate));
+      mutations.push(
+        buildCellMutationForTarget(action, logDate, display, {
+          kind: 'DONE',
+          percentValue: null,
+        }),
+      );
+    }
+
+    setSelection(null);
+
+    if (mutations.length === 0) {
+      onActionFeedback(`جميع أعمال «${group.title}» مكتملة بالفعل`);
+      return;
+    }
+
+    const res = await logCellBatch(mutations, DEFAULT_UNDO_HOLD_MS, true);
+    if (res.items.length > 0) {
+      pushUndoEntry({
+        batchId: res.batchId,
+        mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
+        priorInputs,
+      });
+    }
+    onActionFeedback(
+      `تم إكمال ${group.title} (${formatArabicCells(mutations.length)})`,
+    );
+  };
+
+  const handleMultiCellSpaceToggle = async () => {
+    if (!selectedRect) return;
+    const coords = getTargetCoords();
+    let hasEditable = false;
+    let allDone = true;
+
+    for (const coord of coords) {
+      const rowMeta = visibleGridRows[coord.row];
+      const logDate = weekDates[coord.col];
+      if (!rowMeta || !logDate) continue;
+      if (isCellPostArchived(rowMeta.action, logDate)) continue;
+      hasEditable = true;
+      const display = resolveDisplay(rowMeta.action, logDate);
+      if (display.state !== 'DONE') {
+        allDone = false;
+        break;
+      }
+    }
+
+    if (!hasEditable) return;
+    const nextTarget: ClipboardCellSnapshot = allDone
+      ? { kind: 'EMPTY', percentValue: null }
+      : { kind: 'DONE', percentValue: null };
+
+    await applyTargetStateToCoords(coords, nextTarget, {
+      showToast: coords.length > 1,
+      actionNameAr: allDone ? 'تم مسح الحالات' : 'تم تحديد تم للكل',
+      clearSelection: true,
+    });
+  };
+
+  const handleCellStateHotkey = (
+    event: {
+      code: string;
+      key: string;
+      ctrlKey: boolean;
+      metaKey: boolean;
+      altKey: boolean;
+      preventDefault: () => void;
+    },
+    coords: GridCoord[],
+  ): boolean => {
+    if (event.ctrlKey || event.metaKey || event.altKey || coords.length === 0) {
+      return false;
+    }
+    if (event.code === 'Digit1' || event.code === 'Numpad1') {
+      event.preventDefault();
+      void applyTargetStateToCoords(coords, { kind: 'DONE', percentValue: null });
+      return true;
+    }
+    if (event.code === 'Digit2' || event.code === 'Numpad2') {
+      event.preventDefault();
+      void applyTargetStateToCoords(coords, { kind: 'MISSED', percentValue: null });
+      return true;
+    }
+    if (event.code === 'Digit3' || event.code === 'Numpad3') {
+      event.preventDefault();
+      void applyTargetStateToCoords(coords, {
+        kind: 'QADAA_DONE',
+        percentValue: null,
+      });
+      return true;
+    }
+    if (event.code === 'Digit4' || event.code === 'Numpad4') {
+      event.preventDefault();
+      void applyTargetStateToCoords(coords, { kind: 'PERCENT', percentValue: 50 });
+      return true;
+    }
+    if (
+      event.code === 'Digit0' ||
+      event.code === 'Numpad0' ||
+      event.key === 'Delete' ||
+      event.key === 'Backspace'
+    ) {
+      event.preventDefault();
+      void applyTargetStateToCoords(coords, { kind: 'EMPTY', percentValue: null });
+      return true;
+    }
+    if (event.code === 'KeyX') {
+      event.preventDefault();
+      void applyTargetStateToCoords(
+        coords,
+        { kind: 'DISABLED', percentValue: null },
+        { showToast: true, actionNameAr: 'تم تعطيل' },
+      );
+      return true;
+    }
+    return false;
+  };
+
+  const handleWindowKeyDown = (e: KeyboardEvent) => {
+    if (
+      normalDialogOpen ||
+      document.querySelector('dialog[open]') !== null ||
+      isEditableTarget(e.target) ||
+      isEditableTarget(document.activeElement)
+    ) {
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      clearAllInteractionState();
+      return;
+    }
+
+    if (e.defaultPrevented) return;
+
+    const targetNode = e.target instanceof Node ? e.target : null;
+    const isFocusInGrid =
+      targetNode !== null &&
+      (desktopGridAreaRef.current?.contains(targetNode) ?? false);
+    if (selectedRect === null && !isFocusInGrid) return;
+
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyC') {
+      e.preventDefault();
+      handleCopySelection();
+      return;
+    }
+    if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyV') {
+      e.preventDefault();
+      void handlePasteSelection();
+      return;
+    }
+
+    if (mod || e.altKey) return;
+
+    if (e.code === 'Space' && !e.shiftKey) {
+      if (targetNode && bulkBarRef.current?.contains(targetNode)) {
+        return;
+      }
+      if (selectedRect !== null) {
+        e.preventDefault();
+        void handleMultiCellSpaceToggle();
+      }
+      return;
+    }
+
+    handleCellStateHotkey(e, getTargetCoords());
+  };
+
+  useEffect(() => {
+    fillCommitHandlerRef.current = handleFillCommit;
+    windowKeyDownHandlerRef.current = handleWindowKeyDown;
+  });
+
+  const hasActiveGridOverlay =
+    selectedCellCount > 0 || copiedRect !== null || fillDrag !== null;
+
+  useEffect(() => {
+    if (!hasActiveGridOverlay) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      windowKeyDownHandlerRef.current(e);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [hasActiveGridOverlay]);
+
+  // Outside-click dismissal for active grid selection
+  useEffect(() => {
+    if (!selection) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (fillDragRef.current) return;
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (bulkBarRef.current?.contains(target)) return;
+      if (
+        target instanceof Element &&
+        target.closest(
+          '[data-grid-row][data-grid-col], .col-day-btn, .row-title-btn, .period-select-btn, .period-quick-done-btn, .group-select-btn',
+        )
+      ) {
+        return;
+      }
+      setSelection(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [selection]);
+
+  if (!settings || !todayIslamicDate || weekDates.length === 0) {
+    return null;
+  }
+
   const handleGridCellKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     row: number,
@@ -1226,7 +1681,7 @@ export function WeekView({
     if (matchesShortcutEvent(event, effectiveShortcuts.jump_today)) {
       event.preventDefault();
       event.stopPropagation();
-      navigateWeek(todayIslamicDate);
+      if (todayIslamicDate) navigateWeek(todayIslamicDate);
       return;
     }
     if (matchesShortcutEvent(event, effectiveShortcuts.undo)) {
@@ -1254,14 +1709,16 @@ export function WeekView({
       return;
     }
 
-    // Escape Gradient: (1) copy marquee -> (2) multi-cell selection
+    // Escape clears fillDrag, dragSelect, selection, copiedRect & cursor
     if (event.key === 'Escape') {
-      if (copiedRect) {
+      if (
+        copiedRect ||
+        selection ||
+        fillDragRef.current ||
+        dragSelectRef.current
+      ) {
         event.preventDefault();
-        setCopiedRect(null);
-      } else if (selection) {
-        event.preventDefault();
-        setSelection(null);
+        clearAllInteractionState();
       }
       return;
     }
@@ -1313,7 +1770,7 @@ export function WeekView({
 
     if (isNav) {
       event.preventDefault();
-      // Skip non-interactive cells cleanly if stepping vertically/horizontally
+      // Skip post-archived cells cleanly if stepping vertically/horizontally
       const stepRow = Math.sign(nextRow - row);
       const stepCol = Math.sign(nextCol - col);
       let candidateRow = nextRow;
@@ -1349,7 +1806,20 @@ export function WeekView({
 
       if (event.shiftKey) {
         const anchor = selection?.anchor ?? { row, col };
-        setSelection({ anchor, extent: { row: nextRow, col: nextCol } });
+        let clampedExtent: GridCoord = { row: nextRow, col: nextCol };
+        if (oneGlanceMode) {
+          const anchorSide = visibleGridRows[anchor.row]?.side ?? 'TIME_BOUND';
+          const minRow = anchorSide === 'TIME_BOUND' ? 0 : rightRowCount;
+          const maxRow =
+            anchorSide === 'TIME_BOUND'
+              ? Math.max(0, rightRowCount - 1)
+              : Math.max(rightRowCount, visibleGridRows.length - 1);
+          clampedExtent = {
+            row: Math.min(Math.max(nextRow, minRow), maxRow),
+            col: nextCol,
+          };
+        }
+        setSelection({ anchor, extent: clampedExtent });
       } else {
         setSelection(null);
       }
@@ -1364,7 +1834,7 @@ export function WeekView({
       (event.shiftKey && event.key === 'F10')
     ) {
       event.preventDefault();
-      if (!isCellNonInteractive(display, logDate)) {
+      if (!isCellPostArchived(action, logDate)) {
         onOpenCellEditor({ action, logDate });
       }
       return;
@@ -1372,67 +1842,26 @@ export function WeekView({
 
     if (mod || event.altKey) return;
 
-    // Space => 1-step cycle when focused on single cell
+    // Space => 1-step cycle when single cell, toggle DONE/EMPTY when multi-cell
     if (event.code === 'Space' && !event.shiftKey) {
       event.preventDefault();
-      if (selectedCellCount <= 1) {
+      if (selectedCellCount >= 2) {
+        void handleMultiCellSpaceToggle();
+      } else {
+        setSelection(null);
         void handleCellPrimaryCycle(action, logDate, display);
       }
       return;
     }
 
     // Direct cell state hotkeys (physical KeyboardEvent.code)
-    const targetCoords = getTargetCoords();
-    if (event.code === 'Digit1' || event.code === 'Numpad1') {
-      event.preventDefault();
-      void applyTargetStateToCoords(targetCoords, {
-        kind: 'DONE',
-        percentValue: null,
-      });
-    } else if (event.code === 'Digit2' || event.code === 'Numpad2') {
-      event.preventDefault();
-      void applyTargetStateToCoords(targetCoords, {
-        kind: 'MISSED',
-        percentValue: null,
-      });
-    } else if (event.code === 'Digit3' || event.code === 'Numpad3') {
-      event.preventDefault();
-      void applyTargetStateToCoords(targetCoords, {
-        kind: 'QADAA_DONE',
-        percentValue: null,
-      });
-    } else if (event.code === 'Digit4' || event.code === 'Numpad4') {
-      event.preventDefault();
-      void applyTargetStateToCoords(targetCoords, {
-        kind: 'PERCENT',
-        percentValue: 50,
-      });
-    } else if (
-      event.code === 'Digit0' ||
-      event.code === 'Numpad0' ||
-      event.key === 'Delete' ||
-      event.key === 'Backspace'
-    ) {
-      event.preventDefault();
-      void applyTargetStateToCoords(targetCoords, {
-        kind: 'EMPTY',
-        percentValue: null,
-      });
-    } else if (event.code === 'KeyX') {
-      event.preventDefault();
-      void applyTargetStateToCoords(
-        targetCoords,
-        { kind: 'DISABLED', percentValue: null },
-        { showToast: true, actionNameAr: 'تم تعطيل' },
-      );
-    }
+    handleCellStateHotkey(event, getTargetCoords());
   };
 
   const computeWeekRate = (action: Action): string => {
     let sum = 0;
     let count = 0;
     for (const d of weekDates) {
-      if (d > todayIslamicDate) continue;
       const display = resolveDisplay(action, d);
       const score = computeCellScore(display.state, display.percentValue);
       if (score !== null) {
@@ -1481,6 +1910,9 @@ export function WeekView({
     }
   };
 
+  const activeDayCol = effectiveFocusedCell?.col ?? todayColIdx;
+  const activeDayDate = weekDates[activeDayCol] ?? todayIslamicDate;
+
   const renderDesktopMatrixCell = (params: {
     action: Action;
     logDate: string;
@@ -1490,96 +1922,163 @@ export function WeekView({
   }) => {
     const { action, logDate, rowIndex, colIndex, dayLabel } = params;
     const display = resolveDisplay(action, logDate);
-    const nonInteractive = isCellNonInteractive(display, logDate);
+    const nonInteractive = isCellPostArchived(action, logDate);
     const hasNote = display.note.trim().length > 0;
+    const isTabStop =
+      !nonInteractive &&
+      effectiveFocusedCell !== null &&
+      effectiveFocusedCell.row === rowIndex &&
+      effectiveFocusedCell.col === colIndex;
     const isFocused =
       !nonInteractive &&
+      focusedCell !== null &&
       effectiveFocusedCell !== null &&
       effectiveFocusedCell.row === rowIndex &&
       effectiveFocusedCell.col === colIndex;
     const isSelected =
       selectedCellCount >= 2 && isCoordInRect(rowIndex, colIndex, selectedRect);
     const isCopied = isCoordInRect(rowIndex, colIndex, copiedRect);
+    const isFillSource =
+      fillDrag !== null &&
+      fillDrag.source.row === rowIndex &&
+      fillDrag.source.col === colIndex;
+    const isFillPreview =
+      isCoordInFillDrag(rowIndex, colIndex, fillDrag) && !isFillSource;
     const coordKey = `${rowIndex}:${colIndex}`;
 
     return (
       <td key={logDate} className="cell-status" role="presentation">
-        <button
-          ref={(el) => {
-            if (el) {
-              cellButtonRefs.current.set(coordKey, el);
-            } else {
-              cellButtonRefs.current.delete(coordKey);
-            }
-          }}
-          type="button"
-          role="gridcell"
-          tabIndex={isFocused ? 0 : -1}
-          disabled={nonInteractive}
-          aria-disabled={nonInteractive || undefined}
-          aria-selected={isSelected}
-          aria-label={`${action.title} ${dayLabel}${hasNote ? ' — يحتوي على ملاحظة' : ''}`}
-          title={hasNote ? `ملاحظة: ${display.note.trim()}` : undefined}
-          data-testid={`week-cell-${action.id}-${logDate}`}
-          data-grid-row={rowIndex}
-          data-grid-col={colIndex}
-          className={`m-cell nums ${getCellStateClass(display.state)} ${
-            isFocused ? 'is-grid-focused' : ''
-          } ${isSelected ? 'is-grid-selected' : ''} ${
-            isCopied ? 'is-grid-copied' : ''
-          }`}
-          onFocus={() => {
-            if (!nonInteractive) {
-              setFocusedCell({ row: rowIndex, col: colIndex });
-            }
-          }}
-          onPointerDown={(e) => {
-            if (nonInteractive) return;
-            if (e.pointerType !== 'mouse' || e.button !== 0) return;
-
-            if (e.shiftKey) {
-              e.preventDefault();
-              suppressNextClickRef.current = true;
-              setTimeout(() => {
-                suppressNextClickRef.current = false;
-              }, 50);
-              const anchor =
-                selection?.anchor ?? effectiveFocusedCell ?? { row: rowIndex, col: colIndex };
-              setSelection({ anchor, extent: { row: rowIndex, col: colIndex } });
-              focusGridCell(rowIndex, colIndex);
-              return;
-            }
-
-            dragSelectRef.current = {
-              startX: e.clientX,
-              startY: e.clientY,
-              anchor: { row: rowIndex, col: colIndex },
-              active: false,
-            };
-          }}
-          onClick={() => {
-            if (nonInteractive) return;
-            if (suppressNextClickRef.current) {
-              suppressNextClickRef.current = false;
-              return;
-            }
-            setSelection(null);
-            setFocusedCell({ row: rowIndex, col: colIndex });
-            void handleCellPrimaryCycle(action, logDate, display);
-          }}
-          onContextMenu={(e) => {
-            if (nonInteractive) return;
-            e.preventDefault();
-            setFocusedCell({ row: rowIndex, col: colIndex });
-            onOpenCellEditor({ action, logDate });
-          }}
-          onKeyDown={(e) =>
-            handleGridCellKeyDown(e, rowIndex, colIndex, action, logDate, display)
-          }
+        <div
+          className={`m-cell-wrap ${isFocused ? 'has-focus' : ''} ${
+            !nonInteractive && selectedCellCount < 2 ? 'is-fill-eligible' : ''
+          } ${isFillSource ? 'is-fill-source' : ''}`}
         >
-          {renderCellGlyph(display.state, display.percentValue)}
-          {hasNote && <span className="m-cell-note-dot" aria-hidden="true" />}
-        </button>
+          <button
+            ref={(el) => {
+              if (el) {
+                cellButtonRefs.current.set(coordKey, el);
+              } else {
+                cellButtonRefs.current.delete(coordKey);
+              }
+            }}
+            type="button"
+            role="gridcell"
+            tabIndex={isTabStop ? 0 : -1}
+            disabled={nonInteractive}
+            aria-disabled={nonInteractive || undefined}
+            aria-selected={isSelected}
+            aria-label={`${action.title} ${dayLabel}${hasNote ? ' — يحتوي على ملاحظة' : ''}`}
+            title={hasNote ? `ملاحظة: ${display.note.trim()}` : undefined}
+            data-testid={`week-cell-${action.id}-${logDate}`}
+            data-grid-row={rowIndex}
+            data-grid-col={colIndex}
+            className={`m-cell nums ${getCellStateClass(display.state)} ${
+              isFocused ? 'is-grid-focused' : ''
+            } ${isSelected ? 'is-grid-selected' : ''} ${
+              isCopied ? 'is-grid-copied' : ''
+            } ${isFillSource ? 'is-fill-source' : ''} ${
+              isFillPreview ? 'is-fill-preview' : ''
+            }`}
+            onFocus={() => {
+              if (!nonInteractive) {
+                setFocusedCell({ row: rowIndex, col: colIndex });
+              }
+            }}
+            onPointerDown={(e) => {
+              if (nonInteractive) return;
+              if (e.pointerType !== 'mouse' || e.button !== 0) return;
+              suppressNextClickRef.current = false;
+
+              if (e.shiftKey) {
+                e.preventDefault();
+                suppressNextClickRef.current = true;
+                setTimeout(() => {
+                  suppressNextClickRef.current = false;
+                }, 50);
+                const anchor =
+                  selection?.anchor ??
+                  effectiveFocusedCell ?? { row: rowIndex, col: colIndex };
+                let extent: GridCoord = { row: rowIndex, col: colIndex };
+                if (oneGlanceMode) {
+                  const anchorSide =
+                    visibleGridRows[anchor.row]?.side ?? 'TIME_BOUND';
+                  const minRow =
+                    anchorSide === 'TIME_BOUND' ? 0 : rightRowCount;
+                  const maxRow =
+                    anchorSide === 'TIME_BOUND'
+                      ? Math.max(0, rightRowCount - 1)
+                      : Math.max(rightRowCount, visibleGridRows.length - 1);
+                  extent = {
+                    row: Math.min(Math.max(rowIndex, minRow), maxRow),
+                    col: colIndex,
+                  };
+                }
+                setSelection({ anchor, extent });
+                focusGridCell(extent.row, extent.col);
+                return;
+              }
+
+              const rowMeta = visibleGridRows[rowIndex];
+              dragSelectRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                anchor: { row: rowIndex, col: colIndex },
+                anchorSide: rowMeta?.side ?? 'TIME_BOUND',
+                active: false,
+              };
+            }}
+            onClick={() => {
+              if (nonInteractive) return;
+              if (suppressNextClickRef.current) {
+                suppressNextClickRef.current = false;
+                return;
+              }
+              setSelection(null);
+              setFocusedCell({ row: rowIndex, col: colIndex });
+              void handleCellPrimaryCycle(action, logDate, display);
+            }}
+            onContextMenu={(e) => {
+              if (nonInteractive) return;
+              e.preventDefault();
+              setFocusedCell({ row: rowIndex, col: colIndex });
+              onOpenCellEditor({ action, logDate });
+            }}
+            onKeyDown={(e) =>
+              handleGridCellKeyDown(e, rowIndex, colIndex, action, logDate, display)
+            }
+          >
+            {renderCellGlyph(display.state, display.percentValue)}
+            {hasNote && <span className="m-cell-note-dot" aria-hidden="true" />}
+          </button>
+
+          {!nonInteractive && (
+            <span
+              className="m-fill-handle"
+              data-testid="fill-handle"
+              aria-hidden="true"
+              onPointerDown={(e) => {
+                if (e.pointerType !== 'mouse' || e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                window.getSelection()?.removeAllRanges();
+                const rowMeta = visibleGridRows[rowIndex];
+                const nextFill: FillDragState = {
+                  source: { row: rowIndex, col: colIndex },
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  target: { row: rowIndex, col: colIndex },
+                  sourceSnapshot: snapshotCellFromDisplay(display),
+                  sourceSide: rowMeta?.side ?? 'TIME_BOUND',
+                };
+                fillDragRef.current = nextFill;
+                setFillDrag(nextFill);
+                setSelection(null);
+                setFocusedCell({ row: rowIndex, col: colIndex });
+                document.body.style.cursor = 'crosshair';
+              }}
+            />
+          )}
+        </div>
       </td>
     );
   };
@@ -1597,39 +2096,72 @@ export function WeekView({
       <React.Fragment key={group.id}>
         <tr className="group-row" role="row" {...groupDropProps}>
           <td colSpan={9}>
-            <button
-              type="button"
-              className="group-toggle"
-              aria-expanded={!isCollapsed}
-              onClick={() => toggleGroup(group.id)}
-            >
-              <span className="group-toggle-start">
-                {isCollapsed ? (
-                  <IconChevronLeft size="sm" />
-                ) : (
-                  <IconChevronDown size="sm" />
+            <div className="group-row-bar">
+              <button
+                type="button"
+                className="group-toggle"
+                aria-expanded={!isCollapsed}
+                onClick={() => toggleGroup(group.id)}
+              >
+                <span className="group-toggle-start">
+                  {isCollapsed ? (
+                    <IconChevronLeft size="sm" />
+                  ) : (
+                    <IconChevronDown size="sm" />
+                  )}
+                  <span>{group.title}</span>
+                  <span className="panel-meta nums">({groupActions.length})</span>
+                </span>
+
+                {liveWin && (
+                  <span className="panel-meta nums" dir="ltr">
+                    {formatHhmmInTz(liveWin.startInstant, settings.iana_timezone)}{' '}
+                    -{' '}
+                    {formatHhmmInTz(liveWin.endInstant, settings.iana_timezone)}
+                  </span>
                 )}
-                <span>{group.title}</span>
-                <span className="panel-meta nums">({groupActions.length})</span>
-              </span>
 
-              {liveWin && (
-                <span className="panel-meta nums" dir="ltr">
-                  {formatHhmmInTz(liveWin.startInstant, settings.iana_timezone)}{' '}
-                  -{' '}
-                  {formatHhmmInTz(liveWin.endInstant, settings.iana_timezone)}
-                </span>
-              )}
+                {liveWin && (
+                  <span className="horizon-track" aria-hidden="true">
+                    <span
+                      className={`horizon-fill ${liveWin.isPreExpiry ? 'closing' : ''}`}
+                      style={{ width: `${Math.round(liveWin.elapsedRatio * 100)}%` }}
+                    />
+                  </span>
+                )}
+              </button>
 
-              {liveWin && (
-                <span className="horizon-track" aria-hidden="true">
-                  <span
-                    className={`horizon-fill ${liveWin.isPreExpiry ? 'closing' : ''}`}
-                    style={{ width: `${Math.round(liveWin.elapsedRatio * 100)}%` }}
-                  />
-                </span>
-              )}
-            </button>
+              <div className="group-row-actions">
+                <button
+                  type="button"
+                  className="btn group-select-btn"
+                  aria-label={`تحديد مجموعة ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
+                  onClick={() => {
+                    if (isCollapsed) {
+                      setCollapsedGroups((prev) => ({
+                        ...prev,
+                        [group.id]: false,
+                      }));
+                    } else {
+                      handleSelectPeriodColumn(group.id, activeDayCol);
+                    }
+                  }}
+                >
+                  تحديد
+                </button>
+                <button
+                  type="button"
+                  className="period-quick-done-btn group-quick-done-btn"
+                  aria-label={`إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
+                  title={`إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`}
+                  onClick={() => {
+                    void handleQuickCompletePeriod(group, activeDayDate);
+                  }}
+                >
+                  <IconCheck size="sm" />
+                </button>
+              </div>
+            </div>
           </td>
         </tr>
 
@@ -1643,28 +2175,21 @@ export function WeekView({
             const rowIndex = rowIndexByActionId.get(action.id) ?? 0;
             const itemProps = dnd.getItemProps(action.id);
             const handleProps = dnd.getHandleProps(action.id);
+            const isRowSelected =
+              selectedRect !== null &&
+              selectedRect.r1 <= rowIndex &&
+              selectedRect.r2 >= rowIndex &&
+              selectedRect.c1 === 0 &&
+              selectedRect.c2 === weekDates.length - 1;
 
             return (
               <tr
                 key={action.id}
-                className="data-row"
+                className={`data-row ${isRowSelected ? 'is-row-selected' : ''}`}
                 role="row"
                 {...itemProps}
               >
-                <td
-                  className="cell-title"
-                  title={action.title}
-                  onClick={(e) => {
-                    if (e.shiftKey) {
-                      e.preventDefault();
-                      setSelection({
-                        anchor: { row: rowIndex, col: 0 },
-                        extent: { row: rowIndex, col: weekDates.length - 1 },
-                      });
-                      focusGridCell(rowIndex, 0);
-                    }
-                  }}
-                >
+                <td className="cell-title" title={action.title}>
                   <div className="cell-title-inner">
                     <button
                       type="button"
@@ -1680,12 +2205,19 @@ export function WeekView({
                     >
                       <IconGripVertical size="sm" />
                     </button>
-                    <span className="cell-title-text">{action.title}</span>
-                    {tv && (
-                      <span className="target-tag nums ms-1">
-                        {tv.target_label}
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''}`}
+                      aria-label={`تحديد صف ${action.title}`}
+                      onClick={() => handleSelectActionRow(rowIndex)}
+                    >
+                      <span className="cell-title-text">{action.title}</span>
+                      {tv && (
+                        <span className="target-tag nums ms-1">
+                          {tv.target_label}
+                        </span>
+                      )}
+                    </button>
                   </div>
                 </td>
 
@@ -1745,7 +2277,7 @@ export function WeekView({
               </td>
               {weekDates.map((d) => {
                 const display = resolveDisplay(action, d);
-                const nonInteractive = isCellNonInteractive(display, d);
+                const nonInteractive = isCellPostArchived(action, d);
                 const hasNote = display.note.trim().length > 0;
                 const abbr =
                   AR_STRINGS.week.weekdaysShortEn[getIsoDayOfWeek(d)] ?? d;
@@ -1889,38 +2421,65 @@ export function WeekView({
                   {groupActions.map((action, idx) => {
                     const isLastInGroup = idx === groupActions.length - 1;
                     const rowIndex = rowIndexByActionId.get(action.id) ?? 0;
+                    const isRowSelected =
+                      selectedRect !== null &&
+                      selectedRect.r1 <= rowIndex &&
+                      selectedRect.r2 >= rowIndex &&
+                      selectedRect.c1 === 0 &&
+                      selectedRect.c2 === weekDates.length - 1;
                     return (
                       <tr
                         key={action.id}
                         role="row"
-                        className={`data-row ${isLastInGroup ? 'period-end-row' : ''}`}
+                        className={`data-row ${isLastInGroup ? 'period-end-row' : ''} ${
+                          isRowSelected ? 'is-row-selected' : ''
+                        }`}
                       >
                         {idx === 0 && (
                           <td
                             className={`cell-period ${isLive ? 'is-live-period' : ''}`}
                             rowSpan={groupActions.length}
                           >
-                            {group.title}
+                            <div className="cell-period-inner">
+                              <button
+                                type="button"
+                                className="period-select-btn"
+                                aria-label={`تحديد فترة ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
+                                onClick={() =>
+                                  handleSelectPeriodColumn(group.id, activeDayCol)
+                                }
+                              >
+                                {group.title}
+                              </button>
+                              <button
+                                type="button"
+                                className="period-quick-done-btn"
+                                aria-label={`إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
+                                title={`إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleQuickCompletePeriod(
+                                    group,
+                                    activeDayDate,
+                                  );
+                                }}
+                              >
+                                <IconCheck size="sm" />
+                              </button>
+                            </div>
                           </td>
                         )}
-                        <td
-                          className="cell-title"
-                          title={action.title}
-                          onClick={(e) => {
-                            if (e.shiftKey) {
-                              e.preventDefault();
-                              setSelection({
-                                anchor: { row: rowIndex, col: 0 },
-                                extent: {
-                                  row: rowIndex,
-                                  col: weekDates.length - 1,
-                                },
-                              });
-                              focusGridCell(rowIndex, 0);
-                            }
-                          }}
-                        >
-                          {action.title}
+                        <td className="cell-title" title={action.title}>
+                          <button
+                            type="button"
+                            className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''}`}
+                            aria-label={`تحديد صف ${action.title}`}
+                            onClick={() => handleSelectActionRow(rowIndex)}
+                          >
+                            <span className="cell-title-text">
+                              {action.title}
+                            </span>
+                          </button>
                         </td>
                         {weekDates.map((d, colIdx) => {
                           const abbr =
@@ -2031,7 +2590,17 @@ export function WeekView({
               aria-label="اليوم المستهدف للإجراءات الجماعية"
               value={effectiveBulkDate}
               disabled={bulkBusy}
-              onChange={(e) => setSelectedBulkDate(e.target.value)}
+              onChange={(e) => {
+                const nextDate = e.target.value;
+                setSelectedBulkDate(nextDate);
+                const nextCol = weekDates.indexOf(nextDate);
+                if (nextCol >= 0) {
+                  setFocusedCell((prev) => ({
+                    row: prev?.row ?? 0,
+                    col: nextCol,
+                  }));
+                }
+              }}
             >
               {weekDates.map((d) => (
                 <option key={d} value={d}>
@@ -2074,128 +2643,163 @@ export function WeekView({
           aria-label="تلميحات استخدام الجدول"
         >
           <span className="matrix-hint-item">نقرة: تبديل فوري</span>
-          <span className="matrix-hint-item">كليك يمين أو Enter: تعديل مفصّل</span>
-          <span className="matrix-hint-item">Shift+نقرة أو سحب: تحديد متعدد</span>
+          <span className="matrix-hint-item">كليك يمين: تعديل وملاحظة</span>
+          <span className="matrix-hint-item">سحب أو Shift: تحديد متعدد</span>
+          <span className="matrix-hint-item">مقبض الزاوية: تعبئة سريعة</span>
           <span className="matrix-hint-item">Ctrl+C / Ctrl+V: نسخ ولصق</span>
           {!oneGlanceMode && isOnline && (
             <span className="matrix-hint-item">مقبض السحب أو Alt+↑/↓: إعادة الترتيب</span>
           )}
         </div>
 
-        {oneGlanceMode ? (
-          <div className="overview-split" data-testid="one-glance-split">
-            {renderOneGlanceSideTable('TIME_BOUND')}
-            {renderOneGlanceSideTable('DAILY_GROUP')}
-          </div>
-        ) : (
-          <div className="ledger-table-wrap">
-            <table
-              className="ledger-table"
-              role="grid"
-              aria-multiselectable="true"
-              aria-label="الجدول الأسبوعي"
-            >
-              <thead>
-                <tr role="row">
-                  <th className="col-action" scope="col">
-                    العمل
-                  </th>
-                  {weekDates.map((d, colIdx) => {
-                    const { day } = parseIsoDateParts(d);
-                    const dowName =
-                      AR_STRINGS.week.weekdaysAr[getIsoDayOfWeek(d)] ?? '';
-                    const isToday = d === todayIslamicDate;
-                    const isColSelected =
-                      selectedRect !== null &&
-                      selectedRect.c1 === colIdx &&
-                      selectedRect.c2 === colIdx &&
-                      selectedRect.r1 === 0 &&
-                      selectedRect.r2 === visibleGridRows.length - 1;
-                    return (
-                      <th
-                        key={d}
-                        className={`col-day ${isToday ? 'is-today' : ''}`}
-                        scope="col"
-                      >
-                        <button
-                          type="button"
-                          className={`col-day-btn ${isColSelected ? 'is-col-selected' : ''}`}
-                          aria-label={`تحديد عمود ${formatArabicDateFull(d)}`}
-                          onClick={() => handleSelectDayColumn(colIdx)}
+        <div ref={desktopGridAreaRef}>
+          {oneGlanceMode ? (
+            <div className="overview-split" data-testid="one-glance-split">
+              {renderOneGlanceSideTable('TIME_BOUND')}
+              {renderOneGlanceSideTable('DAILY_GROUP')}
+            </div>
+          ) : (
+            <div className="ledger-table-wrap">
+              <table
+                className="ledger-table"
+                role="grid"
+                aria-multiselectable="true"
+                aria-label="الجدول الأسبوعي"
+              >
+                <thead>
+                  <tr role="row">
+                    <th className="col-action" scope="col">
+                      العمل
+                    </th>
+                    {weekDates.map((d, colIdx) => {
+                      const { day } = parseIsoDateParts(d);
+                      const dowName =
+                        AR_STRINGS.week.weekdaysAr[getIsoDayOfWeek(d)] ?? '';
+                      const isToday = d === todayIslamicDate;
+                      const isColSelected =
+                        selectedRect !== null &&
+                        selectedRect.c1 === colIdx &&
+                        selectedRect.c2 === colIdx &&
+                        selectedRect.r1 === 0 &&
+                        selectedRect.r2 === visibleGridRows.length - 1;
+                      return (
+                        <th
+                          key={d}
+                          className={`col-day ${isToday ? 'is-today' : ''}`}
+                          scope="col"
                         >
-                          <span>{dowName}</span>
-                          <span className="nums">{day}</span>
-                        </button>
-                      </th>
-                    );
-                  })}
-                  <th className="col-rate" scope="col">
-                    النسبة
-                  </th>
-                </tr>
-              </thead>
+                          <button
+                            type="button"
+                            className={`col-day-btn ${isColSelected ? 'is-col-selected' : ''}`}
+                            aria-label={`تحديد عمود ${formatArabicDateFull(d)}`}
+                            onClick={() => handleSelectDayColumn(colIdx)}
+                          >
+                            <span>{dowName}</span>
+                            <span className="nums">{day}</span>
+                          </button>
+                        </th>
+                      );
+                    })}
+                    <th className="col-rate" scope="col">
+                      النسبة
+                    </th>
+                  </tr>
+                </thead>
 
-              <tbody>
-                <tr className="side-label-row" role="row">
-                  <td colSpan={9}>{AR_STRINGS.week.rightSideTitle}</td>
-                </tr>
-                {activeGroups.right.map(renderStandardGroupRows)}
+                <tbody>
+                  <tr className="side-label-row" role="row">
+                    <td colSpan={9}>{AR_STRINGS.week.rightSideTitle}</td>
+                  </tr>
+                  {activeGroups.right.map(renderStandardGroupRows)}
 
-                <tr className="side-divider" aria-hidden="true">
-                  <td colSpan={9} />
-                </tr>
+                  <tr className="side-divider" aria-hidden="true">
+                    <td colSpan={9} />
+                  </tr>
 
-                <tr className="side-label-row" role="row">
-                  <td colSpan={9}>{AR_STRINGS.week.leftSideTitle}</td>
-                </tr>
-                {activeGroups.left.map(renderStandardGroupRows)}
-              </tbody>
-            </table>
-          </div>
-        )}
+                  <tr className="side-label-row" role="row">
+                    <td colSpan={9}>{AR_STRINGS.week.leftSideTitle}</td>
+                  </tr>
+                  {activeGroups.left.map(renderStandardGroupRows)}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         {/* Floating Bulk Selection Bar when >= 2 cells are selected */}
         {selectedCellCount >= 2 && (
           <div className="week-bulk-bar-wrap">
             <div
+              ref={bulkBarRef}
               className="week-bulk-bar"
               role="toolbar"
               aria-label="إجراءات التحديد المتعدد"
               data-testid="week-bulk-bar"
             >
               <span className="week-bulk-count nums">
-                تم تحديد {formatArabicCells(selectedCellCount)}
+                {formatArabicCells(selectedCellCount)}
               </span>
 
               <button
                 type="button"
                 className="btn btn-live"
+                aria-label="تم للكل"
                 onClick={() => {
                   void applyTargetStateToCoords(
                     getTargetCoords(),
                     { kind: 'DONE', percentValue: null },
-                    { showToast: true, actionNameAr: 'تم تحديد تم للكل' },
+                    {
+                      showToast: true,
+                      actionNameAr: 'تم تحديد تم للكل',
+                      clearSelection: true,
+                    },
                   );
                 }}
               >
                 <IconCheck size="sm" />
-                <span>تم للكل</span>
+                <span>تم</span>
               </button>
 
               <button
                 type="button"
                 className="btn btn-danger"
+                aria-label="فات للكل"
                 onClick={() => {
                   void applyTargetStateToCoords(
                     getTargetCoords(),
                     { kind: 'MISSED', percentValue: null },
-                    { showToast: true, actionNameAr: 'تم تحديد فات للكل' },
+                    {
+                      showToast: true,
+                      actionNameAr: 'تم تحديد فات للكل',
+                      clearSelection: true,
+                    },
                   );
                 }}
               >
                 <IconCross size="sm" />
-                <span>فات للكل</span>
+                <span>فات</span>
               </button>
+
+              {selectedHasPercentageEligible && (
+                <button
+                  type="button"
+                  className="btn"
+                  aria-label="نسبة 50%"
+                  onClick={() => {
+                    void applyTargetStateToCoords(
+                      getTargetCoords(),
+                      { kind: 'PERCENT', percentValue: 50 },
+                      {
+                        showToast: true,
+                        actionNameAr: 'تم تحديد 50%',
+                        clearSelection: true,
+                      },
+                    );
+                  }}
+                >
+                  <span className="nums">50%</span>
+                </button>
+              )}
 
               {selectedHasQadaaEligible && (
                 <button
@@ -2205,7 +2809,11 @@ export function WeekView({
                     void applyTargetStateToCoords(
                       getTargetCoords(),
                       { kind: 'QADAA_DONE', percentValue: null },
-                      { showToast: true, actionNameAr: 'تم تسجيل القضاء' },
+                      {
+                        showToast: true,
+                        actionNameAr: 'تم تسجيل القضاء',
+                        clearSelection: true,
+                      },
                     );
                   }}
                 >
@@ -2217,11 +2825,35 @@ export function WeekView({
               <button
                 type="button"
                 className="btn"
+                aria-label="تعطيل للكل"
+                onClick={() => {
+                  void applyTargetStateToCoords(
+                    getTargetCoords(),
+                    { kind: 'DISABLED', percentValue: null },
+                    {
+                      showToast: true,
+                      actionNameAr: 'تم تعطيل',
+                      clearSelection: true,
+                    },
+                  );
+                }}
+              >
+                <IconDash size="sm" />
+                <span>تعطيل</span>
+              </button>
+
+              <button
+                type="button"
+                className="btn"
                 onClick={() => {
                   void applyTargetStateToCoords(
                     getTargetCoords(),
                     { kind: 'EMPTY', percentValue: null },
-                    { showToast: true, actionNameAr: 'تم مسح الحالات' },
+                    {
+                      showToast: true,
+                      actionNameAr: 'تم مسح الحالات',
+                      clearSelection: true,
+                    },
                   );
                 }}
               >
@@ -2231,7 +2863,7 @@ export function WeekView({
               <button
                 type="button"
                 className="btn"
-                onClick={handleCopySelection}
+                onClick={() => handleCopySelection({ clearSelection: true })}
               >
                 <IconCopy size="sm" />
                 <span>نسخ</span>
@@ -2252,10 +2884,12 @@ export function WeekView({
 
               <button
                 type="button"
-                className="btn"
+                className="btn btn-icon week-bulk-close"
+                aria-label="إلغاء التحديد"
+                title="إلغاء التحديد (Esc)"
                 onClick={() => setSelection(null)}
               >
-                <span>إلغاء التحديد</span>
+                <IconX size="sm" />
               </button>
             </div>
           </div>
@@ -2337,8 +2971,8 @@ export function WeekView({
                         <div className="m-whoop-days">
                           {weekDates.map((d) => {
                             const display = resolveDisplay(action, d);
-                            const nonInteractive = isCellNonInteractive(
-                              display,
+                            const nonInteractive = isCellPostArchived(
+                              action,
                               d,
                             );
                             const hasNote = display.note.trim().length > 0;

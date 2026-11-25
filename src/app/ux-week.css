@@ -141,9 +141,15 @@
   color: var(--accent-live);
 }
 
-/* Google-Sheets-Like Grid Focus, Multi-Cell Range Selection & Copy Marquee */
+/* Google-Sheets-Like Grid Focus, Multi-Cell Range Selection, Fill Handle & Copy Marquee */
+.m-cell-wrap {
+  position: relative;
+  width: 100%;
+  display: flex;
+}
+
 .m-cell.is-grid-focused {
-  outline: 2px solid var(--accent-live);
+  outline: 1.5px solid var(--accent-live);
   outline-offset: -1px;
   z-index: 2;
 }
@@ -164,6 +170,191 @@
 .m-cell.is-grid-copied {
   outline: 1px dashed var(--accent-live);
   outline-offset: -1px;
+}
+
+.m-fill-handle {
+  position: absolute;
+  inset-block-end: -2px;
+  inset-inline-end: -2px;
+  width: 7px;
+  height: 7px;
+  background: var(--accent-live);
+  border: 1px solid var(--bg-surface);
+  border-radius: 1px;
+  cursor: crosshair;
+  z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast);
+}
+
+.m-cell-wrap.is-fill-eligible:hover .m-fill-handle,
+.m-cell-wrap.is-fill-eligible.has-focus .m-fill-handle,
+.m-cell-wrap.is-fill-source .m-fill-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.m-cell.is-fill-source {
+  outline: 2px solid var(--accent-live);
+  outline-offset: -1px;
+  z-index: 3;
+}
+
+.m-cell.is-fill-preview {
+  outline: 1.5px dashed var(--accent-live);
+  outline-offset: -1px;
+  z-index: 2;
+}
+
+.m-cell.is-fill-preview::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent-live-soft);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* 1-Click Row Selection Title Button + Period Header Selection + Hover Quick-Complete */
+.row-title-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding-block: 2px;
+  padding-inline: 5px;
+  border: 1px solid transparent;
+  border-radius: var(--r-cell);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+
+.row-title-btn:hover {
+  background: var(--bg-hover);
+  color: var(--ink-primary);
+}
+
+.row-title-btn.is-row-selected {
+  background: var(--accent-live-soft);
+  border-color: var(--accent-live);
+  color: var(--accent-live);
+}
+
+.overview-split .row-title-btn {
+  padding-block: 0;
+  padding-inline: 3px;
+  height: 22px;
+  line-height: 1.2;
+}
+
+.overview-split .ledger-table td.cell-period {
+  position: relative;
+}
+
+.cell-period-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.period-select-btn {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--r-cell);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  padding-block: 2px;
+  padding-inline: 3px;
+  cursor: pointer;
+  transition: background-color var(--t-fast), border-color var(--t-fast);
+}
+
+.period-select-btn:hover {
+  background: var(--bg-hover);
+}
+
+.period-quick-done-btn {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--done-border);
+  border-radius: var(--r-cell);
+  background: var(--done-fill);
+  color: var(--done-ink);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity var(--t-fast), background-color var(--t-fast);
+}
+
+.overview-split .ledger-table td.cell-period:hover .period-quick-done-btn,
+.overview-split .ledger-table td.cell-period:focus-within .period-quick-done-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.period-quick-done-btn:hover {
+  background: var(--accent-live);
+  border-color: var(--accent-live);
+  color: var(--bg-surface);
+}
+
+.group-row-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding-inline-end: 8px;
+}
+
+.group-row-bar .group-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.group-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.group-select-btn {
+  min-height: 24px;
+  padding-block: 2px;
+  padding-inline: 8px;
+  font-size: 0.72rem;
+}
+
+.group-row-bar .group-quick-done-btn {
+  position: static;
+  width: 24px;
+  height: 24px;
+}
+
+.ledger-table tbody tr.group-row:hover .group-quick-done-btn,
+.ledger-table tbody tr.group-row:focus-within .group-quick-done-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Action Row Title Layout + 6-Dot DnD Grip Handle (Desktop Standard Mode) */
@@ -271,9 +462,9 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding-block: 7px;
-  padding-inline: 12px;
+  gap: 4px;
+  padding-block: 5px;
+  padding-inline: 10px;
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-panel);
@@ -281,7 +472,7 @@
 }
 
 .week-bulk-count {
-  font-size: 0.8125rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--ink-primary);
   padding-inline-end: 8px;
@@ -289,10 +480,16 @@
 }
 
 .week-bulk-bar .btn {
-  min-height: 30px;
-  padding-block: 4px;
-  padding-inline: 9px;
-  font-size: 0.78rem;
+  min-height: 28px;
+  padding-block: 3px;
+  padding-inline: 8px;
+  font-size: 0.75rem;
+}
+
+.week-bulk-bar .week-bulk-close {
+  min-height: 28px;
+  width: 28px;
+  padding: 0;
 }
 
 /* Bug D Polish: One-Glance Mode Row Height, Cell Height & Left-Table Column Proportions */

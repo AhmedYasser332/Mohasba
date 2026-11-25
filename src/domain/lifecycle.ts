@@ -71,12 +71,26 @@ export function isPeriodActiveOnDate(
   return true;
 }
 
+export function isActionArchivedOnDate(
+  action: Pick<Action, 'archived_at'>,
+  logDate: string,
+): boolean {
+  return action.archived_at !== null && logDate > action.archived_at;
+}
+
+export function isPeriodArchivedOnDate(
+  period: Pick<Period, 'archived_at'>,
+  logDate: string,
+): boolean {
+  return period.archived_at !== null && logDate > period.archived_at;
+}
+
 export function resolveCellAvailability(
   action: Pick<Action, 'active_from' | 'archived_at' | 'default_disabled_days'>,
   log: Pick<DailyLog, 'availability_override'> | null | undefined,
   logDate: string,
 ): CellAvailability {
-  if (!isActionActiveOnDate(action, logDate)) {
+  if (isActionArchivedOnDate(action, logDate)) {
     return { isActive: false, isEnabled: false, reason: 'inactive' };
   }
 
@@ -299,7 +313,7 @@ function isEmptyEnabledCell(
 ): boolean {
   if (periodsById) {
     const period = periodsById.get(action.period_id);
-    if (!period || !isPeriodActiveOnDate(period, logDate)) {
+    if (!period || isPeriodArchivedOnDate(period, logDate)) {
       return false;
     }
   }
@@ -334,7 +348,7 @@ export function planMosqueDone(params: {
     if (
       !period ||
       period.side !== 'TIME_BOUND' ||
-      !isPeriodActiveOnDate(period, logDate)
+      isPeriodArchivedOnDate(period, logDate)
     ) {
       return [];
     }
@@ -386,7 +400,7 @@ export function planPeriodDone(params: {
     if (
       !period ||
       period.side !== 'TIME_BOUND' ||
-      !isPeriodActiveOnDate(period, logDate)
+      isPeriodArchivedOnDate(period, logDate)
     ) {
       return [];
     }

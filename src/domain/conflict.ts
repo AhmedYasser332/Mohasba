@@ -152,14 +152,6 @@ function prepareIncomingLog(params: {
     };
   }
 
-  if (incoming.log_date < action.active_from) {
-    return {
-      ok: false,
-      code: 'LOG_DATE_BEFORE_ACTIVE_FROM',
-      error: `log_date ${incoming.log_date} is before action active_from ${action.active_from}.`,
-    };
-  }
-
   if (action.archived_at !== null && incoming.log_date > action.archived_at) {
     return {
       ok: false,

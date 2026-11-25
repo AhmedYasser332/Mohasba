@@ -289,4 +289,39 @@ describe('analytics (3 Lean Insights)', () => {
     expect(res.pulse.backlog.loggingCoverage7d).toBeGreaterThan(0);
     expect(res.pulse.backlog.loggingCoverage7d).toBeLessThan(1);
   });
+
+  it('excludes unlogged pre-active_from days from analytics denominators even when pre-active_from days can be logged freely', () => {
+    const wednesdayActive = '2026-11-18';
+    const scopedBundle = buildStarterPack(wednesdayActive);
+    const fajrFard = scopedBundle.actions.find(
+      (a) => a.id === STARTER_PACK_ACTION_IDS.FAJR_FARD,
+    )!;
+    // Today is Friday 2026-11-20 (active days in 7d window: 18, 19, 20; pre-active_from: 14, 15, 16, 17).
+    // User backfilled 2026-11-16 (DONE) and left 14, 15, 17 unlogged; logged 18, 19, 20 DONE.
+    const logs: DailyLog[] = [
+      makeLog(fajrFard.id, '2026-11-16', { status: 'DONE' }),
+      makeLog(fajrFard.id, '2026-11-18', { status: 'DONE' }),
+      makeLog(fajrFard.id, '2026-11-19', { status: 'DONE' }),
+      makeLog(fajrFard.id, '2026-11-20', { status: 'DONE' }),
+      // Future pre-marked day 2026-11-21
+      makeLog(fajrFard.id, '2026-11-21', { status: 'MISSED' }),
+    ];
+
+    const res = computeAnalytics({
+      periods: scopedBundle.periods,
+      actions: [fajrFard],
+      targetVersions: scopedBundle.targetVersions,
+      logs,
+      todayIso: '2026-11-20',
+      windowDays: 7,
+    });
+
+    expect(res.pulse.backlog.logged7d).toBe(3);
+    expect(res.pulse.backlog.unloggedExpired7d).toBe(0);
+    expect(res.pulse.backlog.loggingCoverage7d).toBe(1);
+    expect(res.breakdown.timeBoundSummary.overall.loggedCount).toBe(3);
+    expect(res.breakdown.timeBoundSummary.overall.emptyExpiredCount).toBe(0);
+    expect(res.breakdown.timeBoundSummary.overall.weightedRate).toBe(1);
+    expect(res.pulse.qadaa.openQadaaCount).toBe(0);
+  });
 });

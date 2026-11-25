@@ -3,6 +3,8 @@ import {
   canonicalizeLogMutation,
   DomainRuleError,
   getEffectiveCellState,
+  isActionActiveOnDate,
+  isPeriodActiveOnDate,
   planDeferToQadaa,
   planMosqueDone,
   planNormalDay,
@@ -69,20 +71,45 @@ describe('lifecycle & bulk planners', () => {
       (a) => a.id === STARTER_PACK_ACTION_IDS.FRIDAY_KAHF_AND_SUNAN,
     )!;
 
-    it('respects active_from and archived_at bounds', () => {
+    it('allows editing pre-active_from and future dates while keeping archived_at locked and analytics/qadaa lifecycle helpers bounded', () => {
+      const fajrFard = actions.find(
+        (a) => a.id === STARTER_PACK_ACTION_IDS.FAJR_FARD,
+      )!;
       const archivedAction: Action = {
-        ...fridayKahf,
+        ...fajrFard,
         active_from: '2026-11-05',
         archived_at: '2026-11-15',
       };
+      // Pre-active_from date is editable (NOT locked as INACTIVE)
       expect(
         resolveCellAvailability(archivedAction, null, '2026-11-04').isActive,
+      ).toBe(true);
+      expect(
+        getEffectiveCellState(archivedAction, null, '2026-11-04', true),
+      ).toBe('UNLOGGED_EXPIRED');
+      expect(
+        getEffectiveCellState(
+          archivedAction,
+          makeLog(archivedAction.id, '2026-11-04', { status: 'DONE' }),
+          '2026-11-04',
+          true,
+        ),
+      ).toBe('DONE');
+      // Lifecycle helper still excludes pre-active_from for analytics & 48h catch-up
+      expect(isActionActiveOnDate(archivedAction, '2026-11-04')).toBe(false);
+      expect(
+        isPeriodActiveOnDate(
+          { active_from: '2026-11-05', archived_at: '2026-11-15' },
+          '2026-11-04',
+        ),
       ).toBe(false);
+
+      // Post-archived_at date remains locked as INACTIVE
       expect(
         resolveCellAvailability(archivedAction, null, '2026-11-16').isActive,
       ).toBe(false);
       expect(
-        getEffectiveCellState(archivedAction, null, '2026-11-04', true),
+        getEffectiveCellState(archivedAction, null, '2026-11-16', true),
       ).toBe('INACTIVE');
     });
 
@@ -422,6 +449,61 @@ describe('lifecycle & bulk planners', () => {
       expect(nextPlanned.map((p) => p.action_id)).toContain(
         STARTER_PACK_ACTION_IDS.QURAN_WIRD,
       );
+    });
+
+    it('planMosqueDone, planPeriodDone, and planNormalDay work on pre-active_from and future dates while respecting archived_at', () => {
+      const wednesdayPack = buildStarterPack('2026-11-25');
+      // Pre-active_from Saturday (2026-11-21) & future Friday (2026-11-27)
+      const preActiveSat = '2026-11-21';
+      const futureFri = '2026-11-27';
+
+      const preActiveMosque = planMosqueDone({
+        periodId: STARTER_PACK_PERIOD_IDS.ISHA_QIYAM,
+        logDate: preActiveSat,
+        actions: wednesdayPack.actions,
+        periods: wednesdayPack.periods,
+        logsByKey: new Map(),
+      });
+      expect(preActiveMosque.map((p) => p.action_id)).toContain(
+        STARTER_PACK_ACTION_IDS.ISHA_FARD,
+      );
+
+      const futurePeriod = planPeriodDone({
+        periodId: STARTER_PACK_PERIOD_IDS.ISHA_QIYAM,
+        logDate: futureFri,
+        actions: wednesdayPack.actions,
+        periods: wednesdayPack.periods,
+        logsByKey: new Map(),
+      });
+      expect(futurePeriod.map((p) => p.action_id)).toContain(
+        STARTER_PACK_ACTION_IDS.ISHA_FARD,
+      );
+
+      const preActiveNormal = planNormalDay({
+        logDate: preActiveSat,
+        actions: wednesdayPack.actions,
+        periods: wednesdayPack.periods,
+        logsByKey: new Map(),
+      });
+      expect(preActiveNormal.map((p) => p.action_id)).toContain(
+        STARTER_PACK_ACTION_IDS.QURAN_WIRD,
+      );
+
+      // Post-archived_at still returns empty for archived actions/periods
+      const archivedPeriods = wednesdayPack.periods.map((p) =>
+        p.id === STARTER_PACK_PERIOD_IDS.ISHA_QIYAM
+          ? { ...p, active_from: '2026-11-01', archived_at: '2026-11-24' }
+          : p,
+      );
+      expect(
+        planPeriodDone({
+          periodId: STARTER_PACK_PERIOD_IDS.ISHA_QIYAM,
+          logDate: futureFri,
+          actions: wednesdayPack.actions,
+          periods: archivedPeriods,
+          logsByKey: new Map(),
+        }),
+      ).toEqual([]);
     });
   });
 });

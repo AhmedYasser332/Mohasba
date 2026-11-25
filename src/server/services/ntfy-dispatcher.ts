@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { AR_STRINGS } from '@/domain/i18n/ar';
-import { resolveCellAvailability } from '@/domain/lifecycle';
+import {
+  isActionActiveOnDate,
+  resolveCellAvailability,
+} from '@/domain/lifecycle';
 import {
   addDaysIso,
   diffDaysIso,
@@ -361,6 +364,7 @@ export async function runCronTick(
           action.period_id === w.periodId ||
           action.bound_time_period_id === w.periodId;
         if (!belongsToPeriod) return false;
+        if (!isActionActiveOnDate(action, w.islamicDate)) return false;
         const log = logsByKey.get(makeCellKey(action.id, w.islamicDate));
         if (log?.status != null) return false;
         const avail = resolveCellAvailability(action, log, w.islamicDate);

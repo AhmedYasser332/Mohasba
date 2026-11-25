@@ -272,5 +272,37 @@ describe('targets & qadaa', () => {
       );
       expect(yesterdayIds).not.toContain(STARTER_PACK_ACTION_IDS.DHUHR_QABLIYAH);
     });
+
+    it('keeps pre-active_from cells out of 48h Catch-Up and Qadaa Queue even when editable', () => {
+      const wednesdayActive = buildStarterPack('2026-11-21');
+      const prayersToday = computePrayerTimesForDay('2026-11-21', SETTINGS);
+      const afterDhuhrToday = prayersToday.dhuhr + 10 * 60_000;
+
+      // Yesterday (2026-11-20) is before active_from (2026-11-21), even with an explicit MISSED log
+      const logs: DailyLog[] = [
+        makeLog(STARTER_PACK_ACTION_IDS.QURAN_WIRD, '2026-11-20', {
+          status: 'MISSED',
+        }),
+      ];
+
+      const catchUp = get48hCatchUpItems({
+        actions: wednesdayActive.actions,
+        periods: wednesdayActive.periods,
+        targetVersions: wednesdayActive.targetVersions,
+        logs,
+        settings: SETTINGS,
+        now: afterDhuhrToday,
+      });
+      expect(catchUp.some((item) => item.logDate === '2026-11-20')).toBe(false);
+
+      const qadaaQueue = getOpenQadaaQueue({
+        actions: wednesdayActive.actions,
+        periods: wednesdayActive.periods,
+        targetVersions: wednesdayActive.targetVersions,
+        logs,
+        todayIslamicDate: '2026-11-21',
+      });
+      expect(qadaaQueue).toHaveLength(0);
+    });
   });
 });

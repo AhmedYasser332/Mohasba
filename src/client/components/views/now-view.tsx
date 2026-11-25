@@ -6,8 +6,8 @@ import {
   addDaysIso,
   getIsoDayOfWeek,
   getWeekDates,
-  isActionActiveOnDate,
-  isPeriodActiveOnDate,
+  isActionArchivedOnDate,
+  isPeriodArchivedOnDate,
   parseIsoDateParts,
   planMosqueDone,
   planPeriodDone,
@@ -95,7 +95,7 @@ export function NowView({
   const activeTimePeriods = useMemo(
     () =>
       periods
-        .filter((p) => p.side === 'TIME_BOUND' && isPeriodActiveOnDate(p, selectedDate))
+        .filter((p) => p.side === 'TIME_BOUND' && !isPeriodArchivedOnDate(p, selectedDate))
         .sort((a, b) => a.sort_order - b.sort_order),
     [periods, selectedDate],
   );
@@ -103,7 +103,7 @@ export function NowView({
   const activeDailyGroups = useMemo(
     () =>
       periods
-        .filter((p) => p.side === 'DAILY_GROUP' && isPeriodActiveOnDate(p, selectedDate))
+        .filter((p) => p.side === 'DAILY_GROUP' && !isPeriodArchivedOnDate(p, selectedDate))
         .sort((a, b) => a.sort_order - b.sort_order),
     [periods, selectedDate],
   );
@@ -145,7 +145,7 @@ export function NowView({
       periods,
       settings,
       nowMs,
-      { includeInactive: false },
+      { includeInactive: true },
     );
     return new Map(resolved.map((w) => [w.periodId, w]));
   }, [nowMs, periods, selectedDate, settings]);
@@ -165,7 +165,7 @@ export function NowView({
       .filter(
         (a) =>
           a.period_id === activePeriod.id &&
-          isActionActiveOnDate(a, selectedDate),
+          !isActionArchivedOnDate(a, selectedDate),
       )
       .sort((a, b) => a.sort_order - b.sort_order);
   }, [actions, activePeriod, selectedDate]);
@@ -176,7 +176,7 @@ export function NowView({
       .filter(
         (a) =>
           a.bound_time_period_id === activePeriod.id &&
-          isActionActiveOnDate(a, selectedDate),
+          !isActionArchivedOnDate(a, selectedDate),
       )
       .sort((a, b) => a.sort_order - b.sort_order);
   }, [actions, activePeriod, selectedDate]);

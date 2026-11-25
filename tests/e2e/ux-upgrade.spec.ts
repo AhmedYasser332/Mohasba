@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { addDaysIso, resolveIslamicDate } from '../../src/domain/prayer-engine';
+import { addDaysIso, getWeekDates, resolveIslamicDate } from '../../src/domain/prayer-engine';
 import {
   STARTER_PACK_ACTION_IDS,
   STARTER_PACK_PERIOD_IDS,
@@ -144,9 +144,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
         isha: 0,
       },
     });
-    const sevenDaysAgo = addDaysIso(todayIslamic, -7);
+    const twoDaysAgo = addDaysIso(todayIslamic, -2);
+    const weekDates = getWeekDates(todayIslamic, 6);
+    const satDate = weekDates[0]!;
+    const friDate = weekDates[6]!;
 
-    // 1. Desktop 1440x900 Light Mode -> Unlock + Starter Pack + Backdate active_from to D-7 for catchup & full-week test coverage
+    // 1. Desktop 1440x900 Light Mode -> Unlock + Starter Pack + Backdate active_from to D-2 for catchup & pre-active_from Sat test coverage
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${BASE_URL}/`, { waitUntil: 'networkidle' });
 
@@ -166,7 +169,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await starterBtn.click();
     await expect(page.locator('.day-strip .day-tile')).toHaveCount(7);
 
-    // Backdate active_from to D-7 via /api/export + /api/import so yesterday's expired unlogged cells populate 48h catchup
+    // Backdate active_from to D-2 via /api/export + /api/import so yesterday populates 48h catchup while Sat (< D-2) stays pre-active_from
     await page.evaluate(async (activeFrom) => {
       const expRes = await fetch('/api/export', { credentials: 'same-origin' });
       if (!expRes.ok) throw new Error(`Export failed: ${expRes.status}`);
@@ -198,7 +201,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
         }),
       });
       if (!impRes.ok) throw new Error(`Import failed: ${impRes.status}`);
-    }, sevenDaysAgo);
+    }, twoDaysAgo);
 
     await page.reload({ waitUntil: 'networkidle' });
     await expect(page.locator('.day-strip .day-tile')).toHaveCount(7);
@@ -335,9 +338,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await page.keyboard.press('Control+KeyV');
     await expect(dhuhrCell).toHaveClass(/st-done/);
 
-    // 6e. Shift+Click multi-select 2+ cells -> verify floating bulk action bar appears and applies bulk DONE
+    // 6e. Shift+Click 3 cells + Auto-clear after bulk apply
     const asrFardCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.ASR_FARD}-${todayIslamic}`,
+    );
+    const asrJamaahCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ASR_JAMAAH}-${todayIslamic}`,
     );
     const asrAdhkarCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.ASR_ADHKAR}-${todayIslamic}`,
@@ -347,9 +353,148 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
 
     const bulkBar = page.getByTestId('week-bulk-bar');
     await expect(bulkBar).toBeVisible();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(3);
     await bulkBar.getByRole('button', { name: 'تم للكل' }).click();
     await expect(asrFardCell).toHaveClass(/st-done/);
+    await expect(asrJamaahCell).toHaveClass(/st-done/);
     await expect(asrAdhkarCell).toHaveClass(/st-done/);
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+    await expect(bulkBar).toHaveCount(0);
+
+    // 6f. Global Escape clearing (focus outside grid -> press Escape -> 0 selected & bulk bar gone)
+    await asrFardCell.focus();
+    await asrAdhkarCell.click({ modifiers: ['Shift'] });
+    await expect(bulkBar).toBeVisible();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(3);
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      document.body.focus();
+    });
+    await expect(bulkBar).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+    await expect(bulkBar).toHaveCount(0);
+
+    // 6g. Outside-click clearing (select cells -> click empty space outside table -> 0 selected & bulk bar gone)
+    await asrFardCell.focus();
+    await asrAdhkarCell.click({ modifiers: ['Shift'] });
+    await expect(bulkBar).toBeVisible();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(3);
+    await page.getByTestId('week-hint-strip').click();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+    await expect(bulkBar).toHaveCount(0);
+
+    // 6h. Google Sheets Fill Handle drag-to-paint (click ISHA_FARD -> DONE, drag fill-handle across 3 cells below)
+    const ishaFardCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ISHA_FARD}-${todayIslamic}`,
+    );
+    const ishaJamaahCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ISHA_JAMAAH}-${todayIslamic}`,
+    );
+    const ishaBadiyahCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ISHA_BADIYAH}-${todayIslamic}`,
+    );
+    const ishaWitrCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ISHA_WITR}-${todayIslamic}`,
+    );
+    await ishaFardCell.click();
+    await expect(ishaFardCell).toHaveClass(/st-done/);
+
+    const ishaFardWrap = ishaFardCell.locator('..');
+    const fillHandle = ishaFardWrap.getByTestId('fill-handle');
+    await expect(fillHandle).toBeVisible();
+    const handleBox = await fillHandle.boundingBox();
+    const targetBox = await ishaWitrCell.boundingBox();
+    if (!handleBox || !targetBox) {
+      throw new Error('Missing boundingBox for fill-handle drag test');
+    }
+
+    await page.mouse.move(
+      handleBox.x + handleBox.width / 2,
+      handleBox.y + handleBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      targetBox.x + targetBox.width / 2,
+      targetBox.y + targetBox.height / 2,
+      { steps: 12 },
+    );
+    await page.mouse.up();
+
+    await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
+    await expect(ishaJamaahCell).toHaveClass(/st-done/);
+    await expect(ishaBadiyahCell).toHaveClass(/st-done/);
+    await expect(ishaWitrCell).toHaveClass(/st-done/);
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+    await expect(bulkBar).toHaveCount(0);
+
+    // 6i. 1-click Action Title row selection -> 7 cells selected -> press 1 -> all 7 DONE & selection auto-clears
+    await page
+      .getByRole('button', { name: 'تحديد صف أذكار الصباح' })
+      .click();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(7);
+    await expect(bulkBar).toBeVisible();
+    await page.keyboard.press('Digit1');
+    for (const d of weekDates) {
+      await expect(
+        page.getByTestId(
+          `week-cell-${STARTER_PACK_ACTION_IDS.ADHKAR_MORNING}-${d}`,
+        ),
+      ).toHaveClass(/st-done/);
+    }
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+    await expect(bulkBar).toHaveCount(0);
+
+    // 6j. Period Header hover quick-complete -> hover .cell-period and click .period-quick-done-btn
+    const maghribFardCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.MAGHRIB_FARD}-${todayIslamic}`,
+    );
+    await maghribFardCell.focus();
+    const maghribPeriodTd = page.locator('td.cell-period', {
+      hasText: 'المغرب',
+    });
+    await maghribPeriodTd.hover();
+    await maghribPeriodTd.locator('.period-quick-done-btn').click();
+    for (const actionId of [
+      STARTER_PACK_ACTION_IDS.MAGHRIB_FARD,
+      STARTER_PACK_ACTION_IDS.MAGHRIB_JAMAAH,
+      STARTER_PACK_ACTION_IDS.MAGHRIB_BADIYAH,
+      STARTER_PACK_ACTION_IDS.MAGHRIB_ADHKAR,
+    ]) {
+      await expect(
+        page.getByTestId(`week-cell-${actionId}-${todayIslamic}`),
+      ).toHaveClass(/st-done/);
+    }
+
+    // 6k. Unrestricted past (pre-active_from Sat) & future (Fri) editing + persistence across reload
+    const pastPreActiveDate =
+      satDate < twoDaysAgo ? satDate : addDaysIso(twoDaysAgo, -1);
+    const futureDate =
+      friDate > todayIslamic ? friDate : addDaysIso(todayIslamic, 1);
+
+    if (satDate >= twoDaysAgo) {
+      await page.getByRole('button', { name: 'الأسبوع السابق' }).click();
+    }
+    const pastCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${pastPreActiveDate}`,
+    );
+    await pastCell.click();
+    await expect(pastCell).toHaveClass(/st-done/);
+    if (satDate >= twoDaysAgo) {
+      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+    }
+
+    if (friDate <= todayIslamic) {
+      await page.getByRole('button', { name: 'الأسبوع التالي' }).click();
+    }
+    const futureCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${futureDate}`,
+    );
+    await futureCell.click();
+    await expect(futureCell).toHaveClass(/st-done/);
+    if (friDate <= todayIslamic) {
+      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+    }
 
     // Put Quran cell into 50% and Fajr Fard into DONE for a rich One-Glance screenshot, then wait for sync
     await quranCell.click();
@@ -360,6 +505,10 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       path: `${SCREENSHOT_DIR}/desktop-week-oneglance-light.png`,
       fullPage: false,
     });
+    await page.screenshot({
+      path: `${SCREENSHOT_DIR}/desktop-week-fill-handle.png`,
+      fullPage: false,
+    });
 
     await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
     await expect(page.getByTestId('sync-badge-btn')).toHaveAttribute(
@@ -367,6 +516,38 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       'synced',
       { timeout: 10_000 },
     );
+
+    // Reload and verify unrestricted past (pre-active_from) & future edits persisted in Postgres
+    await page.reload({ waitUntil: 'networkidle' });
+    await page
+      .locator('.desktop-rail')
+      .getByRole('button', { name: 'الجدول الأسبوعي' })
+      .click();
+    await page.getByRole('tab', { name: 'نظرة واحدة' }).click();
+
+    if (satDate >= twoDaysAgo) {
+      await page.getByRole('button', { name: 'الأسبوع السابق' }).click();
+    }
+    await expect(
+      page.getByTestId(
+        `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${pastPreActiveDate}`,
+      ),
+    ).toHaveClass(/st-done/);
+    if (satDate >= twoDaysAgo) {
+      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+    }
+
+    if (friDate <= todayIslamic) {
+      await page.getByRole('button', { name: 'الأسبوع التالي' }).click();
+    }
+    await expect(
+      page.getByTestId(
+        `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${futureDate}`,
+      ),
+    ).toHaveClass(/st-done/);
+    if (friDate <= todayIslamic) {
+      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+    }
 
     // 7. Settings: Accordions, 6-Dot DnD (zero arrow buttons), In-App ntfy, Keyboard Shortcuts, General Preferences
     await page.getByRole('button', { name: 'فتح القائمة الجانبية' }).click();

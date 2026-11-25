@@ -93,6 +93,7 @@ export function getOpenQadaaQueue(params: {
 
     const action = actionsById.get(log.action_id);
     if (!action || !action.is_qadaa_eligible) continue;
+    if (!isActionActiveOnDate(action, log.log_date)) continue;
 
     const period = periodsById.get(action.period_id) ?? null;
     if (period && !isPeriodActiveOnDate(period, log.log_date)) continue;
@@ -157,6 +158,7 @@ export function get48hCatchUpItems(params: {
 
   for (const logDate of dates) {
     for (const action of actions) {
+      if (!isActionActiveOnDate(action, logDate)) continue;
       const period = periodsById.get(action.period_id) ?? null;
       if (!period || !isPeriodActiveOnDate(period, logDate)) continue;
 
@@ -260,6 +262,7 @@ export function getNonRecoverableMisses(params: {
 
     const action = actionsById.get(log.action_id);
     if (!action || action.is_qadaa_eligible) continue;
+    if (!isActionActiveOnDate(action, log.log_date)) continue;
 
     const period = periodsById.get(action.period_id) ?? null;
     if (period && !isPeriodActiveOnDate(period, log.log_date)) continue;

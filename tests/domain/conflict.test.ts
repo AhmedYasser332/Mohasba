@@ -385,6 +385,74 @@ describe('conflict resolution & import merge', () => {
     expect(rejected.kind).toBe('rejected');
   });
 
+  it('commits pre-active_from backfill and future-date mutations cleanly in sync and import', () => {
+    // Action onboarded Wednesday 2026-11-25; user backfills Saturday 2026-11-21 and pre-marks Friday 2026-11-27
+    const onboardedAction: Action = {
+      ...quranAction,
+      active_from: '2026-11-25',
+      archived_at: null,
+    };
+
+    const preActiveSync = resolveSyncConflict({
+      serverRow: null,
+      mutation: makeMutation({
+        log_date: '2026-11-21',
+        status: 'DONE',
+        client_target_version_id: null,
+        client_updated_at: '2026-11-25T10:00:00.000Z',
+      }),
+      action: onboardedAction,
+      targetVersions,
+      serverNow: '2026-11-25T10:01:00.000Z',
+    });
+    expect(preActiveSync.kind).toBe('commit');
+    if (preActiveSync.kind === 'commit') {
+      expect(preActiveSync.resolution).toBe('fast_path_create');
+      expect(preActiveSync.item.log_date).toBe('2026-11-21');
+      expect(preActiveSync.item.status).toBe('DONE');
+    }
+
+    const futureSync = resolveSyncConflict({
+      serverRow: null,
+      mutation: makeMutation({
+        mutation_id: MUT_2,
+        log_date: '2026-11-27',
+        status: 'DONE',
+        client_target_version_id: null,
+        client_updated_at: '2026-11-25T10:00:00.000Z',
+      }),
+      action: onboardedAction,
+      targetVersions,
+      serverNow: '2026-11-25T10:01:00.000Z',
+    });
+    expect(futureSync.kind).toBe('commit');
+    if (futureSync.kind === 'commit') {
+      expect(futureSync.resolution).toBe('fast_path_create');
+      expect(futureSync.item.log_date).toBe('2026-11-27');
+      expect(futureSync.item.status).toBe('DONE');
+    }
+
+    const preActiveImport = resolveImportMerge({
+      existingRow: null,
+      importedRow: {
+        action_id: onboardedAction.id,
+        log_date: '2026-11-21',
+        availability_override: null,
+        status: 'DONE',
+        percent_value: null,
+        qadaa_resolved_at: null,
+        target_version_id: null,
+        note: null,
+        note_updated_at: null,
+        client_updated_at: '2026-11-25T10:00:00.000Z',
+      },
+      action: onboardedAction,
+      targetVersions,
+      serverNow: '2026-11-25T10:01:00.000Z',
+    });
+    expect(preActiveImport.kind).toBe('merge');
+  });
+
   it('retains offline client_target_version_id when PC upgraded target effective same Day D, and rejects cross-action version', () => {
     const quranV2: TargetVersion = {
       id: '30000000-0000-4000-8000-000000000099',

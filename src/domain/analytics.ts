@@ -577,6 +577,7 @@ function computePulse(ctx: AnalyticsContext): AnalyticsResult['pulse'] {
   for (const log of logs) {
     const action = actionsById.get(log.action_id);
     if (!action || !action.is_qadaa_eligible) continue;
+    if (!isActionActiveOnDate(action, log.log_date)) continue;
     const period = periodsById.get(action.period_id);
     if (period && !isPeriodActiveOnDate(period, log.log_date)) continue;
     if (!resolveCellAvailability(action, log, log.log_date).isEnabled) continue;
