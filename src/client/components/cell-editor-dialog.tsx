@@ -117,15 +117,24 @@ function CellEditorContent({
     requestCloseRef.current = handleRequestClose;
   }, [handleRequestClose, requestCloseRef]);
 
-  const commitSave = async () => {
+  const commitSave = async (override?: {
+    choice?: EditorChoice;
+    percentVal?: number;
+    confirmedDisable?: boolean;
+  }) => {
     if (saving) return;
     setConfirmDiscardOpen(false);
 
+    const nextChoice = override?.choice ?? choice;
+    const nextPercentVal = override?.percentVal ?? percentVal;
+    const disableConfirmed = override?.confirmedDisable || confirmDisableOpen;
+
     if (
-      choice === 'DISABLED' &&
+      nextChoice === 'DISABLED' &&
       hasExistingLoggedStatus &&
-      !confirmDisableOpen
+      !disableConfirmed
     ) {
+      setChoice('DISABLED');
       setConfirmDisableOpen(true);
       return;
     }
@@ -136,27 +145,27 @@ function CellEditorContent({
       let status: CellStatus | null = null;
       let pct: number | null = null;
 
-      if (choice === 'DISABLED') {
+      if (nextChoice === 'DISABLED') {
         availabilityOverride = 'DISABLED';
         status = null;
-      } else if (choice === 'EMPTY') {
+      } else if (nextChoice === 'EMPTY') {
         availabilityOverride = isDefaultOff ? 'ENABLED' : null;
         status = null;
-      } else if (choice === 'PERCENT') {
+      } else if (nextChoice === 'PERCENT') {
         availabilityOverride = isDefaultOff ? 'ENABLED' : null;
-        if (percentVal >= 100) {
+        if (nextPercentVal >= 100) {
           status = 'DONE';
           pct = null;
-        } else if (percentVal <= 0) {
+        } else if (nextPercentVal <= 0) {
           status = 'MISSED';
           pct = null;
         } else {
           status = 'PERCENT';
-          pct = percentVal;
+          pct = nextPercentVal;
         }
       } else {
         availabilityOverride = isDefaultOff ? 'ENABLED' : null;
-        status = choice;
+        status = nextChoice;
       }
 
       const trimmedNote = note.trim();
@@ -183,6 +192,22 @@ function CellEditorContent({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleQuickCommitChip = (
+    nextChoice: EditorChoice,
+    nextPercentVal?: number,
+  ) => {
+    if (saving) return;
+    setChoice(nextChoice);
+    if (nextPercentVal !== undefined) {
+      setPercentVal(nextPercentVal);
+    }
+    setConfirmDiscardOpen(false);
+    if (nextChoice !== 'DISABLED') {
+      setConfirmDisableOpen(false);
+    }
+    void commitSave({ choice: nextChoice, percentVal: nextPercentVal });
   };
 
   return (
@@ -214,7 +239,8 @@ function CellEditorContent({
             type="button"
             className={`btn ${choice === 'DONE' ? 'btn-live' : ''}`}
             aria-pressed={choice === 'DONE'}
-            onClick={() => handleSelectChoice('DONE')}
+            disabled={saving}
+            onClick={() => handleQuickCommitChip('DONE')}
           >
             <IconCheck size="sm" />
             <span>{AR_STRINGS.statuses.DONE}</span>
@@ -224,7 +250,8 @@ function CellEditorContent({
             type="button"
             className={`btn ${choice === 'MISSED' ? 'btn-danger' : ''}`}
             aria-pressed={choice === 'MISSED'}
-            onClick={() => handleSelectChoice('MISSED')}
+            disabled={saving}
+            onClick={() => handleQuickCommitChip('MISSED')}
           >
             <IconCross size="sm" />
             <span>{AR_STRINGS.statuses.MISSED}</span>
@@ -235,7 +262,8 @@ function CellEditorContent({
               type="button"
               className={`btn ${choice === 'QADAA_DONE' ? 'btn-live' : ''}`}
               aria-pressed={choice === 'QADAA_DONE'}
-              onClick={() => handleSelectChoice('QADAA_DONE')}
+              disabled={saving}
+              onClick={() => handleQuickCommitChip('QADAA_DONE')}
             >
               <IconQadaa size="sm" />
               <span>{AR_STRINGS.statuses.QADAA_DONE}</span>
@@ -246,7 +274,8 @@ function CellEditorContent({
             type="button"
             className={`btn ${choice === 'DISABLED' ? 'btn-primary' : ''}`}
             aria-pressed={choice === 'DISABLED'}
-            onClick={() => handleSelectChoice('DISABLED')}
+            disabled={saving}
+            onClick={() => handleQuickCommitChip('DISABLED')}
           >
             <IconDash size="sm" />
             <span>معذور / تعطيل اليوم</span>
@@ -256,7 +285,8 @@ function CellEditorContent({
             type="button"
             className={`btn ${choice === 'EMPTY' ? 'btn-primary' : ''}`}
             aria-pressed={choice === 'EMPTY'}
-            onClick={() => handleSelectChoice('EMPTY')}
+            disabled={saving}
+            onClick={() => handleQuickCommitChip('EMPTY')}
           >
             <span>
               {isDefaultOff
@@ -320,10 +350,8 @@ function CellEditorContent({
                     type="button"
                     className={`pct-chip nums ${isSelected ? 'selected-pct' : ''}`}
                     aria-pressed={isSelected}
-                    onClick={() => {
-                      setPercentVal(step);
-                      handleSelectChoice('PERCENT');
-                    }}
+                    disabled={saving}
+                    onClick={() => handleQuickCommitChip('PERCENT', step)}
                   >
                     {step}%
                   </button>
@@ -333,7 +361,8 @@ function CellEditorContent({
                 type="button"
                 className={`pct-chip nums ${choice === 'DONE' ? 'selected-done' : ''}`}
                 aria-pressed={choice === 'DONE'}
-                onClick={() => handleSelectChoice('DONE')}
+                disabled={saving}
+                onClick={() => handleQuickCommitChip('DONE')}
               >
                 100%
               </button>
@@ -352,7 +381,10 @@ function CellEditorContent({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => {
-                  void commitSave();
+                  void commitSave({
+                    choice: 'DISABLED',
+                    confirmedDisable: true,
+                  });
                 }}
                 disabled={saving}
               >

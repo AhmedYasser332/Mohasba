@@ -219,7 +219,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     // 3. Bug A: Topbar .top-bar-inner 100% inside viewport on 1440x900
     await assertTopBarInsideViewport(page, 1440, 900);
 
-    // 4. Opus A1 (Stale-date banner) + Bug C: الضحى والصباح hides btn-mosque-done (no dead disabled mosque button)
+    // 4. Opus A1 (Stale-date banner) + 20-min visibilitychange auto-snap + Bug C (الضحى والصباح hides btn-mosque-done)
     await page
       .locator('.day-strip .day-tile:not(:has(.day-tile-dot))')
       .first()
@@ -230,6 +230,87 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     );
     await page.getByTestId('stale-date-reset-btn').click();
     await expect(page.getByTestId('stale-date-banner')).toHaveCount(0);
+
+    // 20-min idle auto-snap: short absence (5 min) preserves manual day & period; >20 min absence snaps back to today & live prayer window
+    await page
+      .locator('.day-strip .day-tile:not(:has(.day-tile-dot))')
+      .first()
+      .click();
+    await page.getByRole('tab', { name: 'الضحى والصباح' }).click();
+    await expect(page.getByTestId('stale-date-banner')).toBeVisible();
+    await expect(page).toHaveURL(/date=/);
+    await expect(page).toHaveURL(/period=/);
+
+    await page.evaluate((deltaMs) => {
+      const realNow = Date.now;
+      const now = realNow();
+      let mockNow = now - deltaMs;
+      Date.now = () => mockNow;
+      const origDesc = Object.getOwnPropertyDescriptor(
+        Document.prototype,
+        'visibilityState',
+      );
+      try {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'hidden',
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+        mockNow = now;
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'visible',
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+      } finally {
+        Date.now = realNow;
+        if (origDesc) {
+          Object.defineProperty(document, 'visibilityState', origDesc);
+        } else {
+          delete (document as unknown as Record<string, unknown>)
+            .visibilityState;
+        }
+      }
+    }, 5 * 60 * 1000);
+    // 5-minute away must NOT snap away
+    await expect(page.getByTestId('stale-date-banner')).toBeVisible();
+    await expect(page).toHaveURL(/period=/);
+
+    await page.evaluate((deltaMs) => {
+      const realNow = Date.now;
+      const now = realNow();
+      let mockNow = now - deltaMs;
+      Date.now = () => mockNow;
+      const origDesc = Object.getOwnPropertyDescriptor(
+        Document.prototype,
+        'visibilityState',
+      );
+      try {
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'hidden',
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+        mockNow = now;
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'visible',
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+      } finally {
+        Date.now = realNow;
+        if (origDesc) {
+          Object.defineProperty(document, 'visibilityState', origDesc);
+        } else {
+          delete (document as unknown as Record<string, unknown>)
+            .visibilityState;
+        }
+      }
+    }, 21 * 60 * 1000);
+    // >20-minute away snaps back to today & live window cleanly
+    await expect(page.getByTestId('stale-date-banner')).toHaveCount(0);
+    await expect(page).not.toHaveURL(/date=/);
+    await expect(page).not.toHaveURL(/period=/);
 
     await page.getByRole('tab', { name: 'الضحى والصباح' }).click();
     await expect(
@@ -330,7 +411,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(quranCell).not.toHaveClass(/st-done|st-missed|st-percent/);
 
-    // 6c. Right-click cell -> opens CellEditorDialog, Opus A6 unsaved-note guard on إلغاء -> حفظ وإغلاق saves DONE + personal note -> verify .m-cell-note-dot renders
+    // 6c. Right-click cell -> instant chip commit (تم commits & closes immediately + 5s Undo toast), then re-open -> Opus A6 unsaved-note guard on إلغاء -> حفظ وإغلاق saves note -> verify .m-cell-note-dot renders
     const dhuhaCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.DHUHA_PRAYER}-${todayIslamic}`,
     );
@@ -339,6 +420,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const editorDialog = page.locator('dialog.app-dialog[open]');
     await expect(editorDialog).toBeVisible();
     await editorDialog.getByRole('button', { name: 'تم', exact: true }).click();
+    await expect(editorDialog).toBeHidden();
+    await expect(dhuhaCell).toHaveClass(/st-done/);
+    await expect(page.getByTestId('undo-toast')).toBeVisible();
+
+    await dhuhaCell.click({ button: 'right' });
+    await expect(editorDialog).toBeVisible();
     await editorDialog.locator('textarea').fill('ملاحظة اختبار UX');
     await editorDialog.getByRole('button', { name: 'إلغاء' }).click();
     await expect(

@@ -67,6 +67,8 @@ const VALID_VIEWS = new Set<AppView>([
   'settings',
 ]);
 
+const NOW_IDLE_SNAP_MS = 20 * 60 * 1000;
+
 function parseUrlParams(search: string): UrlParamsState {
   const params = new URLSearchParams(search);
   const rawView = params.get('view');
@@ -273,6 +275,7 @@ export function MohasbaAppShell() {
 
   const syncWrapRef = useRef<HTMLDivElement | null>(null);
   const shortcutsDialogRef = useRef<HTMLDialogElement | null>(null);
+  const hiddenAtRef = useRef<number | null>(null);
 
   const showOnboarding =
     authStatus === 'unlocked' &&
@@ -530,6 +533,43 @@ export function MohasbaAppShell() {
     todayIslamicDate,
     updateUrlState,
   ]);
+
+  // Auto-snap Now view back to today & live prayer window after >20 min backgrounded
+  useEffect(() => {
+    if (!showWorkspaceViews) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        const hiddenAt = hiddenAtRef.current;
+        hiddenAtRef.current = null;
+        if (
+          hiddenAt !== null &&
+          Date.now() - hiddenAt >= NOW_IDLE_SNAP_MS &&
+          effectiveUrlState.view === 'now' &&
+          (effectiveUrlState.date !== null ||
+            effectiveUrlState.period !== null) &&
+          document.querySelector('dialog[open]') === null
+        ) {
+          updateUrlState(
+            {
+              ...effectiveUrlState,
+              view: 'now',
+              date: null,
+              period: null,
+            },
+            'replace',
+          );
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [effectiveUrlState, showWorkspaceViews, updateUrlState]);
 
   // Close sync popover on outside click or Escape
   useEffect(() => {

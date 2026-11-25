@@ -493,9 +493,8 @@ test.describe('Stage 8: Real Dual-Browser Airplane-Mode Phone vs Online PC Sync 
 
       const cellDialog = pcPage.locator('dialog.app-dialog[open]');
       await expect(cellDialog).toBeVisible();
-      await cellDialog.getByRole('button', { name: 'فات', exact: true }).click();
       await cellDialog.locator('textarea').fill(independentNote);
-      await cellDialog.getByTestId('cell-editor-save').click();
+      await cellDialog.getByRole('button', { name: 'فات', exact: true }).click();
       await expect(cellDialog).toBeHidden();
 
       await expect(pcPage.getByTestId('undo-toast')).toBeHidden({

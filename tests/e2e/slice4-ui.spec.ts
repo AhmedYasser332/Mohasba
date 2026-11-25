@@ -226,7 +226,7 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.waitForTimeout(220);
 
-    // Open Cell Editor <dialog> via right-click on Quran Wird (supports_percentage) and save 50% + note
+    // Open Cell Editor <dialog> via right-click on Quran Wird (supports_percentage): fill note then tap 50% chip -> instant commit & close
     const quranRow = page
       .locator('.overview-split tr.data-row')
       .filter({ hasText: 'ورد قراءة القرآن' })
@@ -238,11 +238,11 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
 
     const dialog = page.locator('dialog.app-dialog[open]');
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: '50%' }).click();
     await dialog.locator('textarea').fill('ملاحظة اختبار 50%');
-    await dialog.getByTestId('cell-editor-save').click();
+    await dialog.getByRole('button', { name: '50%' }).click();
     await expect(dialog).toBeHidden();
     await expect(targetQuranCell).toContainText('50%');
+    await expect(targetQuranCell.locator('.m-cell-note-dot')).toBeVisible();
 
     // Wait for 5s Undo hold to expire and sync before capturing mobile screenshots
     await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
