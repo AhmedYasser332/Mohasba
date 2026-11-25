@@ -496,6 +496,117 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
     }
 
+    // 6l. Crosshair hover & focus highlight (.is-row-crosshair & .is-col-crosshair)
+    await fajrCell.hover();
+    await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
+      /is-row-crosshair/,
+    );
+    const todayColIdx = weekDates.indexOf(todayIslamic);
+    await expect(
+      page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
+    ).toHaveClass(/is-col-crosshair/);
+    await fajrCell.focus();
+    await page.mouse.move(10, 10);
+    await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
+      /is-row-crosshair/,
+    );
+
+    // 6m. Global Ctrl+Z after bulk bar click + focus restoration + Ctrl+Y Redo
+    const habitNoSnoozeCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.HABIT_NO_SNOOZE}-${todayIslamic}`,
+    );
+    const habitLowerGazeCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.HABIT_LOWER_GAZE}-${todayIslamic}`,
+    );
+    await habitNoSnoozeCell.focus();
+    await habitLowerGazeCell.click({ modifiers: ['Shift'] });
+    await expect(bulkBar).toBeVisible();
+    await bulkBar.getByRole('button', { name: 'تم للكل' }).click();
+    await expect(habitNoSnoozeCell).toHaveClass(/st-done/);
+    await expect(habitLowerGazeCell).toHaveClass(/st-done/);
+    await expect(habitLowerGazeCell).toBeFocused();
+
+    await page.keyboard.press('Control+KeyZ');
+    await expect(habitNoSnoozeCell).not.toHaveClass(/st-done/);
+    await expect(habitLowerGazeCell).not.toHaveClass(/st-done/);
+
+    await page.keyboard.press('Control+KeyY');
+    await expect(habitNoSnoozeCell).toHaveClass(/st-done/);
+    await expect(habitLowerGazeCell).toHaveClass(/st-done/);
+
+    // 6n. Ctrl+D Fill Down from ADHKAR_MORNING (DONE) into ADHKAR_EVENING
+    const adhkarEveningCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ADHKAR_EVENING}-${todayIslamic}`,
+    );
+    const adhkarSleepCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ADHKAR_SLEEP}-${todayIslamic}`,
+    );
+    await adhkarEveningCell.focus();
+    await page.keyboard.press('Control+KeyD');
+    await expect(adhkarEveningCell).toHaveClass(/st-done/);
+
+    // 6o. Ctrl+X Cut ADHKAR_EVENING -> EMPTY, then Ctrl+V onto ADHKAR_SLEEP
+    await adhkarEveningCell.focus();
+    await page.keyboard.press('Control+KeyX');
+    await expect(adhkarEveningCell).not.toHaveClass(/st-done/);
+    await page.keyboard.press('ArrowDown');
+    await expect(adhkarSleepCell).toBeFocused();
+    await page.keyboard.press('Control+KeyV');
+    await expect(adhkarSleepCell).toHaveClass(/st-done/);
+
+    // 6p. Ctrl+A Select All active side (TIME_BOUND) + outer perimeter classes + Esc focus restore
+    await fajrCell.focus();
+    await page.keyboard.press('Control+KeyA');
+    await expect(bulkBar).toBeVisible();
+    await expect(bulkBar).toContainText('161 خانة');
+    const firstTimeBoundCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${weekDates[0]!}`,
+    );
+    const lastTimeBoundCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ISHA_FILL_MOHASBA}-${weekDates[6]!}`,
+    );
+    await expect(firstTimeBoundCell).toHaveClass(/is-sel-top/);
+    await expect(firstTimeBoundCell).toHaveClass(/is-sel-start/);
+    await expect(lastTimeBoundCell).toHaveClass(/is-sel-bottom/);
+    await expect(lastTimeBoundCell).toHaveClass(/is-sel-end/);
+    const nativeSelectedText = await page.evaluate(
+      () => window.getSelection()?.toString() ?? '',
+    );
+    expect(nativeSelectedText).toBe('');
+    await page.keyboard.press('Escape');
+    await expect(bulkBar).toHaveCount(0);
+    await expect(fajrCell).toBeFocused();
+
+    // 6q. Ctrl+Click non-contiguous multi-selection -> Digit1 marks both DONE
+    const fajrJamaahCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_JAMAAH}-${todayIslamic}`,
+    );
+    const habitCharityCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.HABIT_CHARITY_OR_KINDNESS}-${todayIslamic}`,
+    );
+    await fajrJamaahCell.click({ modifiers: ['Control'] });
+    await habitCharityCell.click({ modifiers: ['Control'] });
+    await expect(bulkBar).toBeVisible();
+    await expect(bulkBar).toContainText('خانتين');
+    await page.keyboard.press('Digit1');
+    await expect(fajrJamaahCell).toHaveClass(/st-done/);
+    await expect(habitCharityCell).toHaveClass(/st-done/);
+    await expect(bulkBar).toHaveCount(0);
+
+    // 6r. Fill Handle double-click auto-fill to end of DHUHR period
+    await dhuhrCell.focus();
+    await dhuhrCell.locator('..').getByTestId('fill-handle').dblclick();
+    for (const actionId of [
+      STARTER_PACK_ACTION_IDS.DHUHR_JAMAAH,
+      STARTER_PACK_ACTION_IDS.DHUHR_QABLIYAH,
+      STARTER_PACK_ACTION_IDS.DHUHR_BADIYAH,
+      STARTER_PACK_ACTION_IDS.DHUHR_ADHKAR,
+    ]) {
+      await expect(
+        page.getByTestId(`week-cell-${actionId}-${todayIslamic}`),
+      ).toHaveClass(/st-done/);
+    }
+
     // Put Quran cell into 50% and Fajr Fard into DONE for a rich One-Glance screenshot, then wait for sync
     await quranCell.click();
     await quranCell.click();

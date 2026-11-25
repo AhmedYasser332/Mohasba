@@ -109,11 +109,11 @@ interface ClipboardMatrix {
 }
 
 interface FillDragState {
-  source: GridCoord;
+  sourceRect: GridRect;
+  sourceMatrix: ClipboardMatrix;
   startX: number;
   startY: number;
   target: GridCoord;
-  sourceSnapshot: ClipboardCellSnapshot;
   sourceSide: 'TIME_BOUND' | 'DAILY_GROUP';
 }
 
@@ -121,6 +121,7 @@ interface SessionUndoEntry {
   batchId: string | null;
   mutationId: string | null;
   priorInputs: CellMutationInput[];
+  appliedInputs: CellMutationInput[];
 }
 
 const SINGLE_CLICK_COALESCE_HOLD_MS = 1_200;
@@ -148,49 +149,67 @@ function isCoordInRect(row: number, col: number, rect: GridRect | null): boolean
   return row >= rect.r1 && row <= rect.r2 && col >= rect.c1 && col <= rect.c2;
 }
 
-function isCoordInFillDrag(
-  row: number,
-  col: number,
-  fillDrag: FillDragState | null,
-): boolean {
-  if (!fillDrag) return false;
-  const { source, target } = fillDrag;
-  if (target.row !== source.row) {
-    return (
-      col === source.col &&
-      row >= Math.min(source.row, target.row) &&
-      row <= Math.max(source.row, target.row)
-    );
+function getFillPreviewRect(fillDrag: FillDragState | null): GridRect | null {
+  if (!fillDrag) return null;
+  const { sourceRect, target } = fillDrag;
+  if (target.row > sourceRect.r2) {
+    return {
+      r1: sourceRect.r2 + 1,
+      r2: target.row,
+      c1: sourceRect.c1,
+      c2: sourceRect.c2,
+    };
   }
-  if (target.col !== source.col) {
-    return (
-      row === source.row &&
-      col >= Math.min(source.col, target.col) &&
-      col <= Math.max(source.col, target.col)
-    );
+  if (target.row < sourceRect.r1) {
+    return {
+      r1: target.row,
+      r2: sourceRect.r1 - 1,
+      c1: sourceRect.c1,
+      c2: sourceRect.c2,
+    };
   }
-  return row === source.row && col === source.col;
+  if (target.col > sourceRect.c2) {
+    return {
+      r1: sourceRect.r1,
+      r2: sourceRect.r2,
+      c1: sourceRect.c2 + 1,
+      c2: target.col,
+    };
+  }
+  if (target.col < sourceRect.c1) {
+    return {
+      r1: sourceRect.r1,
+      r2: sourceRect.r2,
+      c1: target.col,
+      c2: sourceRect.c1 - 1,
+    };
+  }
+  return null;
 }
 
-function getFillTargetCoords(fillDrag: FillDragState): GridCoord[] {
-  const { source, target } = fillDrag;
-  const coords: GridCoord[] = [];
-  if (target.row !== source.row) {
-    const rMin = Math.min(source.row, target.row);
-    const rMax = Math.max(source.row, target.row);
-    for (let r = rMin; r <= rMax; r += 1) {
-      if (r === source.row) continue;
-      coords.push({ row: r, col: source.col });
-    }
-  } else if (target.col !== source.col) {
-    const cMin = Math.min(source.col, target.col);
-    const cMax = Math.max(source.col, target.col);
-    for (let c = cMin; c <= cMax; c += 1) {
-      if (c === source.col) continue;
-      coords.push({ row: source.row, col: c });
+function getFillTargetEntries(
+  fillDrag: FillDragState,
+): Array<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }> {
+  const previewRect = getFillPreviewRect(fillDrag);
+  if (!previewRect) return [];
+  const { sourceRect, sourceMatrix } = fillDrag;
+  const entries: Array<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }> =
+    [];
+
+  for (let r = previewRect.r1; r <= previewRect.r2; r += 1) {
+    const srcRow =
+      (((r - sourceRect.r1) % sourceMatrix.rows) + sourceMatrix.rows) %
+      sourceMatrix.rows;
+    for (let c = previewRect.c1; c <= previewRect.c2; c += 1) {
+      const srcCol =
+        (((c - sourceRect.c1) % sourceMatrix.cols) + sourceMatrix.cols) %
+        sourceMatrix.cols;
+      const snapshot = sourceMatrix.cells[srcRow]?.[srcCol];
+      if (!snapshot) continue;
+      entries.push({ coord: { row: r, col: c }, snapshot });
     }
   }
-  return coords;
+  return entries;
 }
 
 function snapshotCellFromDisplay(display: CellDisplayInfo): ClipboardCellSnapshot {
@@ -375,6 +394,7 @@ export function WeekView({
     logBulkDeferToQadaa,
     undoMutation,
     undoBatch,
+    dismissUndoToast,
     reorderSchema,
   } = useMohasba();
 
@@ -387,18 +407,27 @@ export function WeekView({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dndSaving, setDndSaving] = useState(false);
 
-  // Desktop spreadsheet grid focus, selection, copy marquee, fill drag & clipboard
+  // Desktop spreadsheet grid focus, selection, copy marquee, fill drag, crosshair & clipboard
   const [focusedCell, setFocusedCell] = useState<GridCoord | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<
+    (GridCoord & { side?: 'TIME_BOUND' | 'DAILY_GROUP' }) | null
+  >(null);
   const [selection, setSelection] = useState<GridSelection | null>(null);
+  const [extraCoords, setExtraCoords] = useState<GridCoord[]>([]);
   const [copiedRect, setCopiedRect] = useState<GridRect | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [fillDrag, setFillDrag] = useState<FillDragState | null>(null);
+  const [isGridDragging, setIsGridDragging] = useState(false);
 
   const fetchedRangesRef = useRef<Set<string>>(new Set());
   const normalDialogRef = useRef<HTMLDialogElement | null>(null);
   const appliedDefaultWeekModeRef = useRef(false);
   const clipboardRef = useRef<ClipboardMatrix | null>(null);
+  const lastWrittenTsvRef = useRef<string | null>(null);
   const undoStackRef = useRef<SessionUndoEntry[]>([]);
+  const redoStackRef = useRef<SessionUndoEntry[]>([]);
+  const extraCoordsRef = useRef<GridCoord[]>([]);
+  const pendingJumpTodayFocusRef = useRef(false);
   const cellButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const desktopGridAreaRef = useRef<HTMLDivElement | null>(null);
   const bulkBarRef = useRef<HTMLDivElement | null>(null);
@@ -407,6 +436,7 @@ export function WeekView({
     startX: number;
     startY: number;
     anchor: GridCoord;
+    lastExtent: GridCoord;
     anchorSide: 'TIME_BOUND' | 'DAILY_GROUP';
     active: boolean;
   } | null>(null);
@@ -588,29 +618,79 @@ export function WeekView({
     };
   }, [selection, visibleGridRows.length, weekDates.length]);
 
-  const selectedCellCount = useMemo(() => {
-    if (!selectedRect) return 0;
-    return (
-      (selectedRect.r2 - selectedRect.r1 + 1) *
-      (selectedRect.c2 - selectedRect.c1 + 1)
-    );
-  }, [selectedRect]);
+  const { selectedCoordSet, selectedCoordsList } = useMemo(() => {
+    const set = new Set<string>();
+    const list: GridCoord[] = [];
+    if (selectedRect) {
+      for (let r = selectedRect.r1; r <= selectedRect.r2; r += 1) {
+        for (let c = selectedRect.c1; c <= selectedRect.c2; c += 1) {
+          const key = `${r}:${c}`;
+          if (!set.has(key)) {
+            set.add(key);
+            list.push({ row: r, col: c });
+          }
+        }
+      }
+    }
+    for (const coord of extraCoords) {
+      if (
+        coord.row >= 0 &&
+        coord.row < visibleGridRows.length &&
+        coord.col >= 0 &&
+        coord.col < weekDates.length
+      ) {
+        const key = `${coord.row}:${coord.col}`;
+        if (!set.has(key)) {
+          set.add(key);
+          list.push(coord);
+        }
+      }
+    }
+    return { selectedCoordSet: set, selectedCoordsList: list };
+  }, [extraCoords, selectedRect, visibleGridRows.length, weekDates.length]);
+
+  const selectedCellCount = selectedCoordsList.length;
+
+  const isContiguousMultiSelected =
+    selectedRect !== null && extraCoords.length === 0 && selectedCellCount >= 2;
 
   const selectedHasQadaaEligible = useMemo(() => {
-    if (!selectedRect) return false;
-    for (let r = selectedRect.r1; r <= selectedRect.r2; r += 1) {
-      if (visibleGridRows[r]?.action.is_qadaa_eligible) return true;
-    }
-    return false;
-  }, [selectedRect, visibleGridRows]);
+    return selectedCoordsList.some(
+      (c) => visibleGridRows[c.row]?.action.is_qadaa_eligible,
+    );
+  }, [selectedCoordsList, visibleGridRows]);
 
   const selectedHasPercentageEligible = useMemo(() => {
-    if (!selectedRect) return false;
-    for (let r = selectedRect.r1; r <= selectedRect.r2; r += 1) {
-      if (visibleGridRows[r]?.action.supports_percentage) return true;
+    return selectedCoordsList.some(
+      (c) => visibleGridRows[c.row]?.action.supports_percentage,
+    );
+  }, [selectedCoordsList, visibleGridRows]);
+
+  const crosshairCoord = useMemo(() => {
+    if (hoveredCell) return hoveredCell;
+    if (!focusedCell || visibleGridRows.length === 0 || weekDates.length === 0) {
+      return null;
     }
-    return false;
-  }, [selectedRect, visibleGridRows]);
+    const clampedRow = Math.min(
+      Math.max(0, focusedCell.row),
+      visibleGridRows.length - 1,
+    );
+    const clampedCol = Math.min(
+      Math.max(0, focusedCell.col),
+      weekDates.length - 1,
+    );
+    return {
+      row: clampedRow,
+      col: clampedCol,
+      side: visibleGridRows[clampedRow]?.side,
+    };
+  }, [focusedCell, hoveredCell, visibleGridRows, weekDates.length]);
+
+  useEffect(() => {
+    extraCoordsRef.current = extraCoords;
+  }, [extraCoords]);
+
+  const fillPreviewRect = useMemo(() => getFillPreviewRect(fillDrag), [fillDrag]);
 
   const gridBoundsRef = useRef({
     oneGlanceMode: false,
@@ -629,20 +709,36 @@ export function WeekView({
   }, [oneGlanceMode, rightRowCount, visibleGridRows]);
 
   const fillCommitHandlerRef = useRef<(fd: FillDragState) => void>(() => {});
+  const restoreFocusHandlerRef = useRef<() => void>(() => {});
 
-  const clearAllInteractionState = useCallback(() => {
-    fillDragRef.current = null;
-    setFillDrag(null);
-    dragSelectRef.current = null;
+  const clearSelection = useCallback(() => {
     setSelection(null);
-    setCopiedRect(null);
-    document.body.style.cursor = '';
+    setExtraCoords([]);
   }, []);
+
+  const clearAllInteractionState = useCallback(
+    (options?: { restoreFocus?: boolean }) => {
+      fillDragRef.current = null;
+      setFillDrag(null);
+      dragSelectRef.current = null;
+      setIsGridDragging(false);
+      setSelection(null);
+      setExtraCoords([]);
+      setCopiedRect(null);
+      document.body.style.cursor = '';
+      if (options?.restoreFocus) {
+        restoreFocusHandlerRef.current();
+      }
+    },
+    [],
+  );
 
   const navigateWeek = useCallback((nextAnchor: string) => {
     setWeekAnchorDate(nextAnchor);
     setSelection(null);
+    setExtraCoords([]);
     setCopiedRect(null);
+    setHoveredCell(null);
   }, []);
 
   // Mouse drag-select (>6px activation) & Google Sheets Fill Handle pointer tracking
@@ -673,15 +769,33 @@ export function WeekView({
         ) {
           return;
         }
-        const dRow = Math.abs(over.row - fd.source.row);
-        const dCol = Math.abs(over.col - fd.source.col);
-        const lockedTarget: GridCoord =
+        const { sourceRect } = fd;
+        const dRow =
+          over.row > sourceRect.r2
+            ? over.row - sourceRect.r2
+            : over.row < sourceRect.r1
+              ? sourceRect.r1 - over.row
+              : 0;
+        const dCol =
+          over.col > sourceRect.c2
+            ? over.col - sourceRect.c2
+            : over.col < sourceRect.c1
+              ? sourceRect.c1 - over.col
+              : 0;
+
+        let lockedTarget: GridCoord;
+        if (dRow === 0 && dCol === 0) {
+          lockedTarget = { row: sourceRect.r2, col: sourceRect.c2 };
+        } else if (
           dRow > dCol ||
           (dRow === dCol &&
             Math.abs(event.clientY - fd.startY) >=
               Math.abs(event.clientX - fd.startX))
-            ? { row: over.row, col: fd.source.col }
-            : { row: fd.source.row, col: over.col };
+        ) {
+          lockedTarget = { row: over.row, col: sourceRect.c2 };
+        } else {
+          lockedTarget = { row: sourceRect.r2, col: over.col };
+        }
 
         if (
           lockedTarget.row !== fd.target.row ||
@@ -703,6 +817,8 @@ export function WeekView({
         );
         if (dist <= DRAG_SELECT_THRESHOLD_PX) return;
         ds.active = true;
+        setIsGridDragging(true);
+        setExtraCoords([]);
         window.getSelection()?.removeAllRanges();
       }
 
@@ -722,6 +838,7 @@ export function WeekView({
             col: over.col,
           };
         }
+        ds.lastExtent = clamped;
         setSelection({ anchor: ds.anchor, extent: clamped });
         setFocusedCell(clamped);
       }
@@ -732,6 +849,7 @@ export function WeekView({
       if (fd) {
         fillDragRef.current = null;
         setFillDrag(null);
+        setIsGridDragging(false);
         document.body.style.cursor = '';
         suppressNextClickRef.current = true;
         setTimeout(() => {
@@ -745,10 +863,18 @@ export function WeekView({
       const ds = dragSelectRef.current;
       if (!ds) return;
       if (ds.active) {
+        setIsGridDragging(false);
         suppressNextClickRef.current = true;
         setTimeout(() => {
           suppressNextClickRef.current = false;
         }, 50);
+        if (
+          ds.lastExtent.row === ds.anchor.row &&
+          ds.lastExtent.col === ds.anchor.col &&
+          extraCoordsRef.current.length === 0
+        ) {
+          setSelection(null);
+        }
       }
       dragSelectRef.current = null;
     };
@@ -873,6 +999,7 @@ export function WeekView({
       ...undoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
       entry,
     ];
+    redoStackRef.current = [];
   }, []);
 
   const capturePriorSnapshot = useCallback(
@@ -947,6 +1074,11 @@ export function WeekView({
     const entry = undoStackRef.current.pop();
     if (!entry) return false;
 
+    redoStackRef.current = [
+      ...redoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
+      entry,
+    ];
+
     const batchStillHeld =
       entry.batchId !== null &&
       outbox.some((o) => o.batch_id === entry.batchId && o.state === 'held');
@@ -958,15 +1090,49 @@ export function WeekView({
 
     if (batchStillHeld && entry.batchId) {
       await undoBatch(entry.batchId);
+      dismissUndoToast();
     } else if (mutStillHeld && entry.mutationId) {
       await undoMutation(entry.mutationId);
+      dismissUndoToast();
     } else if (entry.priorInputs.length > 0) {
       await logCellBatch(entry.priorInputs, 0, false);
     }
 
     onActionFeedback('تم التراجع عن آخر تعديل');
     return true;
-  }, [logCellBatch, onActionFeedback, outbox, undoBatch, undoMutation]);
+  }, [
+    dismissUndoToast,
+    logCellBatch,
+    onActionFeedback,
+    outbox,
+    undoBatch,
+    undoMutation,
+  ]);
+
+  const handleSessionRedo = useCallback(async (): Promise<boolean> => {
+    const entry = redoStackRef.current.pop();
+    if (!entry) return false;
+
+    if (entry.appliedInputs.length > 0) {
+      const res = await logCellBatch(entry.appliedInputs, 0, false);
+      undoStackRef.current = [
+        ...undoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
+        {
+          ...entry,
+          batchId: res.batchId,
+          mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
+        },
+      ];
+    } else {
+      undoStackRef.current = [
+        ...undoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
+        entry,
+      ];
+    }
+
+    onActionFeedback('تمت إعادة التعديل');
+    return true;
+  }, [logCellBatch, onActionFeedback]);
 
   const focusGridCell = useCallback((row: number, col: number) => {
     const coord = { row, col };
@@ -976,6 +1142,53 @@ export function WeekView({
       btn.focus({ preventScroll: false });
     }
   }, []);
+
+  const restoreFocusToGrid = useCallback(
+    (coord?: GridCoord | null) => {
+      const target = coord ?? effectiveFocusedCell;
+      if (!target) return;
+      requestAnimationFrame(() => {
+        focusGridCell(target.row, target.col);
+      });
+    },
+    [effectiveFocusedCell, focusGridCell],
+  );
+
+  // Alt+T (mohasba:jump-today) navigates to current week and restores focus onto today's column
+  useEffect(() => {
+    const onJumpToday = () => {
+      if (!todayIslamicDate) return;
+      if (weekDates.includes(todayIslamicDate)) {
+        restoreFocusToGrid({
+          row: effectiveFocusedCell?.row ?? 0,
+          col: todayColIdx,
+        });
+      } else {
+        pendingJumpTodayFocusRef.current = true;
+        navigateWeek(todayIslamicDate);
+      }
+    };
+    window.addEventListener('mohasba:jump-today', onJumpToday);
+    return () => window.removeEventListener('mohasba:jump-today', onJumpToday);
+  }, [
+    effectiveFocusedCell?.row,
+    navigateWeek,
+    restoreFocusToGrid,
+    todayColIdx,
+    todayIslamicDate,
+    weekDates,
+  ]);
+
+  useEffect(() => {
+    if (!pendingJumpTodayFocusRef.current || !todayIslamicDate) return;
+    const idx = weekDates.indexOf(todayIslamicDate);
+    if (idx < 0) return;
+    pendingJumpTodayFocusRef.current = false;
+    restoreFocusToGrid({
+      row: effectiveFocusedCell?.row ?? 0,
+      col: idx,
+    });
+  }, [effectiveFocusedCell?.row, restoreFocusToGrid, todayIslamicDate, weekDates]);
 
   const windowKeyDownHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
   const windowCache: WindowLookupCache = new Map();
@@ -1059,19 +1272,14 @@ export function WeekView({
         batchId: res.batchId,
         mutationId: res.items[0]?.mutation_id ?? null,
         priorInputs: [prior],
+        appliedInputs: [mutation],
       });
     }
   };
 
   const getTargetCoords = (): GridCoord[] => {
-    if (selectedRect) {
-      const coords: GridCoord[] = [];
-      for (let r = selectedRect.r1; r <= selectedRect.r2; r += 1) {
-        for (let c = selectedRect.c1; c <= selectedRect.c2; c += 1) {
-          coords.push({ row: r, col: c });
-        }
-      }
-      return coords;
+    if (selectedCoordsList.length > 0) {
+      return selectedCoordsList;
     }
     if (effectiveFocusedCell) {
       return [effectiveFocusedCell];
@@ -1079,21 +1287,23 @@ export function WeekView({
     return [];
   };
 
-  const applyTargetStateToCoords = async (
-    coords: readonly GridCoord[],
-    target: ClipboardCellSnapshot,
+  const applySnapshotEntries = async (
+    entries: ReadonlyArray<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }>,
     options: {
       showToast?: boolean;
       actionNameAr?: string;
       clearSelection?: boolean;
+      restoreFocus?: boolean;
+      emptySkippedMessage?: string;
     } = {},
   ) => {
-    if (coords.length === 0) return;
+    if (entries.length === 0) return;
+    const focusTarget = effectiveFocusedCell;
     const mutations: CellMutationInput[] = [];
     const priorInputs: CellMutationInput[] = [];
     let skippedIncompatible = 0;
 
-    for (const coord of coords) {
+    for (const { coord, snapshot } of entries) {
       const rowMeta = visibleGridRows[coord.row];
       const logDate = weekDates[coord.col];
       if (!rowMeta || !logDate) continue;
@@ -1103,33 +1313,38 @@ export function WeekView({
       if (isCellPostArchived(action, logDate)) {
         continue;
       }
-      if (target.kind === 'QADAA_DONE' && !action.is_qadaa_eligible) {
+      if (snapshot.kind === 'QADAA_DONE' && !action.is_qadaa_eligible) {
         skippedIncompatible += 1;
         continue;
       }
-      if (target.kind === 'PERCENT' && !action.supports_percentage) {
+      if (snapshot.kind === 'PERCENT' && !action.supports_percentage) {
         skippedIncompatible += 1;
         continue;
       }
 
       priorInputs.push(capturePriorSnapshot(action, logDate));
       mutations.push(
-        buildCellMutationForTarget(action, logDate, display, target),
+        buildCellMutationForTarget(action, logDate, display, snapshot),
       );
     }
 
     if (mutations.length === 0) {
       if (skippedIncompatible > 0) {
         onActionFeedback(
-          `لم يتم التعديل — تم تخطي ${formatArabicCells(skippedIncompatible)} غير متوافقة`,
+          options.emptySkippedMessage ??
+            `لم يتم التعديل — تم تخطي ${formatArabicCells(skippedIncompatible)} غير متوافقة`,
         );
+      }
+      if (options.restoreFocus) {
+        restoreFocusToGrid(focusTarget);
       }
       return;
     }
 
     const isBulkOrDestructive =
       options.showToast ??
-      (mutations.length > 1 || target.kind === 'DISABLED');
+      (mutations.length > 1 ||
+        entries.some((e) => e.snapshot.kind === 'DISABLED'));
     const holdMs = isBulkOrDestructive
       ? DEFAULT_UNDO_HOLD_MS
       : SINGLE_CLICK_COALESCE_HOLD_MS;
@@ -1140,11 +1355,15 @@ export function WeekView({
         batchId: res.batchId,
         mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
         priorInputs,
+        appliedInputs: mutations,
       });
     }
 
     if (options.clearSelection !== false) {
-      setSelection(null);
+      clearSelection();
+    }
+    if (options.restoreFocus) {
+      restoreFocusToGrid(focusTarget);
     }
 
     if (isBulkOrDestructive || skippedIncompatible > 0) {
@@ -1159,29 +1378,23 @@ export function WeekView({
     }
   };
 
-  const handleFillCommit = (fd: FillDragState) => {
-    const targetCoords = getFillTargetCoords(fd);
-    if (targetCoords.length === 0) return;
-    void applyTargetStateToCoords(targetCoords, fd.sourceSnapshot, {
-      showToast: true,
-      actionNameAr: 'تم تعبئة',
-      clearSelection: true,
-    });
+  const applyTargetStateToCoords = async (
+    coords: readonly GridCoord[],
+    target: ClipboardCellSnapshot,
+    options: {
+      showToast?: boolean;
+      actionNameAr?: string;
+      clearSelection?: boolean;
+      restoreFocus?: boolean;
+    } = {},
+  ) => {
+    await applySnapshotEntries(
+      coords.map((coord) => ({ coord, snapshot: target })),
+      options,
+    );
   };
 
-  const handleCopySelection = (options?: { clearSelection?: boolean }) => {
-    const rect: GridRect | null =
-      selectedRect ??
-      (effectiveFocusedCell
-        ? {
-            r1: effectiveFocusedCell.row,
-            r2: effectiveFocusedCell.row,
-            c1: effectiveFocusedCell.col,
-            c2: effectiveFocusedCell.col,
-          }
-        : null);
-    if (!rect) return;
-
+  const buildMatrixFromRect = (rect: GridRect): ClipboardMatrix => {
     const cells: ClipboardCellSnapshot[][] = [];
     for (let r = rect.r1; r <= rect.r2; r += 1) {
       const rowSnaps: ClipboardCellSnapshot[] = [];
@@ -1197,47 +1410,186 @@ export function WeekView({
       }
       cells.push(rowSnaps);
     }
-
-    const matrix: ClipboardMatrix = {
+    return {
       rows: cells.length,
       cols: cells[0]?.length ?? 0,
       cells,
     };
+  };
+
+  const handleFillCommit = (fd: FillDragState) => {
+    const entries = getFillTargetEntries(fd);
+    if (entries.length === 0) return;
+    void applySnapshotEntries(entries, {
+      showToast: true,
+      actionNameAr: 'تم تعبئة',
+      clearSelection: true,
+    });
+  };
+
+  const handleFillHandleDoubleClick = (
+    rowIndex: number,
+    colIndex: number,
+  ) => {
+    const rowMeta = visibleGridRows[rowIndex];
+    if (!rowMeta) return;
+    const sourceGroupId = rowMeta.group.id;
+    let lastPeriodRow = rowIndex;
+    while (
+      lastPeriodRow + 1 < visibleGridRows.length &&
+      visibleGridRows[lastPeriodRow + 1]?.group.id === sourceGroupId
+    ) {
+      lastPeriodRow += 1;
+    }
+    if (lastPeriodRow <= rowIndex) return;
+
+    const sourceRect: GridRect =
+      isContiguousMultiSelected &&
+      selectedRect !== null &&
+      rowIndex === selectedRect.r2 &&
+      colIndex === selectedRect.c2
+        ? selectedRect
+        : { r1: rowIndex, r2: rowIndex, c1: colIndex, c2: colIndex };
+
+    const sourceMatrix = buildMatrixFromRect(sourceRect);
+    const entries: Array<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }> =
+      [];
+
+    for (let r = sourceRect.r2 + 1; r <= lastPeriodRow; r += 1) {
+      const srcRow = (r - sourceRect.r1) % sourceMatrix.rows;
+      for (let c = sourceRect.c1; c <= sourceRect.c2; c += 1) {
+        const srcCol = c - sourceRect.c1;
+        const snapshot = sourceMatrix.cells[srcRow]?.[srcCol];
+        if (snapshot) {
+          entries.push({ coord: { row: r, col: c }, snapshot });
+        }
+      }
+    }
+
+    if (entries.length === 0) return;
+    void applySnapshotEntries(entries, {
+      showToast: true,
+      actionNameAr: 'تم تعبئة الفترة',
+      clearSelection: true,
+    });
+  };
+
+  const handleCopySelection = (options?: {
+    clearSelection?: boolean;
+    restoreFocus?: boolean;
+    silent?: boolean;
+  }) => {
+    let rect: GridRect | null = null;
+    let matrix: ClipboardMatrix | null = null;
+
+    if (selectedRect && extraCoords.length === 0) {
+      rect = selectedRect;
+      matrix = buildMatrixFromRect(rect);
+    } else if (selectedCoordsList.length > 0) {
+      let r1 = Number.POSITIVE_INFINITY;
+      let r2 = -1;
+      let c1 = Number.POSITIVE_INFINITY;
+      let c2 = -1;
+      for (const coord of selectedCoordsList) {
+        r1 = Math.min(r1, coord.row);
+        r2 = Math.max(r2, coord.row);
+        c1 = Math.min(c1, coord.col);
+        c2 = Math.max(c2, coord.col);
+      }
+      rect = { r1, r2, c1, c2 };
+      const cells: ClipboardCellSnapshot[][] = [];
+      for (let r = r1; r <= r2; r += 1) {
+        const rowSnaps: ClipboardCellSnapshot[] = [];
+        const rowMeta = visibleGridRows[r];
+        for (let c = c1; c <= c2; c += 1) {
+          const logDate = weekDates[c];
+          if (!selectedCoordSet.has(`${r}:${c}`) || !rowMeta || !logDate) {
+            rowSnaps.push({ kind: 'EMPTY', percentValue: null });
+            continue;
+          }
+          const display = resolveDisplay(rowMeta.action, logDate);
+          rowSnaps.push(snapshotCellFromDisplay(display));
+        }
+        cells.push(rowSnaps);
+      }
+      matrix = { rows: cells.length, cols: cells[0]?.length ?? 0, cells };
+    } else if (effectiveFocusedCell) {
+      rect = {
+        r1: effectiveFocusedCell.row,
+        r2: effectiveFocusedCell.row,
+        c1: effectiveFocusedCell.col,
+        c2: effectiveFocusedCell.col,
+      };
+      matrix = buildMatrixFromRect(rect);
+    }
+
+    if (!rect || !matrix) return;
+
     clipboardRef.current = matrix;
     setHasClipboard(true);
     setCopiedRect(rect);
 
     if (options?.clearSelection) {
-      setSelection(null);
+      clearSelection();
+    }
+    if (options?.restoreFocus) {
+      restoreFocusToGrid();
     }
 
+    const tsv = serializeClipboardToTsv(matrix);
+    lastWrittenTsvRef.current = tsv;
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      const tsv = serializeClipboardToTsv(matrix);
       void navigator.clipboard.writeText(tsv).catch(() => {
         // Ignore clipboard permission errors in restricted contexts
       });
     }
 
-    const count = matrix.rows * matrix.cols;
-    onActionFeedback(`تم نسخ ${formatArabicCells(count)}`);
+    if (!options?.silent) {
+      const count =
+        selectedCellCount > 0 ? selectedCellCount : matrix.rows * matrix.cols;
+      onActionFeedback(`تم نسخ ${formatArabicCells(count)}`);
+    }
   };
 
-  const handlePasteSelection = async () => {
+  const handleCutSelection = async () => {
+    const coords = getTargetCoords();
+    if (coords.length === 0) return;
+    handleCopySelection({ clearSelection: false, silent: true });
+    await applyTargetStateToCoords(
+      coords,
+      { kind: 'EMPTY', percentValue: null },
+      {
+        showToast: true,
+        actionNameAr: 'تم قص',
+        clearSelection: true,
+      },
+    );
+  };
+
+  const handlePasteSelection = async (options?: { restoreFocus?: boolean }) => {
     let source = clipboardRef.current;
-    if (
-      !source &&
-      typeof navigator !== 'undefined' &&
-      navigator.clipboard?.readText
-    ) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
       try {
-        const text = await navigator.clipboard.readText();
-        source = parseTsvToClipboard(text);
-        if (source) {
-          clipboardRef.current = source;
-          setHasClipboard(true);
+        const osText = await navigator.clipboard.readText();
+        const normalizedOs = osText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const normalizedLast =
+          lastWrittenTsvRef.current
+            ?.replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n') ?? null;
+        if (
+          normalizedOs.trim().length > 0 &&
+          (!source || normalizedLast === null || normalizedOs !== normalizedLast)
+        ) {
+          const parsed = parseTsvToClipboard(osText);
+          if (parsed) {
+            source = parsed;
+            clipboardRef.current = parsed;
+            lastWrittenTsvRef.current = osText;
+            setHasClipboard(true);
+          }
         }
       } catch {
-        // Ignore clipboard read permission errors
+        // Ignore clipboard read permission errors and fall back to in-app clipboardRef
       }
     }
 
@@ -1261,7 +1613,7 @@ export function WeekView({
     // Google Sheets dimension mapping:
     // - 1x1 broadcasts across targetRect
     // - exact multiple tiles across targetRect
-    // - otherwise expands from top-start anchor (r1, c1) clipped to grid bounds
+    // - otherwise expands from top-start anchor (r1, c1) clipped to grid/side bounds
     const shouldTile =
       (source.rows === 1 && source.cols === 1) ||
       (targetRows >= source.rows &&
@@ -1269,83 +1621,151 @@ export function WeekView({
         targetRows % source.rows === 0 &&
         targetCols % source.cols === 0);
 
+    const anchorSide = visibleGridRows[targetRect.r1]?.side;
+    const maxPasteRow =
+      oneGlanceMode && anchorSide === 'TIME_BOUND'
+        ? Math.max(0, rightRowCount - 1)
+        : visibleGridRows.length - 1;
+
     const endRow = shouldTile
-      ? targetRect.r2
-      : Math.min(visibleGridRows.length - 1, targetRect.r1 + source.rows - 1);
+      ? Math.min(maxPasteRow, targetRect.r2)
+      : Math.min(maxPasteRow, targetRect.r1 + source.rows - 1);
     const endCol = shouldTile
       ? targetRect.c2
       : Math.min(weekDates.length - 1, targetRect.c1 + source.cols - 1);
 
-    const mutations: CellMutationInput[] = [];
-    const priorInputs: CellMutationInput[] = [];
-    let skippedIncompatible = 0;
+    const entries: Array<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }> =
+      [];
 
     for (let r = targetRect.r1; r <= endRow; r += 1) {
-      const rowMeta = visibleGridRows[r];
-      if (!rowMeta) continue;
       const srcRow = (r - targetRect.r1) % source.rows;
-
       for (let c = targetRect.c1; c <= endCol; c += 1) {
-        const logDate = weekDates[c];
-        if (!logDate) continue;
         const srcCol = (c - targetRect.c1) % source.cols;
         const snap = source.cells[srcRow]?.[srcCol];
-        if (!snap) continue;
-
-        const { action } = rowMeta;
-        const display = resolveDisplay(action, logDate);
-
-        if (isCellPostArchived(action, logDate)) {
-          continue;
+        if (snap) {
+          entries.push({ coord: { row: r, col: c }, snapshot: snap });
         }
-        if (snap.kind === 'QADAA_DONE' && !action.is_qadaa_eligible) {
-          skippedIncompatible += 1;
-          continue;
-        }
-        if (snap.kind === 'PERCENT' && !action.supports_percentage) {
-          skippedIncompatible += 1;
-          continue;
-        }
-
-        priorInputs.push(capturePriorSnapshot(action, logDate));
-        mutations.push(
-          buildCellMutationForTarget(action, logDate, display, snap),
-        );
       }
     }
 
-    if (mutations.length === 0) {
-      if (skippedIncompatible > 0) {
-        onActionFeedback(
-          `تعذر اللصق — تم تخطي ${formatArabicCells(skippedIncompatible)} غير متوافقة`,
+    await applySnapshotEntries(entries, {
+      showToast: true,
+      actionNameAr: 'تم لصق',
+      clearSelection: true,
+      restoreFocus: options?.restoreFocus,
+      emptySkippedMessage: `تعذر اللصق — تم تخطي ${formatArabicCells(entries.length)} غير متوافقة`,
+    });
+  };
+
+  const handleFillDownShortcut = async () => {
+    if (visibleGridRows.length === 0 || weekDates.length === 0) return;
+
+    const entries: Array<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }> =
+      [];
+
+    if (selectedRect && selectedRect.r2 > selectedRect.r1) {
+      const srcRowMeta = visibleGridRows[selectedRect.r1];
+      if (!srcRowMeta) return;
+      for (let c = selectedRect.c1; c <= selectedRect.c2; c += 1) {
+        const logDate = weekDates[c];
+        if (!logDate) continue;
+        const snap = snapshotCellFromDisplay(
+          resolveDisplay(srcRowMeta.action, logDate),
         );
+        for (let r = selectedRect.r1 + 1; r <= selectedRect.r2; r += 1) {
+          entries.push({ coord: { row: r, col: c }, snapshot: snap });
+        }
       }
-      return;
+    } else {
+      const targetRow = selectedRect
+        ? selectedRect.r1
+        : (effectiveFocusedCell?.row ?? 0);
+      const c1 = selectedRect
+        ? selectedRect.c1
+        : (effectiveFocusedCell?.col ?? 0);
+      const c2 = selectedRect
+        ? selectedRect.c2
+        : (effectiveFocusedCell?.col ?? 0);
+
+      if (targetRow <= 0) return;
+      if (
+        oneGlanceMode &&
+        visibleGridRows[targetRow - 1]?.side !== visibleGridRows[targetRow]?.side
+      ) {
+        return;
+      }
+      const srcRowMeta = visibleGridRows[targetRow - 1];
+      if (!srcRowMeta) return;
+      for (let c = c1; c <= c2; c += 1) {
+        const logDate = weekDates[c];
+        if (!logDate) continue;
+        const snap = snapshotCellFromDisplay(
+          resolveDisplay(srcRowMeta.action, logDate),
+        );
+        entries.push({ coord: { row: targetRow, col: c }, snapshot: snap });
+      }
     }
 
-    const res = await logCellBatch(mutations, DEFAULT_UNDO_HOLD_MS, true);
-    if (res.items.length > 0) {
-      pushUndoEntry({
-        batchId: res.batchId,
-        mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
-        priorInputs,
-      });
+    if (entries.length === 0) return;
+    await applySnapshotEntries(entries, {
+      showToast: true,
+      actionNameAr: 'تم التعبئة للأسفل',
+      clearSelection: true,
+    });
+  };
+
+  const handleSelectAllActiveTable = () => {
+    if (visibleGridRows.length === 0 || weekDates.length === 0) return;
+    const endCol = weekDates.length - 1;
+    let startRow = 0;
+    let endRow = visibleGridRows.length - 1;
+
+    if (oneGlanceMode) {
+      const activeSide =
+        visibleGridRows[effectiveFocusedCell?.row ?? 0]?.side ?? 'TIME_BOUND';
+      if (activeSide === 'TIME_BOUND') {
+        startRow = 0;
+        endRow = Math.max(0, rightRowCount - 1);
+      } else {
+        startRow = rightRowCount;
+        endRow = Math.max(rightRowCount, visibleGridRows.length - 1);
+      }
+    }
+
+    if (startRow > endRow) return;
+    setExtraCoords([]);
+    setSelection({
+      anchor: { row: startRow, col: 0 },
+      extent: { row: endRow, col: endCol },
+    });
+  };
+
+  const toggleCoordsInSelection = (toggled: readonly GridCoord[]) => {
+    if (toggled.length === 0) return;
+    const nextMap = new Map<string, GridCoord>();
+    for (const c of selectedCoordsList) {
+      nextMap.set(`${c.row}:${c.col}`, c);
+    }
+
+    const allPresent = toggled.every((c) => nextMap.has(`${c.row}:${c.col}`));
+    if (allPresent) {
+      for (const c of toggled) {
+        nextMap.delete(`${c.row}:${c.col}`);
+      }
+    } else {
+      for (const c of toggled) {
+        nextMap.set(`${c.row}:${c.col}`, c);
+      }
     }
 
     setSelection(null);
-
-    const skipSuffix =
-      skippedIncompatible > 0
-        ? ` (تم تخطي ${skippedIncompatible} غير متوافقة)`
-        : '';
-    onActionFeedback(
-      `تم لصق ${formatArabicCells(mutations.length)}${skipSuffix}`,
-    );
+    setExtraCoords(Array.from(nextMap.values()));
   };
 
   const handleSelectDayColumn = (
     colIdx: number,
     sideScope?: 'TIME_BOUND' | 'DAILY_GROUP',
+    event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
   ) => {
     const logDate = weekDates[colIdx];
     if (logDate) {
@@ -1365,7 +1785,31 @@ export function WeekView({
       if (startRow > endRow) return;
     }
 
+    const colCoords: GridCoord[] = [];
+    for (let r = startRow; r <= endRow; r += 1) {
+      colCoords.push({ row: r, col: colIdx });
+    }
+
+    if (event && (event.ctrlKey || event.metaKey)) {
+      toggleCoordsInSelection(colCoords);
+      focusGridCell(startRow, colIdx);
+      return;
+    }
+
+    if (event?.shiftKey) {
+      const anchorCol =
+        selection?.anchor.col ?? effectiveFocusedCell?.col ?? colIdx;
+      setExtraCoords([]);
+      setSelection({
+        anchor: { row: startRow, col: anchorCol },
+        extent: { row: endRow, col: colIdx },
+      });
+      focusGridCell(startRow, colIdx);
+      return;
+    }
+
     const isAlreadySelected =
+      extraCoords.length === 0 &&
       selectedRect !== null &&
       selectedRect.c1 === colIdx &&
       selectedRect.c2 === colIdx &&
@@ -1373,10 +1817,11 @@ export function WeekView({
       selectedRect.r2 === endRow;
 
     if (isAlreadySelected) {
-      setSelection(null);
+      clearSelection();
       return;
     }
 
+    setExtraCoords([]);
     setSelection({
       anchor: { row: startRow, col: colIdx },
       extent: { row: endRow, col: colIdx },
@@ -1384,10 +1829,43 @@ export function WeekView({
     focusGridCell(startRow, colIdx);
   };
 
-  const handleSelectActionRow = (rowIndex: number) => {
+  const handleSelectActionRow = (
+    rowIndex: number,
+    event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
+  ) => {
     if (weekDates.length === 0) return;
     const endCol = weekDates.length - 1;
+    const rowCoords: GridCoord[] = [];
+    for (let c = 0; c <= endCol; c += 1) {
+      rowCoords.push({ row: rowIndex, col: c });
+    }
+
+    if (event && (event.ctrlKey || event.metaKey)) {
+      toggleCoordsInSelection(rowCoords);
+      focusGridCell(rowIndex, 0);
+      return;
+    }
+
+    if (event?.shiftKey) {
+      let anchorRow =
+        selection?.anchor.row ?? effectiveFocusedCell?.row ?? rowIndex;
+      if (oneGlanceMode) {
+        const targetSide = visibleGridRows[rowIndex]?.side ?? 'TIME_BOUND';
+        if (visibleGridRows[anchorRow]?.side !== targetSide) {
+          anchorRow = rowIndex;
+        }
+      }
+      setExtraCoords([]);
+      setSelection({
+        anchor: { row: anchorRow, col: 0 },
+        extent: { row: rowIndex, col: endCol },
+      });
+      focusGridCell(rowIndex, 0);
+      return;
+    }
+
     const isAlreadySelected =
+      extraCoords.length === 0 &&
       selectedRect !== null &&
       selectedRect.r1 === rowIndex &&
       selectedRect.r2 === rowIndex &&
@@ -1395,10 +1873,11 @@ export function WeekView({
       selectedRect.c2 === endCol;
 
     if (isAlreadySelected) {
-      setSelection(null);
+      clearSelection();
       return;
     }
 
+    setExtraCoords([]);
     setSelection({
       anchor: { row: rowIndex, col: 0 },
       extent: { row: rowIndex, col: endCol },
@@ -1413,6 +1892,7 @@ export function WeekView({
     const lastRow = matchingRows[matchingRows.length - 1]!.rowIndex;
 
     const isAlreadySelected =
+      extraCoords.length === 0 &&
       selectedRect !== null &&
       selectedRect.r1 === firstRow &&
       selectedRect.r2 === lastRow &&
@@ -1420,10 +1900,11 @@ export function WeekView({
       selectedRect.c2 === colIdx;
 
     if (isAlreadySelected) {
-      setSelection(null);
+      clearSelection();
       return;
     }
 
+    setExtraCoords([]);
     setSelection({
       anchor: { row: firstRow, col: colIdx },
       extent: { row: lastRow, col: colIdx },
@@ -1456,7 +1937,7 @@ export function WeekView({
       );
     }
 
-    setSelection(null);
+    clearSelection();
 
     if (mutations.length === 0) {
       onActionFeedback(`جميع أعمال «${group.title}» مكتملة بالفعل`);
@@ -1469,6 +1950,7 @@ export function WeekView({
         batchId: res.batchId,
         mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
         priorInputs,
+        appliedInputs: mutations,
       });
     }
     onActionFeedback(
@@ -1477,7 +1959,7 @@ export function WeekView({
   };
 
   const handleMultiCellSpaceToggle = async () => {
-    if (!selectedRect) return;
+    if (selectedCellCount === 0) return;
     const coords = getTargetCoords();
     let hasEditable = false;
     let allDone = true;
@@ -1567,6 +2049,7 @@ export function WeekView({
   };
 
   const handleWindowKeyDown = (e: KeyboardEvent) => {
+    if (e.isComposing) return;
     if (
       normalDialogOpen ||
       document.querySelector('dialog[open]') !== null ||
@@ -1576,9 +2059,43 @@ export function WeekView({
       return;
     }
 
+    // Global session Undo (capture phase — takes precedence over app-shell toast-only undo)
+    if (matchesShortcutEvent(e, effectiveShortcuts.undo)) {
+      if (undoStackRef.current.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        void handleSessionUndo();
+      }
+      return;
+    }
+
+    const mod = e.ctrlKey || e.metaKey;
+
+    // Global 30-step Redo (Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z)
+    if (
+      mod &&
+      !e.altKey &&
+      ((!e.shiftKey && e.code === 'KeyY') || (e.shiftKey && e.code === 'KeyZ'))
+    ) {
+      if (redoStackRef.current.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        void handleSessionRedo();
+      }
+      return;
+    }
+
     if (e.key === 'Escape') {
-      e.preventDefault();
-      clearAllInteractionState();
+      if (
+        selectedCellCount > 0 ||
+        copiedRect !== null ||
+        fillDragRef.current !== null ||
+        dragSelectRef.current !== null
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearAllInteractionState({ restoreFocus: true });
+      }
       return;
     }
 
@@ -1588,56 +2105,87 @@ export function WeekView({
     const isFocusInGrid =
       targetNode !== null &&
       (desktopGridAreaRef.current?.contains(targetNode) ?? false);
-    if (selectedRect === null && !isFocusInGrid) return;
+    const isFocusInBulkBar =
+      targetNode !== null &&
+      (bulkBarRef.current?.contains(targetNode) ?? false);
+    const isFocusOnCellButton =
+      targetNode instanceof Element &&
+      targetNode.matches('[data-grid-row][data-grid-col]');
 
-    const mod = e.ctrlKey || e.metaKey;
+    if (selectedCellCount === 0 && !isFocusInGrid && !isFocusInBulkBar) {
+      return;
+    }
+
+    if (
+      mod &&
+      !e.altKey &&
+      ((!e.shiftKey && e.code === 'KeyA') ||
+        (e.shiftKey && e.code === 'Space'))
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleSelectAllActiveTable();
+      return;
+    }
     if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyC') {
       e.preventDefault();
+      e.stopPropagation();
       handleCopySelection();
+      return;
+    }
+    if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyX') {
+      e.preventDefault();
+      e.stopPropagation();
+      void handleCutSelection();
       return;
     }
     if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
+      e.stopPropagation();
       void handlePasteSelection();
       return;
     }
+    if (mod && !e.altKey && !e.shiftKey && e.code === 'KeyD') {
+      e.preventDefault();
+      e.stopPropagation();
+      void handleFillDownShortcut();
+      return;
+    }
 
-    if (mod || e.altKey) return;
+    if (mod || e.altKey || isFocusOnCellButton) return;
 
     if (e.code === 'Space' && !e.shiftKey) {
-      if (targetNode && bulkBarRef.current?.contains(targetNode)) {
-        return;
-      }
-      if (selectedRect !== null) {
+      if (isFocusInBulkBar) return;
+      if (selectedCellCount > 0) {
         e.preventDefault();
         void handleMultiCellSpaceToggle();
       }
       return;
     }
 
-    handleCellStateHotkey(e, getTargetCoords());
+    if (selectedCellCount > 0) {
+      handleCellStateHotkey(e, getTargetCoords());
+    }
   };
 
   useEffect(() => {
     fillCommitHandlerRef.current = handleFillCommit;
     windowKeyDownHandlerRef.current = handleWindowKeyDown;
+    restoreFocusHandlerRef.current = () => restoreFocusToGrid();
   });
 
-  const hasActiveGridOverlay =
-    selectedCellCount > 0 || copiedRect !== null || fillDrag !== null;
-
+  // Persistent capture-phase window keydown listener so Ctrl+Z / Ctrl+Y / grid chords work globally
   useEffect(() => {
-    if (!hasActiveGridOverlay) return;
     const onKeyDown = (e: KeyboardEvent) => {
       windowKeyDownHandlerRef.current(e);
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [hasActiveGridOverlay]);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
 
   // Outside-click dismissal for active grid selection
   useEffect(() => {
-    if (!selection) return;
+    if (selection === null && extraCoords.length === 0) return;
     const onPointerDown = (e: PointerEvent) => {
       if (fillDragRef.current) return;
       const target = e.target;
@@ -1651,11 +2199,11 @@ export function WeekView({
       ) {
         return;
       }
-      setSelection(null);
+      clearSelection();
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [selection]);
+  }, [clearSelection, extraCoords.length, selection]);
 
   if (!settings || !todayIslamicDate || weekDates.length === 0) {
     return null;
@@ -1681,126 +2229,175 @@ export function WeekView({
     if (matchesShortcutEvent(event, effectiveShortcuts.jump_today)) {
       event.preventDefault();
       event.stopPropagation();
-      if (todayIslamicDate) navigateWeek(todayIslamicDate);
-      return;
-    }
-    if (matchesShortcutEvent(event, effectiveShortcuts.undo)) {
-      if (undoStackRef.current.length > 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        void handleSessionUndo();
+      if (todayIslamicDate) {
+        if (weekDates.includes(todayIslamicDate)) {
+          restoreFocusToGrid({ row, col: todayColIdx });
+        } else {
+          pendingJumpTodayFocusRef.current = true;
+          navigateWeek(todayIslamicDate);
+        }
       }
       return;
     }
 
     const mod = event.ctrlKey || event.metaKey;
 
-    // Copy & Paste (physical KeyC / KeyV works on both Arabic & English layouts)
-    if (mod && !event.altKey && !event.shiftKey && event.code === 'KeyC') {
-      event.preventDefault();
-      event.stopPropagation();
-      handleCopySelection();
-      return;
-    }
-    if (mod && !event.altKey && !event.shiftKey && event.code === 'KeyV') {
-      event.preventDefault();
-      event.stopPropagation();
-      void handlePasteSelection();
-      return;
-    }
-
     // Escape clears fillDrag, dragSelect, selection, copiedRect & cursor
     if (event.key === 'Escape') {
       if (
         copiedRect ||
         selection ||
+        extraCoords.length > 0 ||
         fillDragRef.current ||
         dragSelectRef.current
       ) {
         event.preventDefault();
-        clearAllInteractionState();
+        clearAllInteractionState({ restoreFocus: true });
       }
       return;
     }
 
-    // Row & Column selection chords
+    // Row & Column & Select-All selection chords
+    if (event.code === 'Space' && event.shiftKey && mod && !event.altKey) {
+      event.preventDefault();
+      handleSelectAllActiveTable();
+      return;
+    }
     if (event.code === 'Space' && event.shiftKey && !mod && !event.altKey) {
       event.preventDefault();
+      setExtraCoords([]);
       setSelection({
         anchor: { row, col: 0 },
         extent: { row, col: weekDates.length - 1 },
       });
       return;
     }
-    if (event.code === 'Space' && mod && !event.altKey) {
+    if (event.code === 'Space' && mod && !event.shiftKey && !event.altKey) {
       event.preventDefault();
       const rowMeta = visibleGridRows[row];
       handleSelectDayColumn(col, oneGlanceMode ? rowMeta?.side : undefined);
       return;
     }
 
-    // RTL-Accurate Spatial Arrow & Home/End Navigation
+    // RTL-Accurate Spatial Arrow, Ctrl+Arrow (Edge/Period Jump) & Home/End Navigation
     // In RTL, col 0 is visual right and col 6 is visual left:
     // ArrowLeft => col + 1 (next day), ArrowRight => col - 1 (prev day)
     let nextRow = row;
     let nextCol = col;
     let isNav = false;
+    let isEdgeJump = false;
 
-    if (event.key === 'ArrowLeft') {
-      nextCol = Math.min(weekDates.length - 1, col + 1);
-      isNav = true;
-    } else if (event.key === 'ArrowRight') {
-      nextCol = Math.max(0, col - 1);
-      isNav = true;
-    } else if (event.key === 'ArrowUp' && !event.altKey) {
-      nextRow = Math.max(0, row - 1);
-      isNav = true;
-    } else if (event.key === 'ArrowDown' && !event.altKey) {
-      nextRow = Math.min(visibleGridRows.length - 1, row + 1);
-      isNav = true;
-    } else if (event.key === 'Home') {
-      nextRow = mod ? 0 : row;
-      nextCol = 0;
-      isNav = true;
-    } else if (event.key === 'End') {
-      nextRow = mod ? visibleGridRows.length - 1 : row;
-      nextCol = weekDates.length - 1;
-      isNav = true;
+    const curSide = visibleGridRows[row]?.side ?? 'TIME_BOUND';
+    const sideMinRow =
+      oneGlanceMode && curSide === 'DAILY_GROUP' ? rightRowCount : 0;
+    const sideMaxRow =
+      oneGlanceMode && curSide === 'TIME_BOUND'
+        ? Math.max(0, rightRowCount - 1)
+        : Math.max(0, visibleGridRows.length - 1);
+
+    if (mod && !event.altKey) {
+      const curGroupId = visibleGridRows[row]?.group.id;
+      let blockStart = row;
+      while (
+        blockStart - 1 >= sideMinRow &&
+        visibleGridRows[blockStart - 1]?.group.id === curGroupId
+      ) {
+        blockStart -= 1;
+      }
+      let blockEnd = row;
+      while (
+        blockEnd + 1 <= sideMaxRow &&
+        visibleGridRows[blockEnd + 1]?.group.id === curGroupId
+      ) {
+        blockEnd += 1;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        nextCol = weekDates.length - 1;
+        isNav = true;
+        isEdgeJump = true;
+      } else if (event.key === 'ArrowRight') {
+        nextCol = 0;
+        isNav = true;
+        isEdgeJump = true;
+      } else if (event.key === 'ArrowUp') {
+        nextRow =
+          row > blockStart ? blockStart : Math.max(sideMinRow, blockStart - 1);
+        isNav = true;
+        isEdgeJump = true;
+      } else if (event.key === 'ArrowDown') {
+        nextRow =
+          row < blockEnd ? blockEnd : Math.min(sideMaxRow, blockEnd + 1);
+        isNav = true;
+        isEdgeJump = true;
+      } else if (event.key === 'Home') {
+        nextRow = sideMinRow;
+        nextCol = 0;
+        isNav = true;
+        isEdgeJump = true;
+      } else if (event.key === 'End') {
+        nextRow = sideMaxRow;
+        nextCol = weekDates.length - 1;
+        isNav = true;
+        isEdgeJump = true;
+      }
+    } else if (!event.altKey) {
+      if (event.key === 'ArrowLeft') {
+        nextCol = Math.min(weekDates.length - 1, col + 1);
+        isNav = true;
+      } else if (event.key === 'ArrowRight') {
+        nextCol = Math.max(0, col - 1);
+        isNav = true;
+      } else if (event.key === 'ArrowUp') {
+        nextRow = Math.max(0, row - 1);
+        isNav = true;
+      } else if (event.key === 'ArrowDown') {
+        nextRow = Math.min(visibleGridRows.length - 1, row + 1);
+        isNav = true;
+      } else if (event.key === 'Home') {
+        nextCol = 0;
+        isNav = true;
+      } else if (event.key === 'End') {
+        nextCol = weekDates.length - 1;
+        isNav = true;
+      }
     }
 
     if (isNav) {
       event.preventDefault();
-      // Skip post-archived cells cleanly if stepping vertically/horizontally
-      const stepRow = Math.sign(nextRow - row);
-      const stepCol = Math.sign(nextCol - col);
-      let candidateRow = nextRow;
-      let candidateCol = nextCol;
-      while (
-        candidateRow >= 0 &&
-        candidateRow < visibleGridRows.length &&
-        candidateCol >= 0 &&
-        candidateCol < weekDates.length
-      ) {
-        const btn = cellButtonRefs.current.get(
-          `${candidateRow}:${candidateCol}`,
-        );
-        if (btn && !btn.disabled) break;
-        if (stepRow === 0 && stepCol === 0) break;
-        candidateRow += stepRow;
-        candidateCol += stepCol;
-      }
-      if (
-        candidateRow >= 0 &&
-        candidateRow < visibleGridRows.length &&
-        candidateCol >= 0 &&
-        candidateCol < weekDates.length
-      ) {
-        const targetBtn = cellButtonRefs.current.get(
-          `${candidateRow}:${candidateCol}`,
-        );
-        if (targetBtn && !targetBtn.disabled) {
-          nextRow = candidateRow;
-          nextCol = candidateCol;
+      if (!isEdgeJump) {
+        // Skip post-archived cells cleanly if stepping vertically/horizontally
+        const stepRow = Math.sign(nextRow - row);
+        const stepCol = Math.sign(nextCol - col);
+        let candidateRow = nextRow;
+        let candidateCol = nextCol;
+        while (
+          candidateRow >= 0 &&
+          candidateRow < visibleGridRows.length &&
+          candidateCol >= 0 &&
+          candidateCol < weekDates.length
+        ) {
+          const btn = cellButtonRefs.current.get(
+            `${candidateRow}:${candidateCol}`,
+          );
+          if (btn && !btn.disabled) break;
+          if (stepRow === 0 && stepCol === 0) break;
+          candidateRow += stepRow;
+          candidateCol += stepCol;
+        }
+        if (
+          candidateRow >= 0 &&
+          candidateRow < visibleGridRows.length &&
+          candidateCol >= 0 &&
+          candidateCol < weekDates.length
+        ) {
+          const targetBtn = cellButtonRefs.current.get(
+            `${candidateRow}:${candidateCol}`,
+          );
+          if (targetBtn && !targetBtn.disabled) {
+            nextRow = candidateRow;
+            nextCol = candidateCol;
+          }
         }
       }
 
@@ -1819,11 +2416,13 @@ export function WeekView({
             col: nextCol,
           };
         }
+        setExtraCoords([]);
         setSelection({ anchor, extent: clampedExtent });
+        focusGridCell(clampedExtent.row, clampedExtent.col);
       } else {
-        setSelection(null);
+        clearSelection();
+        focusGridCell(nextRow, nextCol);
       }
-      focusGridCell(nextRow, nextCol);
       return;
     }
 
@@ -1842,13 +2441,13 @@ export function WeekView({
 
     if (mod || event.altKey) return;
 
-    // Space => 1-step cycle when single cell, toggle DONE/EMPTY when multi-cell
+    // Space => 1-step cycle when single cell, toggle DONE/EMPTY when multi-cell/disjoint
     if (event.code === 'Space' && !event.shiftKey) {
       event.preventDefault();
-      if (selectedCellCount >= 2) {
+      if (selectedCellCount >= 2 || extraCoords.length > 0) {
         void handleMultiCellSpaceToggle();
       } else {
-        setSelection(null);
+        clearSelection();
         void handleCellPrimaryCycle(action, logDate, display);
       }
       return;
@@ -1919,11 +2518,13 @@ export function WeekView({
     rowIndex: number;
     colIndex: number;
     dayLabel: string;
+    rowSide: 'TIME_BOUND' | 'DAILY_GROUP';
   }) => {
-    const { action, logDate, rowIndex, colIndex, dayLabel } = params;
+    const { action, logDate, rowIndex, colIndex, dayLabel, rowSide } = params;
     const display = resolveDisplay(action, logDate);
     const nonInteractive = isCellPostArchived(action, logDate);
     const hasNote = display.note.trim().length > 0;
+    const coordKey = `${rowIndex}:${colIndex}`;
     const isTabStop =
       !nonInteractive &&
       effectiveFocusedCell !== null &&
@@ -1935,23 +2536,76 @@ export function WeekView({
       effectiveFocusedCell !== null &&
       effectiveFocusedCell.row === rowIndex &&
       effectiveFocusedCell.col === colIndex;
+
     const isSelected =
-      selectedCellCount >= 2 && isCoordInRect(rowIndex, colIndex, selectedRect);
+      (selectedCellCount >= 2 || extraCoords.length > 0) &&
+      selectedCoordSet.has(coordKey);
+    const sameSideAbove =
+      !oneGlanceMode || visibleGridRows[rowIndex - 1]?.side === rowSide;
+    const sameSideBelow =
+      !oneGlanceMode || visibleGridRows[rowIndex + 1]?.side === rowSide;
+    const isSelTop =
+      isSelected &&
+      (!sameSideAbove || !selectedCoordSet.has(`${rowIndex - 1}:${colIndex}`));
+    const isSelBottom =
+      isSelected &&
+      (!sameSideBelow || !selectedCoordSet.has(`${rowIndex + 1}:${colIndex}`));
+    const isSelStart =
+      isSelected && !selectedCoordSet.has(`${rowIndex}:${colIndex - 1}`);
+    const isSelEnd =
+      isSelected && !selectedCoordSet.has(`${rowIndex}:${colIndex + 1}`);
+
     const isCopied = isCoordInRect(rowIndex, colIndex, copiedRect);
+    const isCopyTop =
+      isCopied &&
+      (!sameSideAbove || !isCoordInRect(rowIndex - 1, colIndex, copiedRect));
+    const isCopyBottom =
+      isCopied &&
+      (!sameSideBelow || !isCoordInRect(rowIndex + 1, colIndex, copiedRect));
+    const isCopyStart =
+      isCopied && !isCoordInRect(rowIndex, colIndex - 1, copiedRect);
+    const isCopyEnd =
+      isCopied && !isCoordInRect(rowIndex, colIndex + 1, copiedRect);
+
     const isFillSource =
-      fillDrag !== null &&
-      fillDrag.source.row === rowIndex &&
-      fillDrag.source.col === colIndex;
+      fillDrag !== null && isCoordInRect(rowIndex, colIndex, fillDrag.sourceRect);
     const isFillPreview =
-      isCoordInFillDrag(rowIndex, colIndex, fillDrag) && !isFillSource;
-    const coordKey = `${rowIndex}:${colIndex}`;
+      isCoordInRect(rowIndex, colIndex, fillPreviewRect) && !isFillSource;
+
+    const isMultiSelectionCorner =
+      isContiguousMultiSelected &&
+      selectedRect !== null &&
+      rowIndex === selectedRect.r2 &&
+      colIndex === selectedRect.c2;
+    const isFillEligible =
+      !nonInteractive &&
+      (isMultiSelectionCorner ||
+        (selectedCellCount < 2 && extraCoords.length === 0));
+
+    const isColCrosshair =
+      crosshairCoord !== null &&
+      crosshairCoord.col === colIndex &&
+      (!oneGlanceMode || crosshairCoord.side === rowSide);
 
     return (
-      <td key={logDate} className="cell-status" role="presentation">
+      <td
+        key={logDate}
+        className={`cell-status ${isColCrosshair ? 'is-col-crosshair' : ''}`}
+        role="presentation"
+        onPointerEnter={() =>
+          setHoveredCell({ row: rowIndex, col: colIndex, side: rowSide })
+        }
+      >
         <div
           className={`m-cell-wrap ${isFocused ? 'has-focus' : ''} ${
-            !nonInteractive && selectedCellCount < 2 ? 'is-fill-eligible' : ''
-          } ${isFillSource ? 'is-fill-source' : ''}`}
+            isFillEligible ? 'is-fill-eligible' : ''
+          } ${isMultiSelectionCorner ? 'is-fill-corner' : ''} ${
+            isFillSource ? 'is-fill-source' : ''
+          } ${isCopied ? 'is-copy-wrap' : ''} ${
+            isCopyTop ? 'is-copy-top' : ''
+          } ${isCopyBottom ? 'is-copy-bottom' : ''} ${
+            isCopyStart ? 'is-copy-start' : ''
+          } ${isCopyEnd ? 'is-copy-end' : ''}`}
         >
           <button
             ref={(el) => {
@@ -1975,7 +2629,15 @@ export function WeekView({
             className={`m-cell nums ${getCellStateClass(display.state)} ${
               isFocused ? 'is-grid-focused' : ''
             } ${isSelected ? 'is-grid-selected' : ''} ${
+              isSelTop ? 'is-sel-top' : ''
+            } ${isSelBottom ? 'is-sel-bottom' : ''} ${
+              isSelStart ? 'is-sel-start' : ''
+            } ${isSelEnd ? 'is-sel-end' : ''} ${
               isCopied ? 'is-grid-copied' : ''
+            } ${isCopyTop ? 'is-copy-top' : ''} ${
+              isCopyBottom ? 'is-copy-bottom' : ''
+            } ${isCopyStart ? 'is-copy-start' : ''} ${
+              isCopyEnd ? 'is-copy-end' : ''
             } ${isFillSource ? 'is-fill-source' : ''} ${
               isFillPreview ? 'is-fill-preview' : ''
             }`}
@@ -1988,6 +2650,17 @@ export function WeekView({
               if (nonInteractive) return;
               if (e.pointerType !== 'mouse' || e.button !== 0) return;
               suppressNextClickRef.current = false;
+
+              if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                suppressNextClickRef.current = true;
+                setTimeout(() => {
+                  suppressNextClickRef.current = false;
+                }, 50);
+                toggleCoordsInSelection([{ row: rowIndex, col: colIndex }]);
+                focusGridCell(rowIndex, colIndex);
+                return;
+              }
 
               if (e.shiftKey) {
                 e.preventDefault();
@@ -2013,6 +2686,7 @@ export function WeekView({
                     col: colIndex,
                   };
                 }
+                setExtraCoords([]);
                 setSelection({ anchor, extent });
                 focusGridCell(extent.row, extent.col);
                 return;
@@ -2023,6 +2697,7 @@ export function WeekView({
                 startX: e.clientX,
                 startY: e.clientY,
                 anchor: { row: rowIndex, col: colIndex },
+                lastExtent: { row: rowIndex, col: colIndex },
                 anchorSide: rowMeta?.side ?? 'TIME_BOUND',
                 active: false,
               };
@@ -2033,7 +2708,7 @@ export function WeekView({
                 suppressNextClickRef.current = false;
                 return;
               }
-              setSelection(null);
+              clearSelection();
               setFocusedCell({ row: rowIndex, col: colIndex });
               void handleCellPrimaryCycle(action, logDate, display);
             }}
@@ -2056,23 +2731,38 @@ export function WeekView({
               className="m-fill-handle"
               data-testid="fill-handle"
               aria-hidden="true"
+              onDoubleClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleFillHandleDoubleClick(rowIndex, colIndex);
+              }}
               onPointerDown={(e) => {
                 if (e.pointerType !== 'mouse' || e.button !== 0) return;
                 e.preventDefault();
                 e.stopPropagation();
                 window.getSelection()?.removeAllRanges();
                 const rowMeta = visibleGridRows[rowIndex];
+                const sourceRect: GridRect = isMultiSelectionCorner && selectedRect
+                  ? selectedRect
+                  : {
+                      r1: rowIndex,
+                      r2: rowIndex,
+                      c1: colIndex,
+                      c2: colIndex,
+                    };
+                const sourceMatrix = buildMatrixFromRect(sourceRect);
                 const nextFill: FillDragState = {
-                  source: { row: rowIndex, col: colIndex },
+                  sourceRect,
+                  sourceMatrix,
                   startX: e.clientX,
                   startY: e.clientY,
-                  target: { row: rowIndex, col: colIndex },
-                  sourceSnapshot: snapshotCellFromDisplay(display),
+                  target: { row: sourceRect.r2, col: sourceRect.c2 },
                   sourceSide: rowMeta?.side ?? 'TIME_BOUND',
                 };
                 fillDragRef.current = nextFill;
                 setFillDrag(nextFill);
-                setSelection(null);
+                setIsGridDragging(true);
+                clearSelection();
                 setFocusedCell({ row: rowIndex, col: colIndex });
                 document.body.style.cursor = 'crosshair';
               }}
@@ -2081,6 +2771,26 @@ export function WeekView({
         </div>
       </td>
     );
+  };
+
+  const isRowFullySelected = (rowIndex: number): boolean => {
+    if (weekDates.length === 0) return false;
+    for (let c = 0; c < weekDates.length; c += 1) {
+      if (!selectedCoordSet.has(`${rowIndex}:${c}`)) return false;
+    }
+    return true;
+  };
+
+  const isColFullySelected = (
+    colIdx: number,
+    startRow: number,
+    endRow: number,
+  ): boolean => {
+    if (startRow > endRow) return false;
+    for (let r = startRow; r <= endRow; r += 1) {
+      if (!selectedCoordSet.has(`${r}:${colIdx}`)) return false;
+    }
+    return true;
   };
 
   const renderStandardGroupRows = (group: Period) => {
@@ -2173,19 +2883,19 @@ export function WeekView({
               effectiveBulkDate,
             );
             const rowIndex = rowIndexByActionId.get(action.id) ?? 0;
+            const rowSide = visibleGridRows[rowIndex]?.side ?? group.side;
             const itemProps = dnd.getItemProps(action.id);
             const handleProps = dnd.getHandleProps(action.id);
-            const isRowSelected =
-              selectedRect !== null &&
-              selectedRect.r1 <= rowIndex &&
-              selectedRect.r2 >= rowIndex &&
-              selectedRect.c1 === 0 &&
-              selectedRect.c2 === weekDates.length - 1;
+            const isRowSelected = isRowFullySelected(rowIndex);
+            const isRowCrosshair =
+              crosshairCoord !== null && crosshairCoord.row === rowIndex;
 
             return (
               <tr
                 key={action.id}
-                className={`data-row ${isRowSelected ? 'is-row-selected' : ''}`}
+                className={`data-row ${isRowSelected ? 'is-row-selected' : ''} ${
+                  isRowCrosshair ? 'is-row-crosshair' : ''
+                }`}
                 role="row"
                 {...itemProps}
               >
@@ -2207,9 +2917,11 @@ export function WeekView({
                     </button>
                     <button
                       type="button"
-                      className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''}`}
+                      className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
+                        isRowCrosshair ? 'is-row-crosshair' : ''
+                      }`}
                       aria-label={`تحديد صف ${action.title}`}
-                      onClick={() => handleSelectActionRow(rowIndex)}
+                      onClick={(e) => handleSelectActionRow(rowIndex, e)}
                     >
                       <span className="cell-title-text">{action.title}</span>
                       {tv && (
@@ -2230,6 +2942,7 @@ export function WeekView({
                     rowIndex,
                     colIndex: colIdx,
                     dayLabel: dowName,
+                    rowSide,
                   });
                 })}
 
@@ -2360,6 +3073,7 @@ export function WeekView({
               ? AR_STRINGS.week.rightSideTitle
               : AR_STRINGS.week.leftSideTitle
           }
+          onPointerLeave={() => setHoveredCell(null)}
         >
           <thead>
             <tr role="row">
@@ -2374,23 +3088,28 @@ export function WeekView({
                 const abbr =
                   AR_STRINGS.week.weekdaysShortEn[getIsoDayOfWeek(d)] ?? '';
                 const isToday = d === todayIslamicDate;
-                const isColSelected =
-                  selectedRect !== null &&
-                  selectedRect.c1 === colIdx &&
-                  selectedRect.c2 === colIdx &&
-                  selectedRect.r1 === sideStartRow &&
-                  selectedRect.r2 === sideEndRow;
+                const isColSelected = isColFullySelected(
+                  colIdx,
+                  sideStartRow,
+                  sideEndRow,
+                );
+                const isColCrosshair =
+                  crosshairCoord !== null &&
+                  crosshairCoord.col === colIdx &&
+                  crosshairCoord.side === side;
                 return (
                   <th
                     key={d}
-                    className={`col-day ${isToday ? 'is-today' : ''}`}
+                    className={`col-day ${isToday ? 'is-today' : ''} ${
+                      isColCrosshair ? 'is-col-crosshair' : ''
+                    }`}
                     scope="col"
                   >
                     <button
                       type="button"
                       className={`col-day-btn ${isColSelected ? 'is-col-selected' : ''}`}
                       aria-label={`تحديد عمود ${formatArabicDateFull(d)}`}
-                      onClick={() => handleSelectDayColumn(colIdx, side)}
+                      onClick={(e) => handleSelectDayColumn(colIdx, side, e)}
                     >
                       <span dir="ltr" className="block text-[10px] leading-tight">
                         {abbr}
@@ -2421,19 +3140,16 @@ export function WeekView({
                   {groupActions.map((action, idx) => {
                     const isLastInGroup = idx === groupActions.length - 1;
                     const rowIndex = rowIndexByActionId.get(action.id) ?? 0;
-                    const isRowSelected =
-                      selectedRect !== null &&
-                      selectedRect.r1 <= rowIndex &&
-                      selectedRect.r2 >= rowIndex &&
-                      selectedRect.c1 === 0 &&
-                      selectedRect.c2 === weekDates.length - 1;
+                    const isRowSelected = isRowFullySelected(rowIndex);
+                    const isRowCrosshair =
+                      crosshairCoord !== null && crosshairCoord.row === rowIndex;
                     return (
                       <tr
                         key={action.id}
                         role="row"
                         className={`data-row ${isLastInGroup ? 'period-end-row' : ''} ${
                           isRowSelected ? 'is-row-selected' : ''
-                        }`}
+                        } ${isRowCrosshair ? 'is-row-crosshair' : ''}`}
                       >
                         {idx === 0 && (
                           <td
@@ -2472,9 +3188,11 @@ export function WeekView({
                         <td className="cell-title" title={action.title}>
                           <button
                             type="button"
-                            className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''}`}
+                            className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
+                              isRowCrosshair ? 'is-row-crosshair' : ''
+                            }`}
                             aria-label={`تحديد صف ${action.title}`}
-                            onClick={() => handleSelectActionRow(rowIndex)}
+                            onClick={(e) => handleSelectActionRow(rowIndex, e)}
                           >
                             <span className="cell-title-text">
                               {action.title}
@@ -2492,6 +3210,7 @@ export function WeekView({
                             rowIndex,
                             colIndex: colIdx,
                             dayLabel: abbr,
+                            rowSide: side,
                           });
                         })}
                         <td className="cell-rate nums">
@@ -2533,7 +3252,17 @@ export function WeekView({
           <button
             type="button"
             className="btn"
-            onClick={() => navigateWeek(todayIslamicDate)}
+            onClick={() => {
+              if (weekDates.includes(todayIslamicDate)) {
+                restoreFocusToGrid({
+                  row: effectiveFocusedCell?.row ?? 0,
+                  col: todayColIdx,
+                });
+              } else {
+                pendingJumpTodayFocusRef.current = true;
+                navigateWeek(todayIslamicDate);
+              }
+            }}
           >
             {AR_STRINGS.week.todayButton}
           </button>
@@ -2652,7 +3381,10 @@ export function WeekView({
           )}
         </div>
 
-        <div ref={desktopGridAreaRef}>
+        <div
+          ref={desktopGridAreaRef}
+          className={isGridDragging ? 'is-grid-dragging' : undefined}
+        >
           {oneGlanceMode ? (
             <div className="overview-split" data-testid="one-glance-split">
               {renderOneGlanceSideTable('TIME_BOUND')}
@@ -2665,6 +3397,7 @@ export function WeekView({
                 role="grid"
                 aria-multiselectable="true"
                 aria-label="الجدول الأسبوعي"
+                onPointerLeave={() => setHoveredCell(null)}
               >
                 <thead>
                   <tr role="row">
@@ -2676,23 +3409,28 @@ export function WeekView({
                       const dowName =
                         AR_STRINGS.week.weekdaysAr[getIsoDayOfWeek(d)] ?? '';
                       const isToday = d === todayIslamicDate;
-                      const isColSelected =
-                        selectedRect !== null &&
-                        selectedRect.c1 === colIdx &&
-                        selectedRect.c2 === colIdx &&
-                        selectedRect.r1 === 0 &&
-                        selectedRect.r2 === visibleGridRows.length - 1;
+                      const isColSelected = isColFullySelected(
+                        colIdx,
+                        0,
+                        visibleGridRows.length - 1,
+                      );
+                      const isColCrosshair =
+                        crosshairCoord !== null && crosshairCoord.col === colIdx;
                       return (
                         <th
                           key={d}
-                          className={`col-day ${isToday ? 'is-today' : ''}`}
+                          className={`col-day ${isToday ? 'is-today' : ''} ${
+                            isColCrosshair ? 'is-col-crosshair' : ''
+                          }`}
                           scope="col"
                         >
                           <button
                             type="button"
                             className={`col-day-btn ${isColSelected ? 'is-col-selected' : ''}`}
                             aria-label={`تحديد عمود ${formatArabicDateFull(d)}`}
-                            onClick={() => handleSelectDayColumn(colIdx)}
+                            onClick={(e) =>
+                              handleSelectDayColumn(colIdx, undefined, e)
+                            }
                           >
                             <span>{dowName}</span>
                             <span className="nums">{day}</span>
@@ -2752,6 +3490,7 @@ export function WeekView({
                       showToast: true,
                       actionNameAr: 'تم تحديد تم للكل',
                       clearSelection: true,
+                      restoreFocus: true,
                     },
                   );
                 }}
@@ -2772,6 +3511,7 @@ export function WeekView({
                       showToast: true,
                       actionNameAr: 'تم تحديد فات للكل',
                       clearSelection: true,
+                      restoreFocus: true,
                     },
                   );
                 }}
@@ -2793,6 +3533,7 @@ export function WeekView({
                         showToast: true,
                         actionNameAr: 'تم تحديد 50%',
                         clearSelection: true,
+                        restoreFocus: true,
                       },
                     );
                   }}
@@ -2813,6 +3554,7 @@ export function WeekView({
                         showToast: true,
                         actionNameAr: 'تم تسجيل القضاء',
                         clearSelection: true,
+                        restoreFocus: true,
                       },
                     );
                   }}
@@ -2834,6 +3576,7 @@ export function WeekView({
                       showToast: true,
                       actionNameAr: 'تم تعطيل',
                       clearSelection: true,
+                      restoreFocus: true,
                     },
                   );
                 }}
@@ -2853,6 +3596,7 @@ export function WeekView({
                       showToast: true,
                       actionNameAr: 'تم مسح الحالات',
                       clearSelection: true,
+                      restoreFocus: true,
                     },
                   );
                 }}
@@ -2863,7 +3607,12 @@ export function WeekView({
               <button
                 type="button"
                 className="btn"
-                onClick={() => handleCopySelection({ clearSelection: true })}
+                onClick={() =>
+                  handleCopySelection({
+                    clearSelection: true,
+                    restoreFocus: true,
+                  })
+                }
               >
                 <IconCopy size="sm" />
                 <span>نسخ</span>
@@ -2874,7 +3623,7 @@ export function WeekView({
                   type="button"
                   className="btn"
                   onClick={() => {
-                    void handlePasteSelection();
+                    void handlePasteSelection({ restoreFocus: true });
                   }}
                 >
                   <IconClipboard size="sm" />
@@ -2887,7 +3636,10 @@ export function WeekView({
                 className="btn btn-icon week-bulk-close"
                 aria-label="إلغاء التحديد"
                 title="إلغاء التحديد (Esc)"
-                onClick={() => setSelection(null)}
+                onClick={() => {
+                  clearSelection();
+                  restoreFocusToGrid();
+                }}
               >
                 <IconX size="sm" />
               </button>
