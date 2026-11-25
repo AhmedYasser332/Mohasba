@@ -15,7 +15,7 @@ import { get48hCatchUpItems } from '@/domain/qadaa';
 import { makeCellKey, type DailyLog, type ReminderKind } from '@/domain/types';
 import type { RuntimeConfig } from '../config';
 import {
-  fetchAppSettings,
+  fetchAppSettingsWithNtfySecrets,
   normalizeActionRow,
   normalizePeriodRow,
   normalizeTargetVersionRow,
@@ -23,6 +23,12 @@ import {
 import { normalizeDailyLogRow } from '../db/pagination';
 import { ServiceError } from '../errors';
 import { writeAuditLog } from '../observability/logger';
+import {
+  formatNtfyTopicHint,
+  scrubNtfyError,
+  scrubNtfySecrets,
+  validateNtfyTopicUrl,
+} from '../security/ntfy-url';
 
 export interface NtfyTestResult {
   ok: boolean;
@@ -31,14 +37,26 @@ export interface NtfyTestResult {
 
 export async function sendTestNtfy(
   config: RuntimeConfig,
+  supabase: SupabaseClient,
   fetchImpl: typeof fetch = fetch,
 ): Promise<NtfyTestResult> {
-  if (!config.ntfyTopicUrl) {
+  const { ntfyTopicUrlDb, ntfyAccessTokenDb } =
+    await fetchAppSettingsWithNtfySecrets(supabase);
+
+  const effectiveUrl = ntfyTopicUrlDb ?? config.ntfyTopicUrl;
+  if (!effectiveUrl) {
     throw new ServiceError(
       400,
       'NTFY_NOT_CONFIGURED',
       'NTFY_TOPIC_URL is not configured.',
     );
+  }
+
+  if (ntfyTopicUrlDb !== null) {
+    const urlCheck = validateNtfyTopicUrl(ntfyTopicUrlDb);
+    if (!urlCheck.ok) {
+      throw new ServiceError(400, 'VALIDATION_ERROR', urlCheck.reason);
+    }
   }
 
   const clickUrl = config.appUrl
@@ -52,18 +70,36 @@ export async function sendTestNtfy(
   if (clickUrl) {
     headers.Click = clickUrl;
   }
+  if (ntfyAccessTokenDb) {
+    headers.Authorization = `Bearer ${ntfyAccessTokenDb}`;
+  }
 
-  const res = await fetchImpl(config.ntfyTopicUrl, {
-    method: 'POST',
-    headers,
-    body: 'تنبيه تجريبي من جدول المحاسبة — الاتصال يعمل بنجاح.',
-    signal: AbortSignal.timeout(5000),
-  });
+  try {
+    const res = await fetchImpl(effectiveUrl, {
+      method: 'POST',
+      headers,
+      body: 'تنبيه تجريبي من جدول المحاسبة — الاتصال يعمل بنجاح.',
+      redirect: 'error',
+      signal: AbortSignal.timeout(5000),
+    });
 
-  return {
-    ok: res.ok,
-    status: res.status,
-  };
+    return {
+      ok: res.ok,
+      status: res.status,
+    };
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const scrubbedMsg = scrubNtfySecrets(
+      rawMsg,
+      effectiveUrl,
+      ntfyAccessTokenDb,
+    );
+    throw new ServiceError(
+      502,
+      'NTFY_DISPATCH_FAILED',
+      `Failed sending ntfy test notification: ${scrubbedMsg}`,
+    );
+  }
 }
 
 export interface CronTickSummary {
@@ -105,7 +141,8 @@ export async function runCronTick(
   const nowIso = new Date(nowMs).toISOString();
 
   // 1. Read app_settings (continuously resets Supabase's 7-day inactivity pause)
-  const settings = await fetchAppSettings(supabase);
+  const { settings, ntfyTopicUrlDb, ntfyAccessTokenDb } =
+    await fetchAppSettingsWithNtfySecrets(supabase);
   const todayIslamicDate = resolveIslamicDate(nowMs, settings);
 
   // 2. Daily Prune once per Islamic date
@@ -149,7 +186,8 @@ export async function runCronTick(
   let skippedCount = 0;
   let failedCount = 0;
 
-  if (!config.ntfyTopicUrl) {
+  const effectiveUrl = ntfyTopicUrlDb ?? config.ntfyTopicUrl;
+  if (!effectiveUrl) {
     return {
       ok: true,
       islamic_date: todayIslamicDate,
@@ -158,6 +196,32 @@ export async function runCronTick(
       skipped_count: 0,
       failed_count: 0,
     };
+  }
+
+  if (ntfyTopicUrlDb !== null) {
+    const urlCheck = validateNtfyTopicUrl(ntfyTopicUrlDb);
+    if (!urlCheck.ok) {
+      await writeAuditLog(supabase, {
+        level: 'ERROR',
+        category: 'CRON',
+        event_name: 'ntfy_url_rejected',
+        request_id: requestId,
+        summary:
+          'Skipped cron ntfy dispatch because stored ntfy_topic_url failed validation.',
+        context: {
+          reason: urlCheck.reason,
+          topic_hint: formatNtfyTopicHint(ntfyTopicUrlDb),
+        },
+      });
+      return {
+        ok: true,
+        islamic_date: todayIslamicDate,
+        pruned,
+        dispatched_count: 0,
+        skipped_count: 0,
+        failed_count: 0,
+      };
+    }
   }
 
   const inQuietHours = isTimeInQuietHours(nowMs, settings);
@@ -394,11 +458,15 @@ export async function runCronTick(
         if (item.clickUrl) {
           headers.Click = item.clickUrl;
         }
+        if (ntfyAccessTokenDb) {
+          headers.Authorization = `Bearer ${ntfyAccessTokenDb}`;
+        }
 
-        const res = await fetchImpl(config.ntfyTopicUrl!, {
+        const res = await fetchImpl(effectiveUrl, {
           method: 'POST',
           headers,
           body: item.body,
+          redirect: 'error',
           signal: AbortSignal.timeout(5000),
         });
 
@@ -420,15 +488,20 @@ export async function runCronTick(
           .eq('id', item.claimId);
       } else {
         failedCount += 1;
-        const errMsg =
+        const rawErrMsg =
           outcome.reason instanceof Error
             ? outcome.reason.message
             : String(outcome.reason);
+        const scrubbedErrMsg = scrubNtfySecrets(
+          rawErrMsg,
+          effectiveUrl,
+          ntfyAccessTokenDb,
+        );
         await supabase
           .from('reminder_dispatches')
           .update({
             dispatch_status: 'failed',
-            error_message: errMsg.slice(0, 500),
+            error_message: scrubbedErrMsg.slice(0, 500),
           })
           .eq('id', item.claimId);
 
@@ -445,7 +518,11 @@ export async function runCronTick(
             period_id: item.periodId,
             islamic_date: item.islamicDate,
           },
-          error: outcome.reason,
+          error: scrubNtfyError(
+            outcome.reason,
+            effectiveUrl,
+            ntfyAccessTokenDb,
+          ),
         });
       }
     }

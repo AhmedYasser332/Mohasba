@@ -79,6 +79,7 @@ export function BackupAuditSection({
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
 
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
   const attentionItems = useMemo(
@@ -108,7 +109,9 @@ export function BackupAuditSection({
         return;
       }
       const snapshot = (await res.json()) as ExportSnapshot;
-      const stamp = snapshot.exported_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+      const stamp =
+        snapshot.exported_at?.slice(0, 10) ??
+        new Date().toISOString().slice(0, 10);
       triggerJsonDownload(`mohasba-backup-${stamp}.json`, snapshot);
       setBackupFeedback({
         text: `تم تصدير النسخة الكاملة (${snapshot.daily_logs.length} سجل).`,
@@ -192,7 +195,8 @@ export function BackupAuditSection({
         });
         if (!chunkRes.ok) {
           setBackupFeedback({
-            text: chunkRes.errorMessage ?? 'توقف الاستيراد أثناء معالجة الدفعات.',
+            text:
+              chunkRes.errorMessage ?? 'توقف الاستيراد أثناء معالجة الدفعات.',
             isError: true,
           });
           return;
@@ -260,9 +264,10 @@ export function BackupAuditSection({
     try {
       const res = await signOut();
       if (res.ok) {
-        onStatusMessage?.('signed_out');
+        setConfirmSignOut(false);
+        onStatusMessage?.('تم تسجيل الخروج بنجاح ومسح البيانات المحلية.');
       } else {
-        onStatusMessage?.(res.errorMessage ?? 'تعذر تسجيل الخروج');
+        onStatusMessage?.(res.errorMessage ?? 'تعذر تسجيل الخروج.');
       }
     } finally {
       setSigningOut(false);
@@ -278,145 +283,143 @@ export function BackupAuditSection({
   };
 
   return (
-    <div className="view-stack">
+    <div>
       {/* Backup & Restore */}
-      <section className="panel" data-testid="settings-backup-section">
-        <div className="panel-header">
-          <div>
-            <h3 className="panel-title">
-              {AR_STRINGS.settings.backupSectionTitle}
-            </h3>
-            <span className="panel-meta">
-              النسخة الكاملة أثناء الاتصال ونسخة الطوارئ تعمل دون إنترنت
-            </span>
+      <div className="settings-body">
+        <span className="panel-meta">
+          النسخة الكاملة أثناء الاتصال ونسخة الطوارئ تعمل دون إنترنت
+        </span>
+
+        {backupFeedback && (
+          <div
+            className={`status-note ${backupFeedback.isError ? 'is-error' : ''}`}
+            data-testid="backup-feedback"
+            role="status"
+          >
+            {backupFeedback.text}
           </div>
+        )}
+
+        {importProgress && (
+          <div className="notice-bar nums" data-testid="import-progress">
+            <span>{importProgress}</span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-live"
+            data-testid="export-full-btn"
+            disabled={!isOnline || exportBusy}
+            onClick={() => {
+              void handleFullOnlineExport();
+            }}
+          >
+            <IconDownload size="sm" />
+            <span>{AR_STRINGS.settings.exportFullButton}</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn"
+            data-testid="export-emergency-btn"
+            onClick={() => {
+              void handleEmergencyExport();
+            }}
+          >
+            <IconDownload size="sm" />
+            <span>{AR_STRINGS.settings.exportEmergencyButton}</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn"
+            data-testid="import-json-btn"
+            disabled={!isOnline || importBusy}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <IconUpload size="sm" />
+            <span>{AR_STRINGS.settings.importJsonButton}</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            data-testid="import-json-input"
+            onChange={(e) => {
+              void handleImportFile(e);
+            }}
+          />
         </div>
 
-        <div className="settings-body">
-          {backupFeedback && (
-            <div
-              className={`status-note ${backupFeedback.isError ? 'is-error' : ''}`}
-              data-testid="backup-feedback"
-              role="status"
-            >
-              {backupFeedback.text}
-            </div>
-          )}
-
-          {importProgress && (
-            <div className="notice-bar nums" data-testid="import-progress">
-              <span>{importProgress}</span>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-live"
-              data-testid="export-full-btn"
-              disabled={!isOnline || exportBusy}
-              onClick={() => {
-                void handleFullOnlineExport();
-              }}
-            >
-              <IconDownload size="sm" />
-              <span>{AR_STRINGS.settings.exportFullButton}</span>
-            </button>
-
-            <button
-              type="button"
-              className="btn"
-              data-testid="export-emergency-btn"
-              onClick={() => {
-                void handleEmergencyExport();
-              }}
-            >
-              <IconDownload size="sm" />
-              <span>{AR_STRINGS.settings.exportEmergencyButton}</span>
-            </button>
-
-            <button
-              type="button"
-              className="btn"
-              data-testid="import-json-btn"
-              disabled={!isOnline || importBusy}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <IconUpload size="sm" />
-              <span>{AR_STRINGS.settings.importJsonButton}</span>
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              data-testid="import-json-input"
-              onChange={(e) => {
-                void handleImportFile(e);
-              }}
-            />
-          </div>
-
-          {/* Sync Attention Recovery inside Settings */}
-          {attentionItems.length > 0 && (
-            <div className="flex flex-col gap-2" data-testid="settings-attention-panel">
-              <strong>عناصر مزامنة تحتاج إلى انتباه ({attentionItems.length})</strong>
-              {attentionItems.map((item) => {
-                const act = actionsById.get(item.action_id);
-                return (
-                  <div key={item.mutation_id} className="attention-card">
-                    <div className="flex items-center justify-between gap-2">
-                      <strong>{act?.title ?? item.action_id}</strong>
-                      <span className="nums">{item.log_date}</span>
-                    </div>
-                    {item.last_error && (
-                      <span className="text-xs">{item.last_error}</span>
-                    )}
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => {
-                          void retryAttentionItem(item.mutation_id);
-                        }}
-                      >
-                        {AR_STRINGS.sync.retryItem}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => {
-                          void handleExportAndDiscard(item.mutation_id);
-                        }}
-                      >
-                        {AR_STRINGS.sync.exportAndDiscardItem}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-danger"
-                        onClick={() => {
-                          void discardAttentionItem(item.mutation_id);
-                        }}
-                      >
-                        {AR_STRINGS.sync.discardItem}
-                      </button>
-                    </div>
+        {/* Sync Attention Recovery inside Settings */}
+        {attentionItems.length > 0 && (
+          <div
+            className="flex flex-col gap-2"
+            data-testid="settings-attention-panel"
+          >
+            <strong>
+              عناصر مزامنة تحتاج إلى انتباه ({attentionItems.length})
+            </strong>
+            {attentionItems.map((item) => {
+              const act = actionsById.get(item.action_id);
+              return (
+                <div key={item.mutation_id} className="attention-card">
+                  <div className="flex items-center justify-between gap-2">
+                    <strong>{act?.title ?? item.action_id}</strong>
+                    <span className="nums">{item.log_date}</span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
+                  {item.last_error && (
+                    <span className="text-xs">{item.last_error}</span>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => {
+                        void retryAttentionItem(item.mutation_id);
+                      }}
+                    >
+                      {AR_STRINGS.sync.retryItem}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => {
+                        void handleExportAndDiscard(item.mutation_id);
+                      }}
+                    >
+                      {AR_STRINGS.sync.exportAndDiscardItem}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={() => {
+                        void discardAttentionItem(item.mutation_id);
+                      }}
+                    >
+                      {AR_STRINGS.sync.discardItem}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-      {/* Audit Logs Drawer / Panel */}
-      <section className="panel" data-testid="settings-audit-section">
-        <div className="panel-header">
+      {/* Audit Logs Subpanel */}
+      <div className="settings-subpanel" data-testid="settings-audit-section">
+        <div className="settings-subpanel-head">
           <div>
-            <h3 className="panel-title">{AR_STRINGS.settings.auditLogsTitle}</h3>
-            <span className="panel-meta">
+            <strong className="text-sm">
+              {AR_STRINGS.settings.auditLogsTitle}
+            </strong>
+            <div className="panel-meta">
               سجل تشخيصي للقراءة فقط دون نصوص الملاحظات الخاصة
-            </span>
+            </div>
           </div>
           <button
             type="button"
@@ -508,7 +511,9 @@ export function BackupAuditSection({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="target-tag nums">{entry.level}</span>
-                        <span className="target-tag nums">{entry.category}</span>
+                        <span className="target-tag nums">
+                          {entry.category}
+                        </span>
                         <strong className="nums">{entry.event_name}</strong>
                       </div>
                       <span className="panel-meta nums" dir="ltr">
@@ -522,12 +527,12 @@ export function BackupAuditSection({
             )}
           </div>
         )}
-      </section>
+      </div>
 
       {/* iOS A2HS Notice + Sign Out */}
-      <section className="panel" data-testid="settings-account-section">
-        <div className="panel-header">
-          <h3 className="panel-title">الجلسة والجهاز</h3>
+      <div className="settings-subpanel" data-testid="settings-account-section">
+        <div className="settings-subpanel-head">
+          <strong className="text-sm">الجلسة والجهاز</strong>
         </div>
         <div className="settings-body">
           {isIosA2hsPromptVisible && (
@@ -562,26 +567,62 @@ export function BackupAuditSection({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="panel-meta">
-              تسجيل الخروج يمسح البيانات المخزنة محلياً على هذا المتصفح بعد إنهاء الجلسة.
-            </span>
-
-            <button
-              type="button"
-              className="btn btn-danger"
-              data-testid="signout-btn"
-              disabled={signingOut}
-              onClick={() => {
-                void handleSignOut();
-              }}
+          {confirmSignOut ? (
+            <div
+              className="confirm-banner"
+              data-testid="signout-confirm-banner"
+              role="alert"
             >
-              <IconLogOut size="sm" />
-              <span>{AR_STRINGS.settings.signOutButton}</span>
-            </button>
-          </div>
+              <span>
+                هل تريد تأكيد تسجيل الخروج؟ سيتم إنهاء الجلسة ومسح البيانات المخزنة محلياً على هذا المتصفح.
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  data-testid="signout-confirm-btn"
+                  disabled={signingOut}
+                  onClick={() => {
+                    void handleSignOut();
+                  }}
+                >
+                  <IconLogOut size="sm" />
+                  <span>
+                    {signingOut
+                      ? 'جاري تسجيل الخروج...'
+                      : 'تأكيد تسجيل الخروج'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={signingOut}
+                  onClick={() => setConfirmSignOut(false)}
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="panel-meta">
+                تسجيل الخروج يمسح البيانات المخزنة محلياً على هذا المتصفح بعد إنهاء الجلسة.
+              </span>
+
+              <button
+                type="button"
+                className="btn btn-danger"
+                data-testid="signout-btn"
+                disabled={signingOut}
+                onClick={() => setConfirmSignOut(true)}
+              >
+                <IconLogOut size="sm" />
+                <span>{AR_STRINGS.settings.signOutButton}</span>
+              </button>
+            </div>
+          )}
         </div>
-      </section>
+      </div>
     </div>
   );
 }

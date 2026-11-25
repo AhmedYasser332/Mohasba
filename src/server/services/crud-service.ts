@@ -8,8 +8,11 @@ import {
   AuditLogCategorySchema,
   AuditLogLevelSchema,
   CalcMethodSchema,
+  DefaultHomeViewSchema,
+  DefaultWeekModeSchema,
   HhmmSchema,
   IsoDateSchema,
+  KeyboardShortcutsMapSchema,
   NtfyModeSchema,
   PeriodSchema,
   PeriodSideSchema,
@@ -21,11 +24,15 @@ import {
   type Action,
   type AppSettings,
   type AuditLogEntry,
+  type NtfyStatusMeta,
   type Period,
   type TargetVersion,
 } from '@/domain/types';
 import { z } from 'zod';
+import type { RuntimeConfig } from '../config';
 import {
+  buildNtfyStatusMeta,
+  extractNtfySecretsFromRow,
   fetchAppSettings,
   normalizeActionRow,
   normalizeAppSettingsRow,
@@ -35,6 +42,7 @@ import {
 import { fetchAllDailyLogsKeyset } from '../db/pagination';
 import { ServiceError } from '../errors';
 import { writeAuditLog } from '../observability/logger';
+import { validateNtfyTopicUrl } from '../security/ntfy-url';
 
 function validateCalendarIsoDate(iso: string, fieldName: string): void {
   try {
@@ -65,6 +73,12 @@ export const SettingsPatchSchema = z
     digest_enabled: z.boolean().optional(),
     digest_hhmm: HhmmSchema.optional(),
     backup_reminder_enabled: z.boolean().optional(),
+    show_catchup_banner: z.boolean().optional(),
+    default_home_view: DefaultHomeViewSchema.optional(),
+    default_week_mode: DefaultWeekModeSchema.optional(),
+    keyboard_shortcuts: KeyboardShortcutsMapSchema.optional(),
+    ntfy_topic_url: z.string().nullable().optional(),
+    ntfy_access_token: z.string().nullable().optional(),
   })
   .refine((obj) => Object.keys(obj).length > 0, {
     message: 'At least one settings field must be provided.',
@@ -72,10 +86,11 @@ export const SettingsPatchSchema = z
 
 export async function updateSettings(params: {
   supabase: SupabaseClient;
+  config?: RuntimeConfig;
   patch: z.infer<typeof SettingsPatchSchema>;
   requestId: string;
-}): Promise<{ settings: AppSettings }> {
-  const { supabase, patch, requestId } = params;
+}): Promise<{ settings: AppSettings } & NtfyStatusMeta> {
+  const { supabase, config, patch, requestId } = params;
 
   if (patch.iana_timezone) {
     try {
@@ -89,12 +104,47 @@ export async function updateSettings(params: {
     }
   }
 
+  const { ntfy_topic_url, ntfy_access_token, ...safePatch } = patch;
+  const dbPatch: Record<string, unknown> = {
+    ...safePatch,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (ntfy_topic_url !== undefined) {
+    if (ntfy_topic_url === null || ntfy_topic_url.trim() === '') {
+      dbPatch.ntfy_topic_url = null;
+    } else {
+      const urlCheck = validateNtfyTopicUrl(ntfy_topic_url);
+      if (!urlCheck.ok) {
+        throw new ServiceError(400, 'VALIDATION_ERROR', urlCheck.reason);
+      }
+      dbPatch.ntfy_topic_url = urlCheck.url;
+    }
+  }
+
+  if (ntfy_access_token !== undefined) {
+    if (ntfy_access_token === null || ntfy_access_token === '') {
+      dbPatch.ntfy_access_token = null;
+    } else {
+      const trimmedToken = ntfy_access_token.trim();
+      if (
+        trimmedToken.length < 1 ||
+        trimmedToken.length > 500 ||
+        /[\s\u0000-\u001F\u007F]/.test(trimmedToken)
+      ) {
+        throw new ServiceError(
+          400,
+          'VALIDATION_ERROR',
+          'ntfy access token must be 1..500 characters without whitespace or control characters.',
+        );
+      }
+      dbPatch.ntfy_access_token = trimmedToken;
+    }
+  }
+
   const { data, error } = await supabase
     .from('app_settings')
-    .update({
-      ...patch,
-      updated_at: new Date().toISOString(),
-    })
+    .update(dbPatch)
     .eq('id', 1)
     .select('*')
     .single();
@@ -104,6 +154,14 @@ export async function updateSettings(params: {
       `Failed updating app_settings: ${error?.message ?? 'missing row'}`,
     );
   }
+
+  const row = data as Record<string, unknown>;
+  const { ntfyTopicUrlDb, ntfyAccessTokenDb } = extractNtfySecretsFromRow(row);
+  const ntfyMeta = buildNtfyStatusMeta({
+    ntfyTopicUrlDb,
+    ntfyAccessTokenDb,
+    envTopicUrl: config?.ntfyTopicUrl ?? null,
+  });
 
   await writeAuditLog(supabase, {
     level: 'INFO',
@@ -117,7 +175,8 @@ export async function updateSettings(params: {
   });
 
   return {
-    settings: normalizeAppSettingsRow(data as Record<string, unknown>),
+    settings: normalizeAppSettingsRow(row),
+    ...ntfyMeta,
   };
 }
 
@@ -857,12 +916,16 @@ export const ReorderSchemaInputSchema = z.object({
     .array(
       z.object({
         id: z.string().uuid(),
-        sort_order: z.number().int(),
+        sort_order: z.number().int().min(0).max(32767),
         period_id: z.string().uuid().optional(),
       }),
     )
     .min(1)
-    .max(40),
+    .max(100)
+    .refine(
+      (items) => new Set(items.map((item) => item.id)).size === items.length,
+      { message: 'Duplicate item ids are not allowed.' },
+    ),
 });
 
 export async function reorderSchema(params: {
@@ -873,29 +936,76 @@ export async function reorderSchema(params: {
   const { supabase, input, requestId } = params;
   const nowIso = new Date().toISOString();
 
+  const periodSideById = new Map<string, Period['side']>();
+  if (input.target === 'actions') {
+    const distinctPeriodIds = Array.from(
+      new Set(
+        input.items
+          .map((item) => item.period_id)
+          .filter((pid): pid is string => pid !== undefined),
+      ),
+    );
+    if (distinctPeriodIds.length > 0) {
+      const { data: periodRows, error: periodErr } = await supabase
+        .from('periods')
+        .select('id, side')
+        .in('id', distinctPeriodIds);
+      if (periodErr) {
+        throw new Error(
+          `Failed verifying target period_ids: ${periodErr.message}`,
+        );
+      }
+      for (const row of periodRows ?? []) {
+        periodSideById.set(String(row.id), row.side as Period['side']);
+      }
+      for (const pid of distinctPeriodIds) {
+        if (!periodSideById.has(pid)) {
+          throw new ServiceError(
+            400,
+            'VALIDATION_ERROR',
+            `Target period_id ${pid} does not exist.`,
+          );
+        }
+      }
+    }
+  }
+
   let updatedCount = 0;
   const failedIds: string[] = [];
+  const CHUNK_SIZE = 10;
 
-  for (const item of input.items) {
-    const updatePayload: Record<string, unknown> = {
-      sort_order: item.sort_order,
-      updated_at: nowIso,
-    };
-    if (input.target === 'actions' && item.period_id !== undefined) {
-      updatePayload.period_id = item.period_id;
-    }
+  for (let i = 0; i < input.items.length; i += CHUNK_SIZE) {
+    const chunk = input.items.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.all(
+      chunk.map(async (item) => {
+        const updatePayload: Record<string, unknown> = {
+          sort_order: item.sort_order,
+          updated_at: nowIso,
+        };
+        if (input.target === 'actions' && item.period_id !== undefined) {
+          updatePayload.period_id = item.period_id;
+          if (periodSideById.get(item.period_id) === 'TIME_BOUND') {
+            updatePayload.bound_time_period_id = null;
+          }
+        }
 
-    const { data, error } = await supabase
-      .from(input.target)
-      .update(updatePayload)
-      .eq('id', item.id)
-      .select('id')
-      .maybeSingle();
+        const { data, error } = await supabase
+          .from(input.target)
+          .update(updatePayload)
+          .eq('id', item.id)
+          .select('id')
+          .maybeSingle();
 
-    if (error || !data) {
-      failedIds.push(item.id);
-    } else {
-      updatedCount += 1;
+        return error || !data ? item.id : null;
+      }),
+    );
+
+    for (const failedId of results) {
+      if (failedId === null) {
+        updatedCount += 1;
+      } else {
+        failedIds.push(failedId);
+      }
     }
   }
 

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest run tests/domain tests/client --passWithNoTests",
+    "test:unit": "vitest run tests/domain tests/client tests/server --passWithNoTests",
     "test:integration": "vitest run --no-file-parallelism --testTimeout=30000 --hookTimeout=30000 tests/db tests/api",
     "test:e2e": "playwright test"
   },

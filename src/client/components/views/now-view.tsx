@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AR_STRINGS,
+  addDaysIso,
   getIsoDayOfWeek,
   getWeekDates,
   isActionActiveOnDate,
@@ -17,6 +18,7 @@ import {
   type WindowLookupCache,
 } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
+import { ARABIC_NOUN_FORMS, formatArabicCount } from '../../utils/arabic-plural';
 import {
   formatArabicDateFull,
   formatHhmmInTz,
@@ -28,6 +30,8 @@ import type { CellEditorTarget } from '../cell-editor-dialog';
 import {
   IconCheck,
   IconCheckAll,
+  IconChevronLeft,
+  IconChevronRight,
   IconCross,
   IconExpiredAlert,
   IconMoreDots,
@@ -71,6 +75,9 @@ export function NowView({
     logBulkMosqueDone,
     logBulkPeriodDone,
   } = useMohasba();
+
+  const periodStripRef = useRef<HTMLDivElement | null>(null);
+  const [stripFade, setStripFade] = useState({ start: false, end: false });
 
   const periodsById = useMemo(
     () => new Map(periods.map((p) => [p.id, p])),
@@ -174,8 +181,18 @@ export function NowView({
       .sort((a, b) => a.sort_order - b.sort_order);
   }, [actions, activePeriod, selectedDate]);
 
+  const hasMosqueActions = useMemo(
+    () =>
+      periodActions.some(
+        (a) => a.is_mosque_action && !a.supports_percentage,
+      ),
+    [periodActions],
+  );
+
   const eligibleMosqueCount = useMemo(() => {
-    if (!activePeriod || activePeriod.side !== 'TIME_BOUND') return 0;
+    if (!activePeriod || activePeriod.side !== 'TIME_BOUND' || !hasMosqueActions) {
+      return 0;
+    }
     return planMosqueDone({
       periodId: activePeriod.id,
       logDate: selectedDate,
@@ -183,7 +200,7 @@ export function NowView({
       periods,
       logsByKey,
     }).length;
-  }, [actions, activePeriod, logsByKey, periods, selectedDate]);
+  }, [actions, activePeriod, hasMosqueActions, logsByKey, periods, selectedDate]);
 
   const eligiblePeriodCount = useMemo(() => {
     if (!activePeriod || activePeriod.side !== 'TIME_BOUND') return 0;
@@ -195,6 +212,48 @@ export function NowView({
       logsByKey,
     }).length;
   }, [actions, activePeriod, logsByKey, periods, selectedDate]);
+
+  const updateStripFade = useCallback(() => {
+    const el = periodStripRef.current;
+    if (!el) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    if (maxScroll <= 2) {
+      setStripFade((prev) =>
+        prev.start || prev.end ? { start: false, end: false } : prev,
+      );
+      return;
+    }
+    const scrolled = Math.abs(el.scrollLeft);
+    const start = scrolled > 4;
+    const end = scrolled < maxScroll - 4;
+    setStripFade((prev) =>
+      prev.start === start && prev.end === end ? prev : { start, end },
+    );
+  }, []);
+
+  useEffect(() => {
+    const el = periodStripRef.current;
+    if (!el) return;
+    const activeTab = el.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (activeTab && typeof activeTab.scrollIntoView === 'function') {
+      const reduceMotion =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      activeTab.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    }
+    updateStripFade();
+  }, [activePeriod?.id, selectedDate, updateStripFade]);
+
+  useEffect(() => {
+    updateStripFade();
+    if (typeof window === 'undefined') return;
+    window.addEventListener('resize', updateStripFade);
+    return () => window.removeEventListener('resize', updateStripFade);
+  }, [activeTimePeriods.length, activeDailyGroups.length, updateStripFade]);
 
   if (!settings) {
     return null;
@@ -320,7 +379,9 @@ export function NowView({
     if (!activePeriod) return;
     const res = await logBulkMosqueDone(activePeriod.id, selectedDate);
     if (res.items.length > 0) {
-      onActionFeedback(`تم تسجيل ${res.items.length} أعمال في المسجد`);
+      onActionFeedback(
+        `تم تسجيل ${formatArabicCount(res.items.length, ARABIC_NOUN_FORMS.action)} في المسجد`,
+      );
     }
   };
 
@@ -329,7 +390,7 @@ export function NowView({
     const res = await logBulkPeriodDone(activePeriod.id, selectedDate);
     if (res.items.length > 0) {
       onActionFeedback(
-        `تم تسجيل الفترة بالكامل (${res.items.length})`,
+        `تم تسجيل الفترة بالكامل (${formatArabicCount(res.items.length, ARABIC_NOUN_FORMS.action)})`,
       );
     }
   };
@@ -348,13 +409,14 @@ export function NowView({
       windowCache,
     });
     const isDisabled = info.state === 'DISABLED';
+    const isExpired = info.state === 'UNLOGGED_EXPIRED';
     const showGrace = adaptingActionIds.has(action.id);
 
     return (
       <div
         key={action.id}
         data-testid={`now-action-${action.id}`}
-        className={`action-row ${isDisabled ? 'is-disabled' : ''}`}
+        className={`action-row ${isDisabled ? 'is-disabled' : ''} ${isExpired ? 'is-expired' : ''}`}
       >
         <div className="action-row-main">
           <div className="action-info">
@@ -369,6 +431,9 @@ export function NowView({
                 <span className="target-tag new-target-tag">
                   {AR_STRINGS.analytics.newTargetBadge}
                 </span>
+              )}
+              {isExpired && (
+                <span className="target-tag expired-tag">غير مسجّل</span>
               )}
               {isDisabled && <span className="target-tag">معذور اليوم</span>}
             </div>
@@ -409,6 +474,15 @@ export function NowView({
           </div>
 
           <div className="action-controls">
+            {info.state === 'PERCENT' && (
+              <span
+                className="tap-pct-badge nums"
+                aria-label={`نسبة الإنجاز ${info.percentValue ?? 0}%`}
+              >
+                {info.percentValue ?? 0}%
+              </span>
+            )}
+
             <button
               type="button"
               className={`tap-btn ${
@@ -493,41 +567,68 @@ export function NowView({
 
   return (
     <>
-      <section className="day-strip" aria-label="أيام الأسبوع">
-        {weekDates.map((d) => {
-          const dow = getIsoDayOfWeek(d);
-          const { day } = parseIsoDateParts(d);
-          const isSelected = d === selectedDate;
-          const isToday = d === todayIslamicDate;
-          return (
-            <button
-              key={d}
-              type="button"
-              className="day-tile"
-              aria-pressed={isSelected}
-              onClick={() => onSelectDate(d)}
-            >
-              <span className="day-tile-name">
-                {AR_STRINGS.week.weekdaysAr[dow]}
-              </span>
-              <span className="day-tile-num nums">{day}</span>
-              {isToday ? (
-                <span className="day-tile-dot" title="اليوم" />
-              ) : (
-                <span className="day-tile-spacer" />
-              )}
-            </button>
-          );
-        })}
-      </section>
+      <div className="day-strip-bar">
+        <button
+          type="button"
+          className="day-strip-nav-btn"
+          aria-label={AR_STRINGS.week.previousWeek}
+          onClick={() => onSelectDate(addDaysIso(selectedDate, -7))}
+        >
+          <IconChevronRight size="sm" />
+        </button>
 
-      {catchUp48hItems.length > 0 && (
-        <div className="catchup-bar" role="region" aria-label={AR_STRINGS.street.catchUpBannerTitle}>
+        <section className="day-strip" aria-label="أيام الأسبوع">
+          {weekDates.map((d) => {
+            const dow = getIsoDayOfWeek(d);
+            const { day } = parseIsoDateParts(d);
+            const isSelected = d === selectedDate;
+            const isToday = d === todayIslamicDate;
+            return (
+              <button
+                key={d}
+                type="button"
+                className="day-tile"
+                aria-pressed={isSelected}
+                onClick={() => onSelectDate(d)}
+              >
+                <span className="day-tile-name">
+                  {AR_STRINGS.week.weekdaysAr[dow]}
+                </span>
+                <span className="day-tile-num nums">{day}</span>
+                {isToday ? (
+                  <span className="day-tile-dot" title="اليوم" />
+                ) : (
+                  <span className="day-tile-spacer" />
+                )}
+              </button>
+            );
+          })}
+        </section>
+
+        <button
+          type="button"
+          className="day-strip-nav-btn"
+          aria-label={AR_STRINGS.week.nextWeek}
+          onClick={() => onSelectDate(addDaysIso(selectedDate, 7))}
+        >
+          <IconChevronLeft size="sm" />
+        </button>
+      </div>
+
+      {catchUp48hItems.length > 0 && settings.show_catchup_banner !== false && (
+        <div
+          className="catchup-bar"
+          role="region"
+          aria-label={AR_STRINGS.street.catchUpBannerTitle}
+        >
           <span className="catchup-text">
             <IconExpiredAlert size="sm" />
             <span>
-              لديك <strong className="nums">{catchUp48hItems.length}</strong>{' '}
-              خانات منتهية غير مسجلة خلال آخر 48 ساعة
+              لديك{' '}
+              <strong className="nums">
+                {formatArabicCount(catchUp48hItems.length, ARABIC_NOUN_FORMS.cell)}
+              </strong>{' '}
+              منتهية غير مسجلة خلال آخر 48 ساعة
             </span>
           </span>
           <button
@@ -540,45 +641,57 @@ export function NowView({
         </div>
       )}
 
-      <div className="period-strip" role="tablist" aria-label="فترات اليوم والمجموعات">
-        {activeTimePeriods.map((p) => {
-          const isSelected = activePeriod?.id === p.id;
-          const isLive =
-            selectedDate === todayIslamicDate && openLivePeriodIds.has(p.id);
-          return (
-            <button
-              key={p.id}
-              type="button"
-              role="tab"
-              className="period-pill"
-              aria-selected={isSelected}
-              onClick={() => onSelectPeriodId(p.id)}
-            >
-              {isLive && <span className="live-indicator" />}
-              <span>{p.title}</span>
-            </button>
-          );
-        })}
+      <div
+        className={`period-strip-wrap ${stripFade.start ? 'fade-start' : ''} ${
+          stripFade.end ? 'fade-end' : ''
+        }`}
+      >
+        <div
+          ref={periodStripRef}
+          className="period-strip"
+          role="tablist"
+          aria-label="فترات اليوم والمجموعات"
+          onScroll={updateStripFade}
+        >
+          {activeTimePeriods.map((p) => {
+            const isSelected = activePeriod?.id === p.id;
+            const isLive =
+              selectedDate === todayIslamicDate && openLivePeriodIds.has(p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                role="tab"
+                className="period-pill"
+                aria-selected={isSelected}
+                onClick={() => onSelectPeriodId(p.id)}
+              >
+                {isLive && <span className="live-indicator" />}
+                <span>{p.title}</span>
+              </button>
+            );
+          })}
 
-        {activeTimePeriods.length > 0 && activeDailyGroups.length > 0 && (
-          <span className="period-divider" aria-hidden="true" />
-        )}
+          {activeTimePeriods.length > 0 && activeDailyGroups.length > 0 && (
+            <span className="period-divider" aria-hidden="true" />
+          )}
 
-        {activeDailyGroups.map((g) => {
-          const isSelected = activePeriod?.id === g.id;
-          return (
-            <button
-              key={g.id}
-              type="button"
-              role="tab"
-              className="period-pill"
-              aria-selected={isSelected}
-              onClick={() => onSelectPeriodId(g.id)}
-            >
-              <span>{g.title}</span>
-            </button>
-          );
-        })}
+          {activeDailyGroups.map((g) => {
+            const isSelected = activePeriod?.id === g.id;
+            return (
+              <button
+                key={g.id}
+                type="button"
+                role="tab"
+                className="period-pill"
+                aria-selected={isSelected}
+                onClick={() => onSelectPeriodId(g.id)}
+              >
+                <span>{g.title}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {activePeriod ? (
@@ -626,26 +739,31 @@ export function NowView({
           </div>
 
           {activePeriod.side === 'TIME_BOUND' && (
-            <div className="quick-split">
-              <button
-                type="button"
-                className="btn btn-live"
-                data-testid="btn-mosque-done"
-                disabled={eligibleMosqueCount === 0}
-                onClick={() => {
-                  void handleBulkMosque();
-                }}
-              >
-                <IconMosque size="sm" />
-                <span>
-                  {AR_STRINGS.street.mosqueDoneButton}
-                  {eligibleMosqueCount > 0 ? ` (${eligibleMosqueCount})` : ''}
-                </span>
-              </button>
+            <div
+              className={`quick-split ${hasMosqueActions ? '' : 'quick-split-single'}`}
+            >
+              {hasMosqueActions && (
+                <button
+                  type="button"
+                  className="btn btn-live"
+                  data-testid="btn-mosque-done"
+                  disabled={eligibleMosqueCount === 0}
+                  onClick={() => {
+                    void handleBulkMosque();
+                  }}
+                >
+                  <IconMosque size="sm" />
+                  <span>
+                    {eligibleMosqueCount > 0
+                      ? `${AR_STRINGS.street.mosqueDoneButton} (${eligibleMosqueCount})`
+                      : 'تم تسجيل أعمال المسجد'}
+                  </span>
+                </button>
+              )}
 
               <button
                 type="button"
-                className="btn"
+                className={`btn ${hasMosqueActions ? '' : 'btn-live'}`}
                 data-testid="btn-period-done"
                 disabled={eligiblePeriodCount === 0}
                 onClick={() => {
@@ -654,8 +772,9 @@ export function NowView({
               >
                 <IconCheckAll size="sm" />
                 <span>
-                  {AR_STRINGS.street.periodDoneButton}
-                  {eligiblePeriodCount > 0 ? ` (${eligiblePeriodCount})` : ''}
+                  {eligiblePeriodCount > 0
+                    ? `${AR_STRINGS.street.periodDoneButton} (${eligiblePeriodCount})`
+                    : 'تم تسجيل الفترة بالكامل'}
                 </span>
               </button>
             </div>

@@ -1,4 +1,5 @@
 export * from './types';
+export * from './shortcuts';
 export * from './prayer-engine';
 export * from './targets';
 export * from './lifecycle';

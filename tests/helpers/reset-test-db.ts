@@ -27,6 +27,12 @@ const DEFAULT_APP_SETTINGS = {
   backup_reminder_enabled: true,
   onboarding_completed: false,
   last_pruned_date: null,
+  show_catchup_banner: true,
+  default_home_view: 'now',
+  default_week_mode: 'standard',
+  keyboard_shortcuts: {},
+  ntfy_topic_url: null,
+  ntfy_access_token: null,
 } as const;
 
 export function assertSafeTestDatabase(): {

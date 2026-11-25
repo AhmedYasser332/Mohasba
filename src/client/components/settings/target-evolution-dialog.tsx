@@ -406,6 +406,15 @@ export function TargetEvolutionDialog({
       ref={dialogRef}
       className="app-dialog dialog-wide"
       aria-labelledby="evolve-target-title"
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={(e) => {
+        if (e.target === dialogRef.current) {
+          onClose();
+        }
+      }}
       onClose={onClose}
     >
       {action && (

@@ -1,14 +1,25 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type {
-  Action,
-  AppSettings,
-  Period,
-  TargetVersion,
+import {
+  DefaultHomeViewSchema,
+  DefaultWeekModeSchema,
+  KeyboardShortcutsMapSchema,
+  type Action,
+  type AppSettings,
+  type NtfyStatusMeta,
+  type Period,
+  type TargetVersion,
 } from '@/domain/types';
+import { formatNtfyTopicHint } from '../security/ntfy-url';
 
 export function normalizeAppSettingsRow(
   row: Record<string, unknown>,
 ): AppSettings {
+  const parsedHomeView = DefaultHomeViewSchema.safeParse(row.default_home_view);
+  const parsedWeekMode = DefaultWeekModeSchema.safeParse(row.default_week_mode);
+  const parsedShortcuts = KeyboardShortcutsMapSchema.safeParse(
+    row.keyboard_shortcuts ?? {},
+  );
+
   return {
     id: 1,
     rollover_mode: row.rollover_mode as AppSettings['rollover_mode'],
@@ -37,10 +48,58 @@ export function normalizeAppSettingsRow(
       row.last_pruned_date === null || row.last_pruned_date === undefined
         ? null
         : String(row.last_pruned_date),
+    show_catchup_banner:
+      row.show_catchup_banner === undefined || row.show_catchup_banner === null
+        ? true
+        : Boolean(row.show_catchup_banner),
+    default_home_view: parsedHomeView.success ? parsedHomeView.data : 'now',
+    default_week_mode: parsedWeekMode.success ? parsedWeekMode.data : 'standard',
+    keyboard_shortcuts: parsedShortcuts.success ? parsedShortcuts.data : {},
     created_at:
       row.created_at === undefined ? undefined : String(row.created_at),
     updated_at:
       row.updated_at === undefined ? undefined : String(row.updated_at),
+  };
+}
+
+export interface AppSettingsWithNtfySecrets {
+  settings: AppSettings;
+  ntfyTopicUrlDb: string | null;
+  ntfyAccessTokenDb: string | null;
+}
+
+export function extractNtfySecretsFromRow(row: Record<string, unknown>): {
+  ntfyTopicUrlDb: string | null;
+  ntfyAccessTokenDb: string | null;
+} {
+  const rawUrl = row.ntfy_topic_url;
+  const rawToken = row.ntfy_access_token;
+  const ntfyTopicUrlDb =
+    typeof rawUrl === 'string' && rawUrl.trim().length > 0
+      ? rawUrl.trim()
+      : null;
+  const ntfyAccessTokenDb =
+    typeof rawToken === 'string' && rawToken.length > 0 ? rawToken : null;
+
+  return { ntfyTopicUrlDb, ntfyAccessTokenDb };
+}
+
+export function buildNtfyStatusMeta(params: {
+  ntfyTopicUrlDb: string | null;
+  ntfyAccessTokenDb: string | null;
+  envTopicUrl: string | null;
+}): NtfyStatusMeta {
+  const ntfy_source = params.ntfyTopicUrlDb
+    ? 'db'
+    : params.envTopicUrl
+      ? 'env'
+      : 'none';
+  const effectiveUrl = params.ntfyTopicUrlDb ?? params.envTopicUrl;
+  return {
+    ntfy_configured: Boolean(effectiveUrl),
+    ntfy_source,
+    ntfy_topic_hint: formatNtfyTopicHint(effectiveUrl),
+    ntfy_has_token: Boolean(params.ntfyAccessTokenDb),
   };
 }
 
@@ -147,4 +206,28 @@ export async function fetchAppSettings(
     );
   }
   return normalizeAppSettingsRow(data as Record<string, unknown>);
+}
+
+export async function fetchAppSettingsWithNtfySecrets(
+  supabase: SupabaseClient,
+): Promise<AppSettingsWithNtfySecrets> {
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('*')
+    .eq('id', 1)
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Failed loading app_settings: ${error?.message ?? 'missing singleton row'}`,
+    );
+  }
+
+  const row = data as Record<string, unknown>;
+  const { ntfyTopicUrlDb, ntfyAccessTokenDb } = extractNtfySecretsFromRow(row);
+  return {
+    settings: normalizeAppSettingsRow(row),
+    ntfyTopicUrlDb,
+    ntfyAccessTokenDb,
+  };
 }

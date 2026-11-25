@@ -26,6 +26,7 @@ import {
   type CatchUpItem,
   type DailyLog,
   type NonRecoverableMissItem,
+  type NtfySource,
   type Period,
   type QadaaQueueItem,
   type TargetVersion,
@@ -87,6 +88,9 @@ export interface MohasbaContextValue {
   isOnline: boolean;
   isSyncing: boolean;
   ntfyConfigured: boolean;
+  ntfySource: NtfySource;
+  ntfyTopicHint: string | null;
+  ntfyHasToken: boolean;
   isIosA2hsPromptVisible: boolean;
   swUpdateAvailable: boolean;
   settings: AppSettings | null;
@@ -108,6 +112,11 @@ export interface MohasbaContextValue {
   analytics7d: AnalyticsResult | null;
   analytics30d: AnalyticsResult | null;
   logCellTap: (input: CellMutationInput, holdMs?: number) => Promise<EnqueueResult>;
+  logCellBatch: (
+    inputs: readonly CellMutationInput[],
+    holdMs?: number,
+    showUndoToast?: boolean,
+  ) => Promise<EnqueueResult>;
   logBulkMosqueDone: (periodId: string, logDate: string) => Promise<EnqueueResult>;
   logBulkPeriodDone: (periodId: string, logDate: string) => Promise<EnqueueResult>;
   logBulkNormalDay: (logDate: string) => Promise<EnqueueResult>;
@@ -191,6 +200,9 @@ export function MohasbaProvider({
   const [isOnline, setIsOnline] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [ntfyConfigured, setNtfyConfigured] = useState(false);
+  const [ntfySource, setNtfySource] = useState<NtfySource>('none');
+  const [ntfyTopicHint, setNtfyTopicHint] = useState<string | null>(null);
+  const [ntfyHasToken, setNtfyHasToken] = useState(false);
   const [isIosA2hsPromptVisible, setIsIosA2hsPromptVisible] = useState(false);
   const [swRegistration, setSwRegistration] =
     useState<ServiceWorkerRegistration | null>(null);
@@ -210,7 +222,6 @@ export function MohasbaProvider({
   );
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const sessionEpochRef = useRef(0);
@@ -265,34 +276,32 @@ export function MohasbaProvider({
     }
   }, [engine, syncStateFromIdb]);
 
-  const scheduleNextHoldFlush = useCallback(
-    async (overrideDelayMs?: number) => {
-      if (holdTimerRef.current) {
-        clearTimeout(holdTimerRef.current);
-        holdTimerRef.current = null;
-      }
+  useEffect(() => {
+    if (!hydrated || authStatus !== 'unlocked') return;
+    const heldItems = outbox.filter((i) => i.state === 'held');
+    if (heldItems.length === 0) return;
 
-      let delayMs = overrideDelayMs;
-      if (delayMs === undefined) {
-        const state = await engine.readHydrationState();
-        const heldItems = state.outbox.filter((i) => i.state === 'held');
-        if (heldItems.length === 0) return;
-        const earliest = Math.min(
-          ...heldItems.map((i) => i.hold_until ?? Date.now()),
-        );
-        delayMs = Math.max(0, earliest - Date.now()) + 30;
-      }
+    const earliest = Math.min(
+      ...heldItems.map((i) => i.hold_until ?? Date.now()),
+    );
+    const delayMs = Math.max(0, earliest - Date.now()) + 30;
+    const timer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      void flushOutbox();
+    }, delayMs);
+    return () => clearTimeout(timer);
+  }, [authStatus, flushOutbox, hydrated, outbox]);
 
-      holdTimerRef.current = setTimeout(() => {
-        if (!mountedRef.current) return;
-        setActiveUndoToast((prev) =>
-          prev && Date.now() >= prev.expiresAt ? null : prev,
-        );
-        void flushOutbox();
-      }, delayMs);
-    },
-    [engine, flushOutbox],
-  );
+  useEffect(() => {
+    if (!activeUndoToast) return;
+    const remainingMs = Math.max(0, activeUndoToast.expiresAt - Date.now()) + 30;
+    const timer = setTimeout(() => {
+      setActiveUndoToast((prev) =>
+        prev && prev.id === activeUndoToast.id ? null : prev,
+      );
+    }, remainingMs);
+    return () => clearTimeout(timer);
+  }, [activeUndoToast]);
 
   const refreshBootstrap = useCallback(
     async (options: { full?: boolean } = {}): Promise<boolean> => {
@@ -351,6 +360,11 @@ export function MohasbaProvider({
           }
           if (mountedRef.current) {
             setNtfyConfigured(Boolean(payload.ntfy_configured));
+            setNtfySource(
+              payload.ntfy_source ?? (payload.ntfy_configured ? 'env' : 'none'),
+            );
+            setNtfyTopicHint(payload.ntfy_topic_hint ?? null);
+            setNtfyHasToken(Boolean(payload.ntfy_has_token));
             setAuthStatus('unlocked');
             setNowMs(Date.now());
           }
@@ -404,7 +418,6 @@ export function MohasbaProvider({
         setIsIosA2hsPromptVisible(isIosNonStandalone());
       }
       await engine.promoteExpiredHolds();
-      await scheduleNextHoldFlush();
 
       const ok = await refreshBootstrap();
       if (ok) {
@@ -468,7 +481,6 @@ export function MohasbaProvider({
 
     return () => {
       mountedRef.current = false;
-      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       clearInterval(clockInterval);
       window.removeEventListener('online', handleOnline);
@@ -479,7 +491,7 @@ export function MohasbaProvider({
       bc?.close();
       swHandle?.dispose();
     };
-  }, [engine, flushOutbox, refreshBootstrap, scheduleNextHoldFlush, syncStateFromIdb]);
+  }, [engine, flushOutbox, refreshBootstrap, syncStateFromIdb]);
 
   useEffect(() => {
     const engineToDispose = engine;
@@ -492,6 +504,7 @@ export function MohasbaProvider({
     async (
       inputs: readonly CellMutationInput[],
       holdMs: number = DEFAULT_UNDO_HOLD_MS,
+      showUndoToast: boolean = true,
     ): Promise<EnqueueResult> => {
       const res = await engine.enqueueCellMutations(inputs, {
         targetVersions,
@@ -500,30 +513,40 @@ export function MohasbaProvider({
       await syncStateFromIdb();
 
       if (res.items.length > 0 && holdMs > 0) {
-        const first = res.items[0]!;
-        setActiveUndoToast({
-          id: res.batchId ?? first.mutation_id,
-          kind: res.batchId ? 'batch' : 'single',
-          mutationId: res.batchId ? null : first.mutation_id,
-          batchId: res.batchId,
-          cellCount: res.items.length,
-          expiresAt: Date.now() + holdMs,
-        });
-        await scheduleNextHoldFlush(holdMs + 30);
+        if (showUndoToast) {
+          const first = res.items[0]!;
+          setActiveUndoToast({
+            id: res.batchId ?? first.mutation_id,
+            kind: res.batchId ? 'batch' : 'single',
+            mutationId: res.batchId ? null : first.mutation_id,
+            batchId: res.batchId,
+            cellCount: res.items.length,
+            expiresAt: Date.now() + holdMs,
+          });
+        }
       } else if (res.items.length > 0) {
         void flushOutbox();
       }
 
       return res;
     },
-    [engine, flushOutbox, scheduleNextHoldFlush, syncStateFromIdb, targetVersions],
+    [engine, flushOutbox, syncStateFromIdb, targetVersions],
   );
 
   const logCellTap = useCallback(
     async (
       input: CellMutationInput,
       holdMs: number = DEFAULT_UNDO_HOLD_MS,
-    ): Promise<EnqueueResult> => enqueueAndSchedule([input], holdMs),
+    ): Promise<EnqueueResult> => enqueueAndSchedule([input], holdMs, true),
+    [enqueueAndSchedule],
+  );
+
+  const logCellBatch = useCallback(
+    async (
+      inputs: readonly CellMutationInput[],
+      holdMs: number = DEFAULT_UNDO_HOLD_MS,
+      showUndoToast: boolean = true,
+    ): Promise<EnqueueResult> => enqueueAndSchedule(inputs, holdMs, showUndoToast),
     [enqueueAndSchedule],
   );
 
@@ -904,7 +927,6 @@ export function MohasbaProvider({
       await inFlightBootstrapRef.current.catch(() => false);
     }
 
-    if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
 
     await wipeAllLocalData(engine.dbName);
@@ -919,6 +941,10 @@ export function MohasbaProvider({
       setConsecutiveFailures(0);
       setHasAuthError(false);
       setActiveUndoToast(null);
+      setNtfyConfigured(false);
+      setNtfySource('none');
+      setNtfyTopicHint(null);
+      setNtfyHasToken(false);
       setAuthStatus('locked');
     }
 
@@ -1027,6 +1053,9 @@ export function MohasbaProvider({
       isOnline,
       isSyncing,
       ntfyConfigured,
+      ntfySource,
+      ntfyTopicHint,
+      ntfyHasToken,
       isIosA2hsPromptVisible,
       swUpdateAvailable,
       settings,
@@ -1048,6 +1077,7 @@ export function MohasbaProvider({
       analytics7d,
       analytics30d,
       logCellTap,
+      logCellBatch,
       logBulkMosqueDone,
       logBulkPeriodDone,
       logBulkNormalDay,
@@ -1110,12 +1140,16 @@ export function MohasbaProvider({
       logBulkMosqueDone,
       logBulkNormalDay,
       logBulkPeriodDone,
+      logCellBatch,
       logCellTap,
       logs,
       logsByKey,
       nonRecoverableMisses,
       nowMs,
       ntfyConfigured,
+      ntfyHasToken,
+      ntfySource,
+      ntfyTopicHint,
       openQadaaQueue,
       outbox,
       periods,

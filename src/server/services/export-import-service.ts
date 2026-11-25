@@ -7,8 +7,11 @@ import {
   AvailabilityOverrideSchema,
   CalcMethodSchema,
   CellStatusSchema,
+  DefaultHomeViewSchema,
+  DefaultWeekModeSchema,
   HhmmSchema,
   IsoDateSchema,
+  KeyboardShortcutsMapSchema,
   PeriodSchema,
   PrayerOffsetsSchema,
   RolloverModeSchema,
@@ -113,6 +116,10 @@ const ImportSettingsSchema = z
     digest_hhmm: HhmmSchema.optional(),
     backup_reminder_enabled: z.boolean().optional(),
     onboarding_completed: z.boolean().optional(),
+    show_catchup_banner: z.boolean().optional(),
+    default_home_view: DefaultHomeViewSchema.optional(),
+    default_week_mode: DefaultWeekModeSchema.optional(),
+    keyboard_shortcuts: KeyboardShortcutsMapSchema.optional(),
   })
   .optional();
 

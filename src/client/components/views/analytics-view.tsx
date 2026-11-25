@@ -126,9 +126,19 @@ export function AnalyticsView() {
               </span>
               <span>
                 {AR_STRINGS.analytics.velocity7dLabel}:{' '}
-                {pulse.qadaa.netVelocity7d > 0
-                  ? `+${pulse.qadaa.netVelocity7d}`
-                  : pulse.qadaa.netVelocity7d}
+                <strong
+                  className={
+                    pulse.qadaa.netVelocity7d > 0
+                      ? 'velocity-bad'
+                      : pulse.qadaa.netVelocity7d < 0
+                        ? 'velocity-good'
+                        : 'velocity-neutral'
+                  }
+                >
+                  {pulse.qadaa.netVelocity7d > 0
+                    ? `+${pulse.qadaa.netVelocity7d}`
+                    : pulse.qadaa.netVelocity7d}
+                </strong>
               </span>
             </div>
           </div>
@@ -312,6 +322,9 @@ export function AnalyticsView() {
             </span>
           </div>
 
+          <div className="table-scroll-cue">
+            <span>اسحب أفقياً لعرض باقي الأعمدة</span>
+          </div>
           <div className="analytics-table-wrap">
             <table className="analytics-table">
               <thead>
@@ -371,6 +384,9 @@ export function AnalyticsView() {
             <span className="panel-meta">معزولة تماماً عن حسابات الفترات</span>
           </div>
 
+          <div className="table-scroll-cue">
+            <span>اسحب أفقياً لعرض باقي الأعمدة</span>
+          </div>
           <div className="analytics-table-wrap">
             <table className="analytics-table">
               <thead>

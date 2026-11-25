@@ -164,6 +164,17 @@ test.describe('Slice 3+4: Service Worker, Precache Manifest, Offline Reload & Si
       await expect(unlockInput).toBeHidden({ timeout: 10_000 });
     }
 
+    // Complete onboarding if first-run so workspace chrome (.desktop-rail) renders cleanly
+    const starterBtn = page.getByTestId('onboarding-starter-pack');
+    const desktopRail = page.locator('.desktop-rail');
+    await expect(starterBtn.or(desktopRail)).toBeVisible({ timeout: 10_000 });
+    if (await starterBtn.isVisible()) {
+      await starterBtn.click();
+      await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
+        timeout: 15_000,
+      });
+    }
+
     // Wait for IDB snapshot & meta to be populated
     await expect
       .poll(async () => {
@@ -236,6 +247,9 @@ test.describe('Slice 3+4: Service Worker, Precache Manifest, Offline Reload & Si
       .getByRole('button', { name: 'تسجيل الخروج' });
     await desktopSignOutBtn.click();
     await expect(page.getByTestId('status-message')).toContainText('signed_out');
+    await expect(page.getByTestId('status-message')).toContainText(
+      'تم تسجيل الخروج بنجاح',
+    );
 
     const cookies = await context.cookies(BASE_URL);
     const sessionCookie = cookies.find((c) => c.name === 'mohasba_session');

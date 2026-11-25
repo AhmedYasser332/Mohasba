@@ -8,7 +8,14 @@ import React, {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { AR_STRINGS, type ExportSnapshot } from '@/domain';
+import {
+  AR_STRINGS,
+  SHORTCUT_DEFINITIONS,
+  formatShortcutKeycaps,
+  matchesShortcutEvent,
+  resolveEffectiveShortcuts,
+  type ExportSnapshot,
+} from '@/domain';
 import { useMohasba } from '../store/mohasba-provider';
 import {
   CellEditorDialog,
@@ -19,6 +26,9 @@ import {
   IconCross,
   IconDownload,
   IconExpiredAlert,
+  IconEye,
+  IconEyeOff,
+  IconKeyboard,
   IconLock,
   IconLogOut,
   IconMatrix,
@@ -30,7 +40,9 @@ import {
   IconSidebar,
   IconSun,
   IconUpload,
+  IconX,
 } from './icons';
+import { Tooltip } from './tooltip';
 import { AnalyticsView } from './views/analytics-view';
 import { NowView } from './views/now-view';
 import { QadaaView } from './views/qadaa-view';
@@ -131,6 +143,38 @@ function renderNavIcon(id: AppView) {
   }
 }
 
+function formatLastSynced(iso: string | null): string {
+  if (!iso) return 'لم تتم المزامنة بعد';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'لم تتم المزامنة بعد';
+  const timeText = date.toLocaleTimeString('ar-EG', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isSameDay) {
+    return `اليوم ${timeText}`;
+  }
+  const dateText = date.toLocaleDateString('ar-EG', {
+    month: 'short',
+    day: 'numeric',
+  });
+  return `${dateText} ${timeText}`;
+}
+
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+    return true;
+  }
+  return target.isContentEditable;
+}
+
 function subscribeThemeChange(callback: () => void): () => void {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') {
     return () => {};
@@ -170,6 +214,7 @@ export function MohasbaAppShell() {
     settings,
     actions,
     outbox,
+    lastSyncedAt,
     syncBadge,
     activeUndoToast,
     todayIslamicDate,
@@ -201,12 +246,16 @@ export function MohasbaAppShell() {
     getThemeSnapshot,
     getThemeServerSnapshot,
   );
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [oneGlanceMode, setOneGlanceMode] = useState(false);
+  const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
+  const [oneGlanceOverride, setOneGlanceOverride] = useState<boolean | null>(null);
+  const [userNavigated, setUserNavigated] = useState(false);
+  const [hasExplicitInitialUrl, setHasExplicitInitialUrl] = useState(false);
   const [syncPopoverOpen, setSyncPopoverOpen] = useState(false);
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
   const [iosNoticeDismissed, setIosNoticeDismissed] = useState(false);
 
   const [passcode, setPasscode] = useState('');
+  const [showPasscode, setShowPasscode] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
 
@@ -220,48 +269,88 @@ export function MohasbaAppShell() {
     AR_STRINGS.street.undoToastMessage,
   );
   const [shellMessage, setShellMessage] = useState<string | null>(null);
+  const [signedOutNotice, setSignedOutNotice] = useState(false);
 
   const syncWrapRef = useRef<HTMLDivElement | null>(null);
+  const shortcutsDialogRef = useRef<HTMLDialogElement | null>(null);
+
+  const showOnboarding =
+    authStatus === 'unlocked' &&
+    settings !== null &&
+    !settings.onboarding_completed;
+
+  const showWorkspaceViews =
+    authStatus === 'unlocked' &&
+    settings !== null &&
+    settings.onboarding_completed;
+
+  const effectiveShortcuts = useMemo(
+    () => resolveEffectiveShortcuts(settings?.keyboard_shortcuts),
+    [settings?.keyboard_shortcuts],
+  );
+
+  const oneGlanceMode =
+    oneGlanceOverride ??
+    (showWorkspaceViews && settings?.default_week_mode === 'one_glance');
+
+  const sidebarCollapsed =
+    sidebarOverride ??
+    (showWorkspaceViews &&
+      settings?.default_week_mode === 'one_glance' &&
+      typeof window !== 'undefined' &&
+      window.innerWidth >= 1024);
+
+  const configuredDefaultHomeView =
+    showWorkspaceViews && settings?.default_home_view
+      ? settings.default_home_view
+      : null;
+
+  const effectiveUrlState = useMemo<UrlParamsState>(() => {
+    if (
+      !userNavigated &&
+      !hasExplicitInitialUrl &&
+      configuredDefaultHomeView &&
+      VALID_VIEWS.has(configuredDefaultHomeView)
+    ) {
+      return {
+        ...urlState,
+        view: configuredDefaultHomeView,
+      };
+    }
+    return urlState;
+  }, [
+    configuredDefaultHomeView,
+    hasExplicitInitialUrl,
+    urlState,
+    userNavigated,
+  ]);
 
   // Sync URL from window.location.search on mount & popstate (zero useSearchParams!)
   useEffect(() => {
     const syncFromLocation = () => {
+      const params = new URLSearchParams(window.location.search);
+      const hasParams =
+        params.has('view') ||
+        params.has('period') ||
+        params.has('date') ||
+        params.has('tab');
+      setHasExplicitInitialUrl(hasParams);
       setUrlState(parseUrlParams(window.location.search));
     };
+    const onPopState = () => {
+      setUserNavigated(true);
+      setShellMessage(null);
+      setSignedOutNotice(false);
+      syncFromLocation();
+    };
     syncFromLocation();
-    window.addEventListener('popstate', syncFromLocation);
-    return () => window.removeEventListener('popstate', syncFromLocation);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
-
-  // Global physical Ctrl+KeyI shortcut (Ctrl+I / Ctrl+ه) for desktop sidebar toggle
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyI') {
-        e.preventDefault();
-        setSidebarCollapsed((prev) => !prev);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  // Close sync popover on outside click
-  useEffect(() => {
-    if (!syncPopoverOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (
-        syncWrapRef.current &&
-        !syncWrapRef.current.contains(e.target as Node)
-      ) {
-        setSyncPopoverOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [syncPopoverOpen]);
 
   const updateUrlState = useCallback(
     (next: UrlParamsState, mode: 'push' | 'replace' = 'push') => {
+      setUserNavigated(true);
       setUrlState(next);
       const target = buildSearchString(next);
       if (mode === 'push') {
@@ -273,17 +362,198 @@ export function MohasbaAppShell() {
     [],
   );
 
-  const handleNavigate = (view: AppView, tab: string | null = null) => {
-    updateUrlState(
-      {
-        view,
-        period: view === 'now' ? urlState.period : null,
-        date: view === 'now' ? urlState.date : null,
-        tab: view === 'qadaa' ? tab : null,
-      },
-      'push',
-    );
-  };
+  // Sync browser URL quietly when default_home_view activates on bare root '/'
+  useEffect(() => {
+    if (
+      !userNavigated &&
+      !hasExplicitInitialUrl &&
+      showWorkspaceViews &&
+      settings?.default_home_view &&
+      settings.default_home_view !== 'now' &&
+      VALID_VIEWS.has(settings.default_home_view)
+    ) {
+      const target = buildSearchString({
+        view: settings.default_home_view,
+        period: null,
+        date: null,
+        tab: null,
+      });
+      window.history.replaceState(null, '', target);
+    }
+  }, [
+    hasExplicitInitialUrl,
+    settings?.default_home_view,
+    showWorkspaceViews,
+    userNavigated,
+  ]);
+
+  useEffect(() => {
+    const dlg = shortcutsDialogRef.current;
+    if (!dlg) return;
+    if (shortcutsHelpOpen) {
+      if (!dlg.open) dlg.showModal();
+    } else if (dlg.open) {
+      dlg.close();
+    }
+  }, [shortcutsHelpOpen]);
+
+  const handleNavigate = useCallback(
+    (view: AppView, tab: string | null = null) => {
+      setShellMessage(null);
+      setSignedOutNotice(false);
+      updateUrlState(
+        {
+          view,
+          period: view === 'now' ? effectiveUrlState.period : null,
+          date: view === 'now' ? effectiveUrlState.date : null,
+          tab: view === 'qadaa' ? tab : null,
+        },
+        'push',
+      );
+    },
+    [effectiveUrlState.date, effectiveUrlState.period, updateUrlState],
+  );
+
+  const handleSetOneGlance = useCallback((enabled: boolean) => {
+    setOneGlanceOverride(enabled);
+    if (enabled) {
+      setSidebarOverride(true);
+    }
+  }, []);
+
+  const handleUndoClick = useCallback(async () => {
+    if (!activeUndoToast) return;
+    if (activeUndoToast.kind === 'batch' && activeUndoToast.batchId) {
+      await undoBatch(activeUndoToast.batchId);
+    } else if (activeUndoToast.mutationId) {
+      await undoMutation(activeUndoToast.mutationId);
+    }
+    dismissUndoToast();
+  }, [activeUndoToast, dismissUndoToast, undoBatch, undoMutation]);
+
+  // Global physical keyboard shortcuts (ignores editable elements & open dialogs)
+  useEffect(() => {
+    if (!showWorkspaceViews) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (isEditableElement(e.target)) return;
+      if (document.querySelector('dialog[open]') !== null) return;
+
+      if (matchesShortcutEvent(e, effectiveShortcuts.toggle_sidebar)) {
+        e.preventDefault();
+        setSidebarOverride(!(sidebarOverride ?? sidebarCollapsed));
+        return;
+      }
+
+      if (
+        effectiveUrlState.view === 'week' &&
+        matchesShortcutEvent(e, effectiveShortcuts.toggle_one_glance)
+      ) {
+        e.preventDefault();
+        handleSetOneGlance(!oneGlanceMode);
+        return;
+      }
+
+      if (matchesShortcutEvent(e, effectiveShortcuts.nav_now)) {
+        e.preventDefault();
+        handleNavigate('now');
+        return;
+      }
+      if (matchesShortcutEvent(e, effectiveShortcuts.nav_week)) {
+        e.preventDefault();
+        handleNavigate('week');
+        return;
+      }
+      if (matchesShortcutEvent(e, effectiveShortcuts.nav_qadaa)) {
+        e.preventDefault();
+        handleNavigate('qadaa');
+        return;
+      }
+      if (matchesShortcutEvent(e, effectiveShortcuts.nav_analytics)) {
+        e.preventDefault();
+        handleNavigate('analytics');
+        return;
+      }
+      if (matchesShortcutEvent(e, effectiveShortcuts.nav_settings)) {
+        e.preventDefault();
+        handleNavigate('settings');
+        return;
+      }
+
+      if (matchesShortcutEvent(e, effectiveShortcuts.jump_today)) {
+        if (effectiveUrlState.view === 'now' && todayIslamicDate) {
+          e.preventDefault();
+          updateUrlState(
+            {
+              ...effectiveUrlState,
+              view: 'now',
+              date: todayIslamicDate,
+              period: null,
+            },
+            'replace',
+          );
+        } else if (effectiveUrlState.view === 'week') {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent('mohasba:jump-today'));
+        }
+        return;
+      }
+
+      if (matchesShortcutEvent(e, effectiveShortcuts.undo)) {
+        if (activeUndoToast) {
+          e.preventDefault();
+          void handleUndoClick();
+        }
+        return;
+      }
+
+      if (matchesShortcutEvent(e, effectiveShortcuts.open_shortcuts_help)) {
+        e.preventDefault();
+        setShortcutsHelpOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    activeUndoToast,
+    effectiveShortcuts,
+    effectiveUrlState,
+    handleNavigate,
+    handleSetOneGlance,
+    handleUndoClick,
+    oneGlanceMode,
+    showWorkspaceViews,
+    sidebarCollapsed,
+    sidebarOverride,
+    todayIslamicDate,
+    updateUrlState,
+  ]);
+
+  // Close sync popover on outside click or Escape
+  useEffect(() => {
+    if (!syncPopoverOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (
+        syncWrapRef.current &&
+        !syncWrapRef.current.contains(e.target as Node)
+      ) {
+        setSyncPopoverOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSyncPopoverOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [syncPopoverOpen]);
 
   const toggleTheme = () => {
     const next: ThemeMode = theme === 'light' ? 'dark' : 'light';
@@ -295,23 +565,18 @@ export function MohasbaAppShell() {
     }
   };
 
-  const handleSetOneGlance = (enabled: boolean) => {
-    setOneGlanceMode(enabled);
-    if (enabled) {
-      setSidebarCollapsed(true);
-    }
-  };
-
   const handleUnlockSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!passcode.trim() || unlocking) return;
     setUnlocking(true);
     setAuthError(null);
     setShellMessage(null);
+    setSignedOutNotice(false);
     try {
       const res = await unlockWithPasscode(passcode);
       if (res.ok) {
         setPasscode('');
+        setShowPasscode(false);
       } else if (res.errorCode === 'RATE_LIMITED') {
         setAuthError(AR_STRINGS.errors.rateLimited);
       } else {
@@ -422,16 +687,6 @@ export function MohasbaAppShell() {
     URL.revokeObjectURL(url);
   };
 
-  const handleUndoClick = async () => {
-    if (!activeUndoToast) return;
-    if (activeUndoToast.kind === 'batch' && activeUndoToast.batchId) {
-      await undoBatch(activeUndoToast.batchId);
-    } else if (activeUndoToast.mutationId) {
-      await undoMutation(activeUndoToast.mutationId);
-    }
-    dismissUndoToast();
-  };
-
   const attentionItems = useMemo(
     () => outbox.filter((item) => item.state === 'attention_needed'),
     [outbox],
@@ -456,77 +711,94 @@ export function MohasbaAppShell() {
   }, [syncBadge]);
 
   const activeNavMeta =
-    NAV_ITEMS.find((n) => n.id === urlState.view) ?? NAV_ITEMS[0]!;
+    NAV_ITEMS.find((n) => n.id === effectiveUrlState.view) ?? NAV_ITEMS[0]!;
   const qadaaCount = openQadaaQueue.length;
-  const isOverviewActive = urlState.view === 'week' && oneGlanceMode;
-  const effectiveSelectedDate = urlState.date ?? todayIslamicDate ?? '';
+  const isOverviewActive =
+    showWorkspaceViews && effectiveUrlState.view === 'week' && oneGlanceMode;
+  const effectiveSelectedDate = effectiveUrlState.date ?? todayIslamicDate ?? '';
 
-  const showOnboarding =
-    authStatus === 'unlocked' &&
-    settings !== null &&
-    !settings.onboarding_completed;
+  const sidebarToggleShortcutText = useMemo(
+    () => formatShortcutKeycaps(effectiveShortcuts.toggle_sidebar).join(' + '),
+    [effectiveShortcuts.toggle_sidebar],
+  );
 
-  const showWorkspaceViews =
-    authStatus === 'unlocked' &&
-    settings !== null &&
-    settings.onboarding_completed;
+  const themeTooltipLabel =
+    theme === 'light'
+      ? AR_STRINGS.app.themeToggleToDark
+      : AR_STRINGS.app.themeToggleToLight;
+
+  const lastSyncedLabel = useMemo(
+    () => formatLastSynced(lastSyncedAt),
+    [lastSyncedAt],
+  );
 
   return (
     <div
       className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${
         isOverviewActive ? 'overview-active' : ''
-      }`}
+      } ${!showWorkspaceViews ? 'no-chrome' : ''}`}
     >
-      {/* Desktop RTL Inline-Start Navigation Rail */}
-      <aside className="desktop-rail" aria-label="التنقل الرئيسي">
-        <div className="brand-block">
-          <div>
-            <h1 className="brand-title">{AR_STRINGS.app.name}</h1>
-            <p className="brand-note">محاسبة يومية وأسبوعية</p>
-          </div>
-          <button
-            type="button"
-            className="btn btn-icon has-tip"
-            data-tip="طي القائمة (Ctrl+I / Ctrl+ه)"
-            title={AR_STRINGS.app.sidebarToggleTooltip}
-            aria-label="طي القائمة الجانبية"
-            onClick={() => setSidebarCollapsed(true)}
-          >
-            <IconSidebar />
-          </button>
-        </div>
-
-        <nav className="rail-nav">
-          {NAV_ITEMS.map((item) => {
-            const isCurrent = urlState.view === item.id;
-            return (
+      {/* Desktop RTL Inline-Start Navigation Rail (Hidden while locked/onboarding) */}
+      {showWorkspaceViews && (
+        <aside className="desktop-rail" aria-label="التنقل الرئيسي">
+          <div className="brand-block">
+            <div>
+              <h1 className="brand-title">{AR_STRINGS.app.name}</h1>
+              <p className="brand-note">محاسبة يومية وأسبوعية</p>
+            </div>
+            <Tooltip content="طي القائمة" shortcut={sidebarToggleShortcutText}>
               <button
-                key={item.id}
                 type="button"
-                className="nav-btn"
-                aria-current={isCurrent ? 'page' : undefined}
-                onClick={() => handleNavigate(item.id)}
+                className="btn btn-icon"
+                aria-label="طي القائمة الجانبية"
+                onClick={() => setSidebarOverride(true)}
               >
-                <span className="nav-btn-label">
-                  {renderNavIcon(item.id)}
-                  <span>{item.desktopLabel}</span>
-                </span>
-                {item.id === 'qadaa' && qadaaCount > 0 && (
-                  <span className="count-chip alert nums">{qadaaCount}</span>
-                )}
+                <IconSidebar />
               </button>
-            );
-          })}
-        </nav>
+            </Tooltip>
+          </div>
 
-        {authStatus === 'unlocked' && (
+          <nav className="rail-nav">
+            {NAV_ITEMS.map((item) => {
+              const isCurrent = effectiveUrlState.view === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="nav-btn"
+                  aria-current={isCurrent ? 'page' : undefined}
+                  onClick={() => handleNavigate(item.id)}
+                >
+                  <span className="nav-btn-label">
+                    {renderNavIcon(item.id)}
+                    <span>{item.desktopLabel}</span>
+                  </span>
+                  {item.id === 'qadaa' && qadaaCount > 0 && (
+                    <span className="count-chip alert nums">{qadaaCount}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
           <div className="rail-footer">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setShortcutsHelpOpen(true)}
+            >
+              <IconKeyboard size="sm" />
+              <span>خريطة الاختصارات</span>
+            </button>
             <button
               type="button"
               className="btn"
               onClick={() => {
                 void signOut().then((res) => {
-                  if (res.ok) setShellMessage('signed_out');
+                  if (res.ok) {
+                    setSignedOutNotice(true);
+                    setShellMessage('تم تسجيل الخروج بنجاح.');
+                  }
                 });
               }}
             >
@@ -534,151 +806,157 @@ export function MohasbaAppShell() {
               <span>{AR_STRINGS.settings.signOutButton}</span>
             </button>
           </div>
-        )}
-      </aside>
+        </aside>
+      )}
 
       {/* Main Column */}
       <div className="main-col">
         <header className="top-bar">
-          <div className="top-bar-start">
-            <button
-              type="button"
-              className="btn btn-icon desktop-sidebar-trigger has-tip"
-              data-tip="فتح القائمة (Ctrl+I / Ctrl+ه)"
-              title={AR_STRINGS.app.sidebarToggleTooltip}
-              aria-label="فتح القائمة الجانبية"
-              onClick={() => setSidebarCollapsed(false)}
-            >
-              <IconSidebar />
-            </button>
-            <h2 className="page-heading">{activeNavMeta.desktopLabel}</h2>
-          </div>
-
-          <div className="top-bar-end" ref={syncWrapRef}>
-            <button
-              type="button"
-              className="sync-btn"
-              data-testid="sync-badge-btn"
-              data-sync={syncBadge.state}
-              aria-expanded={syncPopoverOpen}
-              onClick={() => setSyncPopoverOpen((prev) => !prev)}
-            >
-              <span className="sync-dot" />
-              <span className="sync-label nums">{syncLabel}</span>
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-icon"
-              data-testid="theme-toggle-btn"
-              aria-label={
-                theme === 'light'
-                  ? AR_STRINGS.app.themeToggleToDark
-                  : AR_STRINGS.app.themeToggleToLight
-              }
-              title={
-                theme === 'light'
-                  ? AR_STRINGS.app.themeToggleToDark
-                  : AR_STRINGS.app.themeToggleToLight
-              }
-              onClick={toggleTheme}
-            >
-              {theme === 'light' ? <IconMoon /> : <IconSun />}
-            </button>
-
-            {syncPopoverOpen && (
-              <div
-                className="sync-popover"
-                role="dialog"
-                aria-label="حالة المزامنة"
-              >
-                <div className="sync-popover-head">
-                  <strong className="text-sm">حالة المزامنة المحلية</strong>
+          <div className="top-bar-inner">
+            <div className="top-bar-start">
+              {showWorkspaceViews && (
+                <Tooltip content="فتح القائمة" shortcut={sidebarToggleShortcutText}>
                   <button
                     type="button"
-                    className="btn btn-icon"
-                    aria-label="إغلاق"
-                    onClick={() => setSyncPopoverOpen(false)}
+                    className="btn btn-icon desktop-sidebar-trigger"
+                    aria-label="فتح القائمة الجانبية"
+                    onClick={() => setSidebarOverride(false)}
                   >
-                    <IconCross size="sm" />
+                    <IconSidebar />
                   </button>
-                </div>
+                </Tooltip>
+              )}
+              <h2 className="page-heading">
+                {showWorkspaceViews
+                  ? activeNavMeta.desktopLabel
+                  : AR_STRINGS.app.name}
+              </h2>
+            </div>
 
-                <div className="sync-popover-body">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="panel-meta nums">
-                      الحالة: {syncLabel}
-                    </span>
+            <div className="top-bar-end" ref={syncWrapRef}>
+              <button
+                type="button"
+                className="sync-btn"
+                data-testid="sync-badge-btn"
+                data-sync={syncBadge.state}
+                aria-expanded={syncPopoverOpen}
+                onClick={() => setSyncPopoverOpen((prev) => !prev)}
+              >
+                <span className="sync-dot" />
+                <span className="sync-label nums">{syncLabel}</span>
+              </button>
+
+              <Tooltip content={themeTooltipLabel}>
+                <button
+                  type="button"
+                  className="btn btn-icon"
+                  data-testid="theme-toggle-btn"
+                  aria-label={themeTooltipLabel}
+                  onClick={toggleTheme}
+                >
+                  {theme === 'light' ? <IconMoon /> : <IconSun />}
+                </button>
+              </Tooltip>
+
+              {syncPopoverOpen && (
+                <div
+                  className="sync-popover"
+                  role="dialog"
+                  aria-label="حالة المزامنة"
+                >
+                  <div className="sync-popover-head">
+                    <strong className="text-sm">حالة المزامنة المحلية</strong>
                     <button
                       type="button"
-                      className="btn"
-                      disabled={
-                        !isOnline || isSyncing || authStatus !== 'unlocked'
-                      }
-                      onClick={() => {
-                        void flushOutbox();
-                      }}
+                      className="btn btn-icon"
+                      aria-label="إغلاق"
+                      onClick={() => setSyncPopoverOpen(false)}
                     >
-                      <IconRefresh size="sm" />
-                      <span>مزامنة الآن</span>
+                      <IconCross size="sm" />
                     </button>
                   </div>
 
-                  {attentionItems.length === 0 ? (
-                    <span className="panel-meta">
-                      لا توجد عناصر متعثرة في طابور المزامنة.
-                    </span>
-                  ) : (
-                    attentionItems.map((item) => {
-                      const act = actionsById.get(item.action_id);
-                      return (
-                        <div
-                          key={item.mutation_id}
-                          className="attention-card"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <strong>{act?.title ?? item.action_id}</strong>
-                            <span className="nums">{item.log_date}</span>
+                  <div className="sync-popover-body">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="panel-meta nums">
+                          الحالة: {syncLabel}
+                        </span>
+                        <span className="panel-meta nums">
+                          آخر مزامنة: {lastSyncedLabel}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={
+                          !isOnline || isSyncing || authStatus !== 'unlocked'
+                        }
+                        onClick={() => {
+                          void flushOutbox();
+                        }}
+                      >
+                        <IconRefresh size="sm" />
+                        <span>مزامنة الآن</span>
+                      </button>
+                    </div>
+
+                    {attentionItems.length === 0 ? (
+                      <span className="panel-meta">
+                        لا توجد عناصر متعثرة في طابور المزامنة.
+                      </span>
+                    ) : (
+                      attentionItems.map((item) => {
+                        const act = actionsById.get(item.action_id);
+                        return (
+                          <div
+                            key={item.mutation_id}
+                            className="attention-card"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <strong>{act?.title ?? item.action_id}</strong>
+                              <span className="nums">{item.log_date}</span>
+                            </div>
+                            {item.last_error && (
+                              <span className="text-xs">{item.last_error}</span>
+                            )}
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() => {
+                                  void retryAttentionItem(item.mutation_id);
+                                }}
+                              >
+                                {AR_STRINGS.sync.retryItem}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() => {
+                                  void handleExportAndDiscard(item.mutation_id);
+                                }}
+                              >
+                                {AR_STRINGS.sync.exportAndDiscardItem}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger"
+                                onClick={() => {
+                                  void discardAttentionItem(item.mutation_id);
+                                }}
+                              >
+                                {AR_STRINGS.sync.discardItem}
+                              </button>
+                            </div>
                           </div>
-                          {item.last_error && (
-                            <span className="text-xs">{item.last_error}</span>
-                          )}
-                          <div className="flex flex-wrap gap-1.5">
-                            <button
-                              type="button"
-                              className="btn"
-                              onClick={() => {
-                                void retryAttentionItem(item.mutation_id);
-                              }}
-                            >
-                              {AR_STRINGS.sync.retryItem}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn"
-                              onClick={() => {
-                                void handleExportAndDiscard(item.mutation_id);
-                              }}
-                            >
-                              {AR_STRINGS.sync.exportAndDiscardItem}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-danger"
-                              onClick={() => {
-                                void discardAttentionItem(item.mutation_id);
-                              }}
-                            >
-                              {AR_STRINGS.sync.discardItem}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </header>
 
@@ -722,7 +1000,23 @@ export function MohasbaAppShell() {
               data-testid="status-message"
               role="status"
             >
-              <span>{shellMessage}</span>
+              <span>
+                {shellMessage}
+                {signedOutNotice && (
+                  <span className="sr-only"> signed_out</span>
+                )}
+              </span>
+              <button
+                type="button"
+                className="btn btn-icon notice-dismiss-btn"
+                aria-label="إغلاق التنبيه"
+                onClick={() => {
+                  setShellMessage(null);
+                  setSignedOutNotice(false);
+                }}
+              >
+                <IconX size="sm" />
+              </button>
             </div>
           )}
 
@@ -762,15 +1056,33 @@ export function MohasbaAppShell() {
                 }}
                 className="p-4 flex flex-col gap-3"
               >
-                <input
-                  type="password"
-                  className="field-input"
-                  aria-label="passcode"
-                  value={passcode}
-                  onChange={(e) => setPasscode(e.target.value)}
-                  placeholder="رمز الدخول"
-                  autoFocus
-                />
+                <div className="passcode-field-wrap">
+                  <input
+                    type={showPasscode ? 'text' : 'password'}
+                    className="field-input passcode-input"
+                    aria-label="رمز الدخول (passcode)"
+                    autoComplete="current-password"
+                    value={passcode}
+                    onChange={(e) => setPasscode(e.target.value)}
+                    placeholder="رمز الدخول"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-icon passcode-toggle-btn"
+                    aria-label={
+                      showPasscode ? 'إخفاء رمز الدخول' : 'إظهار رمز الدخول'
+                    }
+                    aria-pressed={showPasscode}
+                    onClick={() => setShowPasscode((prev) => !prev)}
+                  >
+                    {showPasscode ? (
+                      <IconEyeOff size="sm" />
+                    ) : (
+                      <IconEye size="sm" />
+                    )}
+                  </button>
+                </div>
                 {authError && (
                   <div className="confirm-banner" role="alert">
                     <span>{authError}</span>
@@ -890,19 +1202,19 @@ export function MohasbaAppShell() {
           )}
 
           {/* 5 Core Views (Eagerly Bundled for Offline Tab Switching) */}
-          {showWorkspaceViews && urlState.view === 'now' && (
+          {showWorkspaceViews && effectiveUrlState.view === 'now' && (
             <NowView
               selectedDate={effectiveSelectedDate}
               onSelectDate={(d) =>
                 updateUrlState(
-                  { ...urlState, view: 'now', date: d },
+                  { ...effectiveUrlState, view: 'now', date: d },
                   'replace',
                 )
               }
-              selectedPeriodId={urlState.period}
+              selectedPeriodId={effectiveUrlState.period}
               onSelectPeriodId={(periodId) =>
                 updateUrlState(
-                  { ...urlState, view: 'now', period: periodId },
+                  { ...effectiveUrlState, view: 'now', period: periodId },
                   'replace',
                 )
               }
@@ -912,7 +1224,7 @@ export function MohasbaAppShell() {
             />
           )}
 
-          {showWorkspaceViews && urlState.view === 'week' && (
+          {showWorkspaceViews && effectiveUrlState.view === 'week' && (
             <WeekView
               oneGlanceMode={oneGlanceMode}
               onSetOneGlanceMode={handleSetOneGlance}
@@ -921,12 +1233,12 @@ export function MohasbaAppShell() {
             />
           )}
 
-          {showWorkspaceViews && urlState.view === 'qadaa' && (
+          {showWorkspaceViews && effectiveUrlState.view === 'qadaa' && (
             <QadaaView
-              activeTab={urlState.tab}
+              activeTab={effectiveUrlState.tab}
               onSelectTab={(tab) =>
                 updateUrlState(
-                  { ...urlState, view: 'qadaa', tab },
+                  { ...effectiveUrlState, view: 'qadaa', tab },
                   'replace',
                 )
               }
@@ -935,37 +1247,49 @@ export function MohasbaAppShell() {
             />
           )}
 
-          {showWorkspaceViews && urlState.view === 'analytics' && (
+          {showWorkspaceViews && effectiveUrlState.view === 'analytics' && (
             <AnalyticsView />
           )}
 
-          {showWorkspaceViews && urlState.view === 'settings' && (
-            <SettingsView onStatusMessage={(msg) => setShellMessage(msg)} />
+          {showWorkspaceViews && effectiveUrlState.view === 'settings' && (
+            <SettingsView
+              onStatusMessage={(msg) => {
+                if (msg === 'signed_out') {
+                  setSignedOutNotice(true);
+                  setShellMessage('تم تسجيل الخروج بنجاح.');
+                } else {
+                  setSignedOutNotice(false);
+                  setShellMessage(msg);
+                }
+              }}
+            />
           )}
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation Bar (< 1024px) */}
-      <nav className="mobile-nav" aria-label="التنقل السفلي">
-        {NAV_ITEMS.map((item) => {
-          const isCurrent = urlState.view === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className="mobile-nav-btn"
-              aria-current={isCurrent ? 'page' : undefined}
-              onClick={() => handleNavigate(item.id)}
-            >
-              {renderNavIcon(item.id)}
-              <span>{item.mobileLabel}</span>
-              {item.id === 'qadaa' && qadaaCount > 0 && (
-                <span className="mobile-badge nums">{qadaaCount}</span>
-              )}
-            </button>
-          );
-        })}
-      </nav>
+      {/* Mobile Bottom Navigation Bar (< 1024px, hidden while locked/onboarding) */}
+      {showWorkspaceViews && (
+        <nav className="mobile-nav" aria-label="التنقل السفلي">
+          {NAV_ITEMS.map((item) => {
+            const isCurrent = effectiveUrlState.view === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className="mobile-nav-btn"
+                aria-current={isCurrent ? 'page' : undefined}
+                onClick={() => handleNavigate(item.id)}
+              >
+                {renderNavIcon(item.id)}
+                <span>{item.mobileLabel}</span>
+                {item.id === 'qadaa' && qadaaCount > 0 && (
+                  <span className="mobile-badge nums">{qadaaCount}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
       {/* Live 5-Second Undo Toast */}
       {activeUndoToast && (
@@ -978,16 +1302,26 @@ export function MohasbaAppShell() {
         >
           <div className="undo-toast-body">
             <span>{undoLabel}</span>
-            <button
-              type="button"
-              className="undo-btn"
-              data-testid="undo-toast-btn"
-              onClick={() => {
-                void handleUndoClick();
-              }}
-            >
-              {AR_STRINGS.street.undoAction}
-            </button>
+            <div className="undo-toast-actions">
+              <button
+                type="button"
+                className="undo-btn"
+                data-testid="undo-toast-btn"
+                onClick={() => {
+                  void handleUndoClick();
+                }}
+              >
+                {AR_STRINGS.street.undoAction}
+              </button>
+              <button
+                type="button"
+                className="undo-dismiss-btn"
+                aria-label="إغلاق إشعار التراجع"
+                onClick={dismissUndoToast}
+              >
+                <IconX size="sm" />
+              </button>
+            </div>
           </div>
           <div className="undo-progress" />
         </div>
@@ -999,6 +1333,76 @@ export function MohasbaAppShell() {
         onClose={() => setCellEditorTarget(null)}
         onSaved={(msg) => setUndoLabel(msg)}
       />
+
+      {/* Keyboard Shortcuts Quick Reference <dialog> */}
+      <dialog
+        ref={shortcutsDialogRef}
+        className="app-dialog dialog-wide"
+        aria-labelledby="shortcuts-help-title"
+        onCancel={(e) => {
+          e.preventDefault();
+          setShortcutsHelpOpen(false);
+        }}
+        onClick={(e) => {
+          if (e.target === shortcutsDialogRef.current) {
+            setShortcutsHelpOpen(false);
+          }
+        }}
+      >
+        <div className="dialog-head">
+          <h3 className="dialog-title flex items-center gap-2" id="shortcuts-help-title">
+            <IconKeyboard size="sm" />
+            <span>خريطة اختصارات لوحة المفاتيح</span>
+          </h3>
+          <button
+            type="button"
+            className="btn btn-icon"
+            aria-label="إغلاق"
+            onClick={() => setShortcutsHelpOpen(false)}
+          >
+            <IconCross size="sm" />
+          </button>
+        </div>
+        <div className="dialog-body dialog-body-scroll">
+          <div className="shortcuts-help-list">
+            {SHORTCUT_DEFINITIONS.map((def) => {
+              const binding = effectiveShortcuts[def.id];
+              const caps = formatShortcutKeycaps(binding);
+              return (
+                <div key={def.id} className="shortcut-help-row">
+                  <span>{def.labelAr}</span>
+                  <span className="kbd-group" dir="ltr">
+                    {caps.map((cap, idx) => (
+                      <kbd key={`${def.id}-${idx}`} className="kbd-cap nums">
+                        {cap}
+                      </kbd>
+                    ))}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="dialog-foot">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setShortcutsHelpOpen(false);
+              handleNavigate('settings');
+            }}
+          >
+            تخصيص الاختصارات
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setShortcutsHelpOpen(false)}
+          >
+            إغلاق
+          </button>
+        </div>
+      </dialog>
     </div>
   );
 }

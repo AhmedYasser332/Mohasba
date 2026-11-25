@@ -1,0 +1,428 @@
+/* Mohasba Tracker v2 — Weekly Matrix Power-User Ergonomics & Bug D Polish
+ * Strict Al-Mizan Al-Ma'dani tokens, 100% RTL logical CSS, zero AI-slop tells.
+ */
+
+/* Toolbar Bulk Action Group (Bug D: Visually binds target-date select to Normal Day + Defer Qadaa) */
+.toolbar-bulk-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-block: 3px;
+  padding-inline: 6px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-control);
+  background: var(--bg-subtle);
+  flex-wrap: wrap;
+}
+
+.toolbar-bulk-group .field-select {
+  width: auto;
+  min-height: 32px;
+  padding-block: 4px;
+  padding-inline: 8px;
+  font-size: 0.78rem;
+  background: var(--bg-surface);
+}
+
+.toolbar-bulk-group .btn {
+  min-height: 32px;
+  padding-block: 4px;
+  padding-inline: 10px;
+  font-size: 0.78rem;
+}
+
+/* Discoverability Hint Strip (Hairline Vertical Dividers — Zero Middle-Dots) */
+.matrix-hint-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 0;
+  padding-block: 6px;
+  padding-inline: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-control);
+  font-size: 0.74rem;
+  color: var(--ink-secondary);
+}
+
+.matrix-hint-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-inline: 10px;
+  border-inline-end: 1px solid var(--border-hairline);
+  white-space: nowrap;
+}
+
+.matrix-hint-item:first-child {
+  padding-inline-start: 0;
+}
+
+.matrix-hint-item:last-child {
+  border-inline-end: none;
+  padding-inline-end: 0;
+}
+
+.matrix-mobile-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-secondary);
+  line-height: 1.4;
+}
+
+/* Matrix Cells: iOS Safari Long-Press & Scroll Safety */
+.m-cell,
+.m-whoop-day,
+.m-whoop-box {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.m-cell:disabled,
+.m-cell.st-inactive,
+.m-whoop-day:disabled {
+  cursor: default;
+}
+
+.m-cell:disabled {
+  opacity: 0.45;
+}
+
+/* Silent Visual Long-Press Arm State (120ms..450ms) */
+.m-cell.is-pressing,
+.m-whoop-day.is-pressing .m-whoop-box {
+  border-color: var(--accent-live);
+  box-shadow: inset 0 0 0 1px var(--accent-live);
+  transform: scale(0.96);
+}
+
+/* 4px Corner Note Indicator Dot */
+.m-cell-note-dot {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--accent-live);
+  pointer-events: none;
+}
+
+/* Clickable Day Column Header (Whole-Column Selection) */
+.col-day-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding-block: 2px;
+  padding-inline: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-cell);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+
+.col-day-btn:hover {
+  background: var(--bg-hover);
+  color: var(--ink-primary);
+}
+
+.col-day-btn.is-col-selected {
+  background: var(--accent-live-soft);
+  border-color: var(--accent-live);
+  color: var(--accent-live);
+}
+
+/* Google-Sheets-Like Grid Focus, Multi-Cell Range Selection & Copy Marquee */
+.m-cell.is-grid-focused {
+  outline: 2px solid var(--accent-live);
+  outline-offset: -1px;
+  z-index: 2;
+}
+
+.m-cell.is-grid-selected {
+  box-shadow: inset 0 0 0 1px var(--accent-live);
+}
+
+.m-cell.is-grid-selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent-live-soft);
+  opacity: 0.52;
+  pointer-events: none;
+}
+
+.m-cell.is-grid-copied {
+  outline: 1px dashed var(--accent-live);
+  outline-offset: -1px;
+}
+
+/* Action Row Title Layout + 6-Dot DnD Grip Handle (Desktop Standard Mode) */
+.cell-title-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cell-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dnd-handle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-cell);
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: grab;
+  flex-shrink: 0;
+  opacity: 0.42;
+  touch-action: none;
+  transition: opacity var(--t-fast), background-color var(--t-fast), color var(--t-fast);
+}
+
+.ledger-table tbody tr.data-row:hover .dnd-handle-btn,
+.dnd-handle-btn:focus-visible {
+  opacity: 1;
+  color: var(--ink-primary);
+}
+
+.dnd-handle-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: var(--border-hairline);
+}
+
+.dnd-handle-btn:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.dnd-handle-btn:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+/* Pointer DnD Visual Feedback (Source Dim, 2px Insertion Line, Group Target Highlight) */
+.ledger-table tbody tr[data-dnd-dragging="true"] {
+  opacity: 0.35;
+}
+
+.ledger-table tbody tr[data-dnd-drop-position="before"] td {
+  box-shadow: inset 0 2px 0 0 var(--accent-live);
+}
+
+.ledger-table tbody tr[data-dnd-drop-position="after"] td {
+  box-shadow: inset 0 -2px 0 0 var(--accent-live);
+}
+
+.ledger-table tbody tr.group-row[data-dnd-group-over="true"] td {
+  background: var(--accent-live-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-live);
+}
+
+/* Floating Drag Ghost Pill (Transient Overlay Elevation) */
+.dnd-drag-ghost {
+  background: var(--bg-surface);
+  color: var(--ink-primary);
+  border: 1px solid var(--accent-live);
+  border-radius: var(--r-control);
+  box-shadow: var(--shadow-overlay);
+  padding-block: 5px;
+  padding-inline: 12px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Floating Contextual Bulk Selection Bar (>= 2 Cells Selected on Desktop) */
+.week-bulk-bar-wrap {
+  position: fixed;
+  inset-block-end: 20px;
+  inset-inline: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  padding-inline: 16px;
+  pointer-events: none;
+}
+
+.week-bulk-bar {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-block: 7px;
+  padding-inline: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-overlay);
+}
+
+.week-bulk-count {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  padding-inline-end: 8px;
+  border-inline-end: 1px solid var(--border-hairline);
+}
+
+.week-bulk-bar .btn {
+  min-height: 30px;
+  padding-block: 4px;
+  padding-inline: 9px;
+  font-size: 0.78rem;
+}
+
+/* Bug D Polish: One-Glance Mode Row Height, Cell Height & Left-Table Column Proportions */
+.app-shell.overview-active .main-col {
+  padding-block-end: 4px;
+}
+
+.app-shell.overview-active .workspace.overview-wide {
+  padding-block: 6px;
+  gap: 6px;
+}
+
+.app-shell.overview-active .matrix-hint-strip {
+  margin-block-end: 4px;
+  padding-block: 3px;
+  padding-inline: 10px;
+  font-size: 0.71rem;
+}
+
+.overview-split .ledger-table tbody tr.data-row {
+  height: 25px;
+}
+
+.overview-split .m-cell {
+  height: 21px;
+  font-size: 0.7rem;
+}
+
+.overview-split .ledger-table tbody tr.period-spacer td {
+  height: 4px;
+}
+
+.overview-split .overview-table-time thead th.col-period {
+  width: 14%;
+}
+
+.overview-split .overview-table-time thead th.col-action {
+  width: 37%;
+}
+
+.overview-split .overview-table-daily thead th.col-period {
+  width: 17.5%;
+}
+
+.overview-split .overview-table-daily thead th.col-action {
+  width: 33.5%;
+}
+
+/* Responsive Tightening at 1024px-1279px so Zero Scroll/Overflow Holds */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .overview-split {
+    gap: 8px;
+    grid-template-columns: 1.24fr 1fr;
+  }
+
+  .overview-split .ledger-table {
+    font-size: 0.74rem;
+  }
+
+  .overview-split .ledger-table thead th.col-day {
+    min-width: 28px;
+  }
+
+  .overview-split .ledger-table td.cell-status {
+    padding: 1px;
+  }
+
+  .overview-split .ledger-table td.cell-period {
+    font-size: 0.69rem;
+    padding-inline: 2px;
+  }
+
+  .overview-split .ledger-table td.cell-title {
+    padding-inline-start: 6px;
+    padding-inline-end: 3px;
+    font-size: 0.73rem;
+  }
+
+  .overview-split .m-cell {
+    height: 22px;
+    font-size: 0.65rem;
+  }
+}
+
+/* Bug D Polish: Mobile Compact Grid Minimum Tap Width & Readable Percentage Display */
+.mobile-compact-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-compact-table {
+  min-width: 520px;
+  table-layout: fixed;
+}
+
+.mobile-compact-table thead th.col-action {
+  width: 32%;
+  min-width: 136px;
+}
+
+.mobile-compact-table thead th.col-day {
+  width: 8.5%;
+  min-width: 42px;
+}
+
+.mobile-compact-table thead th.col-rate {
+  width: 8.5%;
+  min-width: 44px;
+}
+
+.mobile-compact-table tbody tr.data-row {
+  height: 40px;
+}
+
+.mobile-compact-table td.cell-status {
+  padding: 2px;
+}
+
+.mobile-compact-table .m-cell {
+  min-width: 38px;
+  height: 34px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-cell.is-pressing,
+  .m-whoop-day.is-pressing .m-whoop-box {
+    transform: none;
+  }
+}

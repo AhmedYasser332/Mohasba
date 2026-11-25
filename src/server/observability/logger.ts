@@ -85,7 +85,7 @@ export function truncateErrorStack(error: unknown): string | null {
       : typeof error === 'string'
         ? error
         : JSON.stringify(error);
-  const scrubbed = raw.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+  const scrubbed = raw.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
   return scrubbed.length > MAX_ERROR_STACK_CHARS
     ? scrubbed.slice(0, MAX_ERROR_STACK_CHARS)
     : scrubbed;

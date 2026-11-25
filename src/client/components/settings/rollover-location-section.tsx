@@ -19,6 +19,18 @@ interface CityPreset {
   calc_method: CalcMethod;
 }
 
+interface RolloverFormDraft {
+  rolloverMode?: RolloverMode;
+  weekStartDay?: number;
+  cityName?: string;
+  ianaTimezone?: string;
+  latitude?: string;
+  longitude?: string;
+  calcMethod?: CalcMethod;
+  asrMadhhab?: AsrMadhhab;
+  offsets?: PrayerOffsets;
+}
+
 const CITY_PRESETS: ReadonlyArray<CityPreset> = [
   {
     id: 'cairo',
@@ -112,39 +124,31 @@ const OFFSET_FIELDS: ReadonlyArray<{
   { key: 'isha', label: 'إزاحة العشاء (د)' },
 ];
 
+function findMatchingPresetId(params: {
+  city_name: string;
+  iana_timezone: string;
+  latitude: number;
+  longitude: number;
+  calc_method: CalcMethod;
+}): string {
+  if (!Number.isFinite(params.latitude) || !Number.isFinite(params.longitude)) {
+    return '';
+  }
+  const match = CITY_PRESETS.find(
+    (p) =>
+      p.city_name === params.city_name &&
+      p.iana_timezone === params.iana_timezone &&
+      Math.abs(p.latitude - params.latitude) < 0.0001 &&
+      Math.abs(p.longitude - params.longitude) < 0.0001 &&
+      p.calc_method === params.calc_method,
+  );
+  return match?.id ?? '';
+}
+
 export function RolloverLocationSection() {
   const { settings, isOnline, updateSettings } = useMohasba();
 
-  const [rolloverMode, setRolloverMode] = useState<RolloverMode>(
-    settings?.rollover_mode ?? 'FAJR',
-  );
-  const [weekStartDay, setWeekStartDay] = useState<number>(
-    settings?.week_start_day ?? 6,
-  );
-  const [cityName, setCityName] = useState(settings?.city_name ?? 'القاهرة');
-  const [ianaTimezone, setIanaTimezone] = useState(
-    settings?.iana_timezone ?? 'Africa/Cairo',
-  );
-  const [latitude, setLatitude] = useState(String(settings?.latitude ?? 30.0444));
-  const [longitude, setLongitude] = useState(
-    String(settings?.longitude ?? 31.2357),
-  );
-  const [calcMethod, setCalcMethod] = useState<CalcMethod>(
-    settings?.calc_method ?? 'Egyptian',
-  );
-  const [asrMadhhab, setAsrMadhhab] = useState<AsrMadhhab>(
-    settings?.asr_madhhab ?? 'Shafi',
-  );
-  const [offsets, setOffsets] = useState<PrayerOffsets>(
-    settings?.prayer_offsets ?? {
-      fajr: 0,
-      sunrise: 0,
-      dhuhr: 0,
-      asr: 0,
-      maghrib: 0,
-      isha: 0,
-    },
-  );
+  const [draft, setDraft] = useState<RolloverFormDraft>({});
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{
     text: string;
@@ -153,14 +157,35 @@ export function RolloverLocationSection() {
 
   if (!settings) return null;
 
+  const rolloverMode = draft.rolloverMode ?? settings.rollover_mode;
+  const weekStartDay = draft.weekStartDay ?? settings.week_start_day;
+  const cityName = draft.cityName ?? settings.city_name;
+  const ianaTimezone = draft.ianaTimezone ?? settings.iana_timezone;
+  const latitude = draft.latitude ?? String(settings.latitude);
+  const longitude = draft.longitude ?? String(settings.longitude);
+  const calcMethod = draft.calcMethod ?? settings.calc_method;
+  const asrMadhhab = draft.asrMadhhab ?? settings.asr_madhhab;
+  const offsets = draft.offsets ?? settings.prayer_offsets;
+
+  const selectedPreset = findMatchingPresetId({
+    city_name: cityName,
+    iana_timezone: ianaTimezone,
+    latitude: Number(latitude),
+    longitude: Number(longitude),
+    calc_method: calcMethod,
+  });
+
   const applyPreset = (presetId: string) => {
     const preset = CITY_PRESETS.find((c) => c.id === presetId);
     if (!preset) return;
-    setCityName(preset.city_name);
-    setIanaTimezone(preset.iana_timezone);
-    setLatitude(String(preset.latitude));
-    setLongitude(String(preset.longitude));
-    setCalcMethod(preset.calc_method);
+    setDraft((prev) => ({
+      ...prev,
+      cityName: preset.city_name,
+      ianaTimezone: preset.iana_timezone,
+      latitude: String(preset.latitude),
+      longitude: String(preset.longitude),
+      calcMethod: preset.calc_method,
+    }));
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -200,6 +225,7 @@ export function RolloverLocationSection() {
       });
 
       if (res.ok) {
+        setDraft({});
         setFeedback({
           text: 'تم حفظ إعدادات اليوم المحاسبي والموقع والمواقيت.',
           isError: false,
@@ -216,203 +242,224 @@ export function RolloverLocationSection() {
   };
 
   return (
-    <section className="panel" data-testid="settings-rollover-section">
-      <div className="panel-header">
-        <div>
-          <h3 className="panel-title">
-            {AR_STRINGS.settings.rolloverSectionTitle}
-          </h3>
-          <span className="panel-meta">
-            حساب محلي للمواقيت دون اتصال مع دعم الفوارق اليدوية
-          </span>
+    <form
+      className="settings-body"
+      onSubmit={(e) => {
+        void handleSave(e);
+      }}
+    >
+      <span className="panel-meta">
+        حساب محلي للمواقيت دون اتصال مع دعم الفوارق اليدوية
+      </span>
+
+      {feedback && (
+        <div className={`status-note ${feedback.isError ? 'is-error' : ''}`}>
+          {feedback.text}
         </div>
+      )}
+
+      <div className="field-grid-3">
+        <label className="field-label">
+          <span>بداية اليوم المحاسبي</span>
+          <select
+            className="field-select"
+            data-testid="settings-rollover-select"
+            value={rolloverMode}
+            onChange={(e) =>
+              setDraft((prev) => ({
+                ...prev,
+                rolloverMode: e.target.value as RolloverMode,
+              }))
+            }
+          >
+            <option value="FAJR">{AR_STRINGS.settings.rolloverFajr}</option>
+            <option value="MIDNIGHT">
+              {AR_STRINGS.settings.rolloverMidnight}
+            </option>
+          </select>
+        </label>
+
+        <label className="field-label">
+          <span>بداية الأسبوع</span>
+          <select
+            className="field-select"
+            value={weekStartDay}
+            onChange={(e) =>
+              setDraft((prev) => ({
+                ...prev,
+                weekStartDay: Number(e.target.value),
+              }))
+            }
+          >
+            {AR_STRINGS.week.weekdaysAr.map((name, idx) => (
+              <option key={name} value={idx}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field-label">
+          <span>مدينة جاهزة</span>
+          <select
+            className="field-select"
+            data-testid="settings-city-preset-select"
+            value={selectedPreset}
+            onChange={(e) => applyPreset(e.target.value)}
+          >
+            <option value="">اختر مدينة لتعبئة الإحداثيات...</option>
+            {CITY_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.city_name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <form
-        className="settings-body"
-        onSubmit={(e) => {
-          void handleSave(e);
-        }}
-      >
-        {feedback && (
-          <div className={`status-note ${feedback.isError ? 'is-error' : ''}`}>
-            {feedback.text}
-          </div>
-        )}
+      <div className="field-grid">
+        <label className="field-label">
+          <span>اسم المدينة</span>
+          <input
+            type="text"
+            className="field-input"
+            required
+            maxLength={100}
+            value={cityName}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, cityName: e.target.value }))
+            }
+          />
+        </label>
 
-        <div className="field-grid-3">
-          <label className="field-label">
-            <span>بداية اليوم المحاسبي</span>
-            <select
-              className="field-select"
-              data-testid="settings-rollover-select"
-              value={rolloverMode}
-              onChange={(e) => setRolloverMode(e.target.value as RolloverMode)}
-            >
-              <option value="FAJR">{AR_STRINGS.settings.rolloverFajr}</option>
-              <option value="MIDNIGHT">
-                {AR_STRINGS.settings.rolloverMidnight}
+        <label className="field-label">
+          <span>المنطقة الزمنية (IANA)</span>
+          <input
+            type="text"
+            className="field-input nums"
+            dir="ltr"
+            required
+            maxLength={64}
+            value={ianaTimezone}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, ianaTimezone: e.target.value }))
+            }
+          />
+        </label>
+      </div>
+
+      <div className="field-grid">
+        <label className="field-label">
+          <span>خط العرض (Latitude)</span>
+          <input
+            type="number"
+            className="field-input nums"
+            dir="ltr"
+            step="any"
+            min={-90}
+            max={90}
+            required
+            value={latitude}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, latitude: e.target.value }))
+            }
+          />
+        </label>
+
+        <label className="field-label">
+          <span>خط الطول (Longitude)</span>
+          <input
+            type="number"
+            className="field-input nums"
+            dir="ltr"
+            step="any"
+            min={-180}
+            max={180}
+            required
+            value={longitude}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, longitude: e.target.value }))
+            }
+          />
+        </label>
+      </div>
+
+      <div className="field-grid">
+        <label className="field-label">
+          <span>طريقة الحساب</span>
+          <select
+            className="field-select"
+            value={calcMethod}
+            onChange={(e) =>
+              setDraft((prev) => ({
+                ...prev,
+                calcMethod: e.target.value as CalcMethod,
+              }))
+            }
+          >
+            {CALC_METHODS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
               </option>
-            </select>
-          </label>
+            ))}
+          </select>
+        </label>
 
-          <label className="field-label">
-            <span>بداية الأسبوع</span>
-            <select
-              className="field-select"
-              value={weekStartDay}
-              onChange={(e) => setWeekStartDay(Number(e.target.value))}
-            >
-              {AR_STRINGS.week.weekdaysAr.map((name, idx) => (
-                <option key={name} value={idx}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
+        <label className="field-label">
+          <span>مذهب العصر</span>
+          <select
+            className="field-select"
+            value={asrMadhhab}
+            onChange={(e) =>
+              setDraft((prev) => ({
+                ...prev,
+                asrMadhhab: e.target.value as AsrMadhhab,
+              }))
+            }
+          >
+            <option value="Shafi">الجمهور (الشافعي / المالكي / الحنبلي)</option>
+            <option value="Hanafi">الحنفي</option>
+          </select>
+        </label>
+      </div>
 
-          <label className="field-label">
-            <span>مدينة جاهزة</span>
-            <select
-              className="field-select"
-              defaultValue=""
-              onChange={(e) => applyPreset(e.target.value)}
-            >
-              <option value="" disabled>
-                اختر مدينة لتعبئة الإحداثيات...
-              </option>
-              {CITY_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.city_name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="field-grid">
-          <label className="field-label">
-            <span>اسم المدينة</span>
-            <input
-              type="text"
-              className="field-input"
-              required
-              maxLength={100}
-              value={cityName}
-              onChange={(e) => setCityName(e.target.value)}
-            />
-          </label>
-
-          <label className="field-label">
-            <span>المنطقة الزمنية (IANA)</span>
-            <input
-              type="text"
-              className="field-input nums"
-              dir="ltr"
-              required
-              maxLength={64}
-              value={ianaTimezone}
-              onChange={(e) => setIanaTimezone(e.target.value)}
-            />
-          </label>
-        </div>
-
-        <div className="field-grid">
-          <label className="field-label">
-            <span>خط العرض (Latitude)</span>
+      <div className="field-grid-3">
+        {OFFSET_FIELDS.map((field) => (
+          <label key={field.key} className="field-label">
+            <span>{field.label}</span>
             <input
               type="number"
               className="field-input nums"
-              dir="ltr"
-              step="any"
-              min={-90}
-              max={90}
-              required
-              value={latitude}
-              onChange={(e) => setLatitude(e.target.value)}
-            />
-          </label>
-
-          <label className="field-label">
-            <span>خط الطول (Longitude)</span>
-            <input
-              type="number"
-              className="field-input nums"
-              dir="ltr"
-              step="any"
               min={-180}
               max={180}
-              required
-              value={longitude}
-              onChange={(e) => setLongitude(e.target.value)}
-            />
-          </label>
-        </div>
-
-        <div className="field-grid">
-          <label className="field-label">
-            <span>طريقة الحساب</span>
-            <select
-              className="field-select"
-              value={calcMethod}
-              onChange={(e) => setCalcMethod(e.target.value as CalcMethod)}
-            >
-              {CALC_METHODS.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field-label">
-            <span>مذهب العصر</span>
-            <select
-              className="field-select"
-              value={asrMadhhab}
-              onChange={(e) => setAsrMadhhab(e.target.value as AsrMadhhab)}
-            >
-              <option value="Shafi">الجمهور (الشافعي / المالكي / الحنبلي)</option>
-              <option value="Hanafi">الحنفي</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="field-grid-3">
-          {OFFSET_FIELDS.map((field) => (
-            <label key={field.key} className="field-label">
-              <span>{field.label}</span>
-              <input
-                type="number"
-                className="field-input nums"
-                min={-180}
-                max={180}
-                value={offsets[field.key]}
-                onChange={(e) =>
-                  setOffsets((prev) => ({
-                    ...prev,
+              value={offsets[field.key]}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  offsets: {
+                    ...(prev.offsets ?? settings.prayer_offsets),
                     [field.key]: Math.min(
                       180,
                       Math.max(-180, Number(e.target.value) || 0),
                     ),
-                  }))
-                }
-              />
-            </label>
-          ))}
-        </div>
+                  },
+                }))
+              }
+            />
+          </label>
+        ))}
+      </div>
 
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            className="btn btn-live"
-            data-testid="settings-rollover-save"
-            disabled={!isOnline || busy}
-          >
-            حفظ إعدادات اليوم والمواقيت
-          </button>
-        </div>
-      </form>
-    </section>
+      <div className="flex justify-end">
+        <button
+          type="submit"
+          className="btn btn-live"
+          data-testid="settings-rollover-save"
+          disabled={!isOnline || busy}
+        >
+          حفظ إعدادات اليوم والمواقيت
+        </button>
+      </div>
+    </form>
   );
 }

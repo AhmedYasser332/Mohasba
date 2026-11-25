@@ -13,8 +13,8 @@ export async function POST(req: Request): Promise<Response> {
       requireCsrf: true,
       requireJsonContentType: false,
     },
-    async ({ requestId, config }) => {
-      const result = await sendTestNtfy(config);
+    async ({ requestId, config, supabase }) => {
+      const result = await sendTestNtfy(config, supabase);
       return jsonOk(result, { requestId });
     },
   );

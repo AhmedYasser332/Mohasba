@@ -7,16 +7,21 @@ import {
   type PeriodSide,
   type PrayerAnchor,
 } from '@/domain';
+import {
+  PointerDragGhost,
+  usePointerDnd,
+  type PointerDndReorderPayload,
+} from '../../hooks/use-pointer-dnd';
 import { useMohasba } from '../../store/mohasba-provider';
 import {
   IconArchive,
-  IconArrowDown,
-  IconArrowUp,
   IconCross,
   IconEdit,
+  IconGripVertical,
   IconPlus,
   IconRefresh,
 } from '../icons';
+import { Tooltip } from '../tooltip';
 
 const ANCHOR_LABELS: ReadonlyArray<{ value: PrayerAnchor; label: string }> = [
   { value: 'FAJR', label: 'الفجر' },
@@ -26,6 +31,11 @@ const ANCHOR_LABELS: ReadonlyArray<{ value: PrayerAnchor; label: string }> = [
   { value: 'MAGHRIB', label: 'المغرب' },
   { value: 'ISHA', label: 'العشاء' },
   { value: 'FIXED_TIME', label: 'وقت ثابت' },
+];
+
+const SIDE_SECTIONS: ReadonlyArray<{ side: PeriodSide; label: string }> = [
+  { side: 'TIME_BOUND', label: 'الفترات الموقوتة' },
+  { side: 'DAILY_GROUP', label: 'المجموعات اليومية' },
 ];
 
 function formatAnchorSummary(period: Period): string {
@@ -117,6 +127,59 @@ export function PeriodsSection() {
     [periods],
   );
 
+  const handleDndReorder = async (payload: PointerDndReorderPayload) => {
+    if (!isOnline || busy) return;
+    const side = payload.toGroupId as PeriodSide;
+    const baseOrder = side === 'TIME_BOUND' ? 1 : 101;
+    const archivedTailIds = showArchived
+      ? []
+      : sortedPeriods
+          .filter((p) => p.side === side && p.archived_at !== null)
+          .map((p) => p.id);
+
+    const items = [...payload.targetGroupItemIds, ...archivedTailIds].map(
+      (id, idx) => ({
+        id,
+        sort_order: baseOrder + idx,
+      }),
+    );
+
+    if (items.length === 0) return;
+
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await reorderSchema({ target: 'periods', items });
+      if (!res.ok) {
+        setFeedback({
+          text: res.errorMessage ?? 'تعذر إعادة ترتيب الفترات.',
+          isError: true,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const {
+    dragState,
+    getHandleProps,
+    getItemProps,
+    getGroupDropProps,
+    liveAnnouncement,
+  } = usePointerDnd<Period>({
+    items: visiblePeriods,
+    getId: (p) => p.id,
+    getGroupId: (p) => p.side,
+    getLabel: (p) => p.title,
+    groupOrder: SIDE_SECTIONS.map((s) => s.side),
+    getGroupLabel: (side) =>
+      SIDE_SECTIONS.find((s) => s.side === side)?.label ?? '',
+    allowCrossGroup: false,
+    disabled: !isOnline || busy,
+    onReorder: handleDndReorder,
+  });
+
   const openCreateDialog = () => {
     setFeedback(null);
     setForm(DEFAULT_FORM);
@@ -191,45 +254,14 @@ export function PeriodsSection() {
       if (res.ok) {
         setDialogOpen(false);
         setFeedback({
-          text: form.id ? 'تم تحديث الفترة بنجاح.' : 'تمت إضافة الفترة بنجاح.',
+          text: form.id
+            ? 'تم تحديث الفترة بنجاح.'
+            : 'تمت إضافة الفترة بنجاح.',
           isError: false,
         });
       } else {
         setFeedback({
           text: res.errorMessage ?? 'تعذر حفظ الفترة.',
-          isError: true,
-        });
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleMovePeriod = async (period: Period, direction: 'up' | 'down') => {
-    if (!isOnline || busy) return;
-    const sameSide = sortedPeriods.filter((p) => p.side === period.side);
-    const idx = sameSide.findIndex((p) => p.id === period.id);
-    if (idx === -1) return;
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= sameSide.length) return;
-
-    const reordered = [...sameSide];
-    const [moved] = reordered.splice(idx, 1);
-    reordered.splice(targetIdx, 0, moved!);
-
-    const baseOrder = period.side === 'TIME_BOUND' ? 1 : 101;
-    const items = reordered.map((p, i) => ({
-      id: p.id,
-      sort_order: baseOrder + i,
-    }));
-
-    setBusy(true);
-    setFeedback(null);
-    try {
-      const res = await reorderSchema({ target: 'periods', items });
-      if (!res.ok) {
-        setFeedback({
-          text: res.errorMessage ?? 'تعذر إعادة ترتيب الفترات.',
           isError: true,
         });
       }
@@ -267,15 +299,11 @@ export function PeriodsSection() {
   };
 
   return (
-    <section className="panel" data-testid="settings-periods-section">
-      <div className="panel-header">
-        <div>
-          <h3 className="panel-title">الفترات والمجموعات</h3>
-          <span className="panel-meta nums">
-            {periods.filter((p) => p.archived_at === null).length} نشطة /{' '}
-            {archivedCount} مؤرشفة
-          </span>
-        </div>
+    <div>
+      <div className="settings-section-bar">
+        <span className="panel-meta">
+          اسحب مقبض النقاط الست أو استخدم Alt مع الأسهم لإعادة ترتيب كل جانب
+        </span>
 
         <div className="flex flex-wrap items-center gap-2">
           {archivedCount > 0 && (
@@ -308,106 +336,141 @@ export function PeriodsSection() {
         </div>
       )}
 
-      <div className="action-list">
-        {visiblePeriods.map((period) => {
-          const sameSide = sortedPeriods.filter((p) => p.side === period.side);
-          const sideIdx = sameSide.findIndex((p) => p.id === period.id);
-          const isArchived = period.archived_at !== null;
+      <div className="sr-only" aria-live="assertive" role="status">
+        {liveAnnouncement}
+      </div>
+
+      <div>
+        {SIDE_SECTIONS.map((sideMeta) => {
+          const sidePeriods = visiblePeriods.filter(
+            (p) => p.side === sideMeta.side,
+          );
+          if (sidePeriods.length === 0) return null;
+
+          const groupDropProps = getGroupDropProps(sideMeta.side);
 
           return (
-            <div
-              key={period.id}
-              className={`schema-item-row ${isArchived ? 'is-archived' : ''}`}
-              data-testid={`period-row-${period.id}`}
-            >
-              <div className="schema-item-main">
-                <div className="action-title-line">
-                  <span className="action-title">{period.title}</span>
-                  <span className="target-tag">
-                    {period.side === 'TIME_BOUND' ? 'فترة موقوتة' : 'مجموعة يومية'}
-                  </span>
-                  {isArchived && <span className="target-tag">مؤرشفة</span>}
-                </div>
-                <div className="schema-item-meta nums">
-                  <span>{formatAnchorSummary(period)}</span>
-                  {period.side === 'TIME_BOUND' && (
-                    <span>
-                      التنبيه:{' '}
-                      {period.ntfy_enabled
-                        ? `${period.ntfy_mode === 'post_start' ? 'بعد البداية' : 'قبل الانتهاء'} (${period.ntfy_offset_min} د)`
-                        : 'متوقف'}
-                    </span>
-                  )}
-                </div>
-              </div>
+            <div key={sideMeta.side} className="schema-group" {...groupDropProps}>
+              <div className="schema-side-heading">{sideMeta.label}</div>
+              <div>
+                {sidePeriods.map((period) => {
+                  const isArchived = period.archived_at !== null;
+                  const itemProps = getItemProps(period.id);
+                  const isDragging =
+                    itemProps['data-dnd-dragging'] === 'true';
+                  const dropPos = itemProps['data-dnd-drop-position'];
 
-              <div className="schema-item-actions">
-                <button
-                  type="button"
-                  className="btn btn-icon"
-                  data-testid={`period-move-up-${period.id}`}
-                  aria-label={`تحريك ${period.title} لأعلى`}
-                  disabled={!isOnline || busy || sideIdx <= 0}
-                  onClick={() => {
-                    void handleMovePeriod(period, 'up');
-                  }}
-                >
-                  <IconArrowUp size="sm" />
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-icon"
-                  data-testid={`period-move-down-${period.id}`}
-                  aria-label={`تحريك ${period.title} لأسفل`}
-                  disabled={
-                    !isOnline || busy || sideIdx === sameSide.length - 1
-                  }
-                  onClick={() => {
-                    void handleMovePeriod(period, 'down');
-                  }}
-                >
-                  <IconArrowDown size="sm" />
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!isOnline || busy}
-                  onClick={() => openEditDialog(period)}
-                >
-                  <IconEdit size="sm" />
-                  <span>تعديل</span>
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!isOnline || busy}
-                  onClick={() => {
-                    void handleToggleArchive(period);
-                  }}
-                >
-                  {isArchived ? (
-                    <>
-                      <IconRefresh size="sm" />
-                      <span>استعادة</span>
-                    </>
-                  ) : (
-                    <>
-                      <IconArchive size="sm" />
-                      <span>أرشفة</span>
-                    </>
-                  )}
-                </button>
+                  return (
+                    <div
+                      key={period.id}
+                      {...itemProps}
+                      className={[
+                        'schema-item-row',
+                        isArchived ? 'is-archived' : '',
+                        isDragging ? 'is-dragging' : '',
+                        dropPos === 'before' ? 'is-drop-before' : '',
+                        dropPos === 'after' ? 'is-drop-after' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      data-testid={`period-row-${period.id}`}
+                    >
+                      <div className="schema-row-lead">
+                        <Tooltip
+                          content={
+                            isOnline
+                              ? 'اسحب لإعادة الترتيب أو استخدم Alt مع الأسهم'
+                              : 'إعادة الترتيب متاحة عند الاتصال بالإنترنت فقط'
+                          }
+                        >
+                          <button
+                            type="button"
+                            className="drag-handle"
+                            data-testid={`period-drag-handle-${period.id}`}
+                            aria-label={`إعادة ترتيب ${period.title}`}
+                            {...getHandleProps(period.id)}
+                          >
+                            <IconGripVertical size="sm" />
+                          </button>
+                        </Tooltip>
+
+                        <div className="schema-item-main">
+                          <div className="action-title-line">
+                            <span className="action-title">{period.title}</span>
+                            {isArchived && (
+                              <span className="target-tag">مؤرشفة</span>
+                            )}
+                          </div>
+                          <div className="schema-item-meta nums">
+                            <span>{formatAnchorSummary(period)}</span>
+                            {period.side === 'TIME_BOUND' && (
+                              <span>
+                                التنبيه:{' '}
+                                {period.ntfy_enabled
+                                  ? `${period.ntfy_mode === 'post_start' ? 'بعد البداية' : 'قبل الانتهاء'} (${period.ntfy_offset_min} د)`
+                                  : 'متوقف'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="schema-item-actions">
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={!isOnline || busy}
+                          onClick={() => openEditDialog(period)}
+                        >
+                          <IconEdit size="sm" />
+                          <span>تعديل</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={!isOnline || busy}
+                          onClick={() => {
+                            void handleToggleArchive(period);
+                          }}
+                        >
+                          {isArchived ? (
+                            <>
+                              <IconRefresh size="sm" />
+                              <span>استعادة</span>
+                            </>
+                          ) : (
+                            <>
+                              <IconArchive size="sm" />
+                              <span>أرشفة</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
         })}
       </div>
 
+      <PointerDragGhost dragState={dragState} />
+
       {/* Period Create / Edit Dialog */}
       <dialog
         ref={dialogRef}
         className="app-dialog dialog-wide"
         aria-labelledby="period-dialog-title"
+        onCancel={(e) => {
+          e.preventDefault();
+          setDialogOpen(false);
+        }}
+        onClick={(e) => {
+          if (e.target === dialogRef.current) {
+            setDialogOpen(false);
+          }
+        }}
         onClose={() => setDialogOpen(false)}
       >
         {dialogOpen && (
@@ -654,6 +717,6 @@ export function PeriodsSection() {
           </form>
         )}
       </dialog>
-    </section>
+    </div>
   );
 }

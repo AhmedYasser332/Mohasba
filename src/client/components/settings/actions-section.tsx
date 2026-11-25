@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AR_STRINGS,
   countOpenQadaaForAction,
@@ -8,18 +8,24 @@ import {
   type Action,
   type AnalyticsRole,
 } from '@/domain';
+import {
+  PointerDragGhost,
+  usePointerDnd,
+  type PointerDndReorderPayload,
+} from '../../hooks/use-pointer-dnd';
 import { useMohasba } from '../../store/mohasba-provider';
 import {
   IconArchive,
-  IconArrowDown,
-  IconArrowUp,
+  IconChevronDown,
   IconCross,
   IconEdit,
   IconExpiredAlert,
+  IconGripVertical,
   IconPlus,
   IconRefresh,
   IconTarget,
 } from '../icons';
+import { Tooltip } from '../tooltip';
 import { TargetEvolutionDialog } from './target-evolution-dialog';
 
 interface ActionFormState {
@@ -73,6 +79,10 @@ export function ActionsSection() {
     isError: boolean;
   } | null>(null);
 
+  const [expandedPeriodIds, setExpandedPeriodIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [form, setForm] = useState<ActionFormState | null>(null);
   const editDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -108,6 +118,11 @@ export function ActionsSection() {
     [periods],
   );
 
+  const visiblePeriods = useMemo(() => {
+    if (showArchived) return sortedPeriods;
+    return sortedPeriods.filter((p) => p.archived_at === null);
+  }, [showArchived, sortedPeriods]);
+
   const timeBoundPeriods = useMemo(
     () =>
       sortedPeriods.filter(
@@ -136,6 +151,148 @@ export function ActionsSection() {
       actionObj,
     );
   }, [actions, effectiveToday, form, logs]);
+
+  const visibleActionsByPeriod = useMemo(() => {
+    const map = new Map<string, Action[]>();
+    for (const p of visiblePeriods) {
+      const list = actions
+        .filter((a) => a.period_id === p.id)
+        .filter((a) => showArchived || a.archived_at === null)
+        .sort((a, b) => a.sort_order - b.sort_order);
+      map.set(p.id, list);
+    }
+    return map;
+  }, [actions, showArchived, visiblePeriods]);
+
+  const dndActions = useMemo(() => {
+    const flat: Action[] = [];
+    for (const p of visiblePeriods) {
+      flat.push(...(visibleActionsByPeriod.get(p.id) ?? []));
+    }
+    return flat;
+  }, [visibleActionsByPeriod, visiblePeriods]);
+
+  const periodTitleById = useMemo(
+    () => new Map(periods.map((p) => [p.id, p.title])),
+    [periods],
+  );
+
+  const isGroupCollapsed = useCallback(
+    (periodId: string) => !expandedPeriodIds.has(periodId),
+    [expandedPeriodIds],
+  );
+
+  const handleHoverCollapsedGroup = useCallback((periodId: string) => {
+    setExpandedPeriodIds((prev) => {
+      if (prev.has(periodId)) return prev;
+      const next = new Set(prev);
+      next.add(periodId);
+      return next;
+    });
+  }, []);
+
+  const handleDndReorder = async (payload: PointerDndReorderPayload) => {
+    if (!isOnline || busy) return;
+
+    const items: Array<{ id: string; sort_order: number; period_id?: string }> =
+      [];
+
+    const buildPeriodItems = (periodId: string, orderedVisibleIds: string[]) => {
+      const archivedTailIds = showArchived
+        ? []
+        : actions
+            .filter(
+              (a) =>
+                a.period_id === periodId &&
+                a.archived_at !== null &&
+                a.id !== payload.activeId,
+            )
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map((a) => a.id);
+
+      const fullIds = [...orderedVisibleIds, ...archivedTailIds];
+      fullIds.forEach((id, idx) => {
+        const movedAcross =
+          payload.fromGroupId !== payload.toGroupId && id === payload.activeId;
+        items.push({
+          id,
+          sort_order: idx + 1,
+          ...(movedAcross ? { period_id: payload.toGroupId } : {}),
+        });
+      });
+    };
+
+    buildPeriodItems(payload.toGroupId, payload.targetGroupItemIds);
+    if (payload.fromGroupId !== payload.toGroupId) {
+      buildPeriodItems(payload.fromGroupId, payload.sourceGroupItemIds);
+    }
+
+    if (items.length === 0) return;
+
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await reorderSchema({ target: 'actions', items });
+      if (!res.ok) {
+        setFeedback({
+          text: res.errorMessage ?? 'تعذر إعادة ترتيب الأعمال.',
+          isError: true,
+        });
+      } else if (payload.fromGroupId !== payload.toGroupId) {
+        const targetName = periodTitleById.get(payload.toGroupId) ?? '';
+        setFeedback({
+          text: `تم نقل العمل إلى «${targetName}» بنجاح.`,
+          isError: false,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const {
+    dragState,
+    getHandleProps,
+    getItemProps,
+    getGroupDropProps,
+    liveAnnouncement,
+  } = usePointerDnd<Action>({
+    items: dndActions,
+    getId: (a) => a.id,
+    getGroupId: (a) => a.period_id,
+    getLabel: (a) => a.title,
+    groupOrder: visiblePeriods.map((p) => p.id),
+    getGroupLabel: (pid) => periodTitleById.get(pid) ?? '',
+    isGroupCollapsed,
+    allowCrossGroup: true,
+    disabled: !isOnline || busy,
+    onReorder: handleDndReorder,
+    onHoverCollapsedGroup: handleHoverCollapsedGroup,
+  });
+
+  const allPeriodsExpanded =
+    visiblePeriods.length > 0 &&
+    visiblePeriods.every((p) => expandedPeriodIds.has(p.id));
+
+  const togglePeriodExpanded = (periodId: string) => {
+    setExpandedPeriodIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(periodId)) {
+        next.delete(periodId);
+      } else {
+        next.add(periodId);
+      }
+      return next;
+    });
+  };
+
+  const expandAllPeriods = () => {
+    setExpandedPeriodIds(new Set(visiblePeriods.map((p) => p.id)));
+  };
+
+  const collapseAllPeriods = () => {
+    setExpandedPeriodIds(new Set());
+  };
 
   const openCreateDialog = () => {
     const defaultPeriodId =
@@ -260,6 +417,11 @@ export function ActionsSection() {
             : {}),
         });
         if (res.ok) {
+          setExpandedPeriodIds((prev) => {
+            const next = new Set(prev);
+            next.add(form.period_id);
+            return next;
+          });
           setEditDialogOpen(false);
           setFeedback({
             text: `تمت إضافة العمل: ${form.title.trim()}`,
@@ -303,40 +465,6 @@ export function ActionsSection() {
     }
   };
 
-  const handleMoveAction = async (action: Action, direction: 'up' | 'down') => {
-    if (!isOnline || busy) return;
-    const siblings = actions
-      .filter((a) => a.period_id === action.period_id)
-      .sort((a, b) => a.sort_order - b.sort_order);
-    const idx = siblings.findIndex((a) => a.id === action.id);
-    if (idx === -1) return;
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= siblings.length) return;
-
-    const reordered = [...siblings];
-    const [moved] = reordered.splice(idx, 1);
-    reordered.splice(targetIdx, 0, moved!);
-
-    const items = reordered.map((a, i) => ({
-      id: a.id,
-      sort_order: i + 1,
-    }));
-
-    setBusy(true);
-    setFeedback(null);
-    try {
-      const res = await reorderSchema({ target: 'actions', items });
-      if (!res.ok) {
-        setFeedback({
-          text: res.errorMessage ?? 'تعذر إعادة ترتيب الأعمال.',
-          isError: true,
-        });
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleToggleArchive = async (action: Action) => {
     if (!isOnline || busy) return;
     setBusy(true);
@@ -369,14 +497,27 @@ export function ActionsSection() {
     : null;
 
   return (
-    <section className="panel" data-testid="settings-actions-section">
-      <div className="panel-header">
-        <div>
-          <h3 className="panel-title">{AR_STRINGS.settings.schemaSectionTitle}</h3>
-          <span className="panel-meta nums">
-            {actions.filter((a) => a.archived_at === null).length} نشط /{' '}
-            {archivedCount} مؤرشف
-          </span>
+    <div>
+      <div className="settings-section-bar">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn"
+            data-testid="actions-expand-all-btn"
+            disabled={visiblePeriods.length === 0 || allPeriodsExpanded}
+            onClick={expandAllPeriods}
+          >
+            توسيع الفترات
+          </button>
+          <button
+            type="button"
+            className="btn"
+            data-testid="actions-collapse-all-btn"
+            disabled={expandedPeriodIds.size === 0}
+            onClick={collapseAllPeriods}
+          >
+            طيّ الفترات
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -410,162 +551,234 @@ export function ActionsSection() {
         </div>
       )}
 
-      <div>
-        {sortedPeriods.map((period) => {
-          const allInPeriod = actions
-            .filter((a) => a.period_id === period.id)
-            .sort((a, b) => a.sort_order - b.sort_order);
-          const visibleInPeriod = showArchived
-            ? allInPeriod
-            : allInPeriod.filter((a) => a.archived_at === null);
+      <div className="sr-only" aria-live="assertive" role="status">
+        {liveAnnouncement}
+      </div>
 
-          if (visibleInPeriod.length === 0) return null;
+      <div>
+        {visiblePeriods.map((period) => {
+          const visibleInPeriod = visibleActionsByPeriod.get(period.id) ?? [];
+          if (
+            visibleInPeriod.length === 0 &&
+            period.archived_at !== null
+          ) {
+            return null;
+          }
+
+          const isPeriodOpen = expandedPeriodIds.has(period.id);
+          const groupDropProps = getGroupDropProps(period.id);
+          const isOverGroup = groupDropProps['data-dnd-group-over'] === 'true';
 
           return (
-            <div key={period.id} className="schema-group">
-              <div className="schema-group-head">
-                <strong>{period.title}</strong>
-                <span className="panel-meta nums">
-                  {visibleInPeriod.length} أعمال
-                </span>
-              </div>
+            <div
+              key={period.id}
+              className="nested-period-group"
+              {...groupDropProps}
+            >
+              <h4 className="nested-period-heading">
+                <button
+                  type="button"
+                  id={`actions-period-trigger-${period.id}`}
+                  className={`nested-period-trigger ${isOverGroup ? 'is-drop-target' : ''}`}
+                  data-testid={`actions-period-toggle-${period.id}`}
+                  aria-expanded={isPeriodOpen}
+                  aria-controls={`actions-period-panel-${period.id}`}
+                  onClick={() => togglePeriodExpanded(period.id)}
+                >
+                  <span className="accordion-title-group">
+                    <IconChevronDown
+                      size="sm"
+                      className={`accordion-chevron ${isPeriodOpen ? '' : 'is-closed'}`}
+                    />
+                    <span>{period.title}</span>
+                  </span>
+                  <span className="count-chip nums">
+                    {visibleInPeriod.length}
+                  </span>
+                </button>
+              </h4>
 
-              <div>
-                {visibleInPeriod.map((action) => {
-                  const idxInAll = allInPeriod.findIndex(
-                    (a) => a.id === action.id,
-                  );
-                  const activeTarget = resolveActiveTargetVersion(
-                    targetVersions,
-                    action.id,
-                    effectiveToday,
-                  );
-                  const isArchived = action.archived_at !== null;
-
-                  return (
-                    <div
-                      key={action.id}
-                      className={`schema-item-row ${isArchived ? 'is-archived' : ''}`}
-                      data-testid={`settings-action-${action.id}`}
-                    >
-                      <div className="schema-item-main">
-                        <div className="action-title-line">
-                          <span className="action-title">{action.title}</span>
-                          {activeTarget && (
-                            <span className="target-tag">
-                              {activeTarget.target_label}
-                            </span>
-                          )}
-                          {isArchived && (
-                            <span className="target-tag">مؤرشف</span>
-                          )}
-                        </div>
-                        <div className="schema-item-meta">
-                          {action.is_qadaa_eligible && <span>يُقضى</span>}
-                          {action.supports_percentage && <span>نسبة مئوية</span>}
-                          {action.is_mosque_action && <span>مسجد</span>}
-                          {action.analytics_role !== 'standard' && (
-                            <span>{ROLE_LABELS[action.analytics_role]}</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="schema-item-actions">
-                        <button
-                          type="button"
-                          className="btn btn-icon"
-                          data-testid={`action-move-up-${action.id}`}
-                          aria-label={`تحريك ${action.title} لأعلى`}
-                          disabled={!isOnline || busy || idxInAll <= 0}
-                          onClick={() => {
-                            void handleMoveAction(action, 'up');
-                          }}
-                        >
-                          <IconArrowUp size="sm" />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-icon"
-                          data-testid={`action-move-down-${action.id}`}
-                          aria-label={`تحريك ${action.title} لأسفل`}
-                          disabled={
-                            !isOnline ||
-                            busy ||
-                            idxInAll === allInPeriod.length - 1
-                          }
-                          onClick={() => {
-                            void handleMoveAction(action, 'down');
-                          }}
-                        >
-                          <IconArrowDown size="sm" />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          data-testid={`action-rename-${action.id}`}
-                          disabled={!isOnline || busy}
-                          onClick={() => {
-                            setRenameTarget(action);
-                            setRenameTitle(action.title);
-                          }}
-                        >
-                          <span>{AR_STRINGS.settings.simpleRenameAction}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          data-testid={`action-evolve-${action.id}`}
-                          disabled={!isOnline || busy}
-                          onClick={() => setEvolveAction(action)}
-                        >
-                          <IconTarget size="sm" />
-                          <span>{AR_STRINGS.settings.evolveTargetAction}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          data-testid={`action-edit-${action.id}`}
-                          disabled={!isOnline || busy}
-                          onClick={() => openEditDialog(action)}
-                        >
-                          <IconEdit size="sm" />
-                          <span>خصائص</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          disabled={!isOnline || busy}
-                          onClick={() => {
-                            void handleToggleArchive(action);
-                          }}
-                        >
-                          {isArchived ? (
-                            <>
-                              <IconRefresh size="sm" />
-                              <span>{AR_STRINGS.settings.restoreAction}</span>
-                            </>
-                          ) : (
-                            <>
-                              <IconArchive size="sm" />
-                              <span>{AR_STRINGS.settings.archiveAction}</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
+              {isPeriodOpen && (
+                <div
+                  id={`actions-period-panel-${period.id}`}
+                  role="region"
+                  aria-labelledby={`actions-period-trigger-${period.id}`}
+                  className={`nested-period-body ${isOverGroup ? 'is-drop-target' : ''}`}
+                >
+                  {visibleInPeriod.length === 0 ? (
+                    <div className="empty-state">
+                      <span>لا توجد أعمال في هذه الفترة؛ اسحب عملاً هنا لإضافته.</span>
                     </div>
-                  );
-                })}
-              </div>
+                  ) : (
+                    visibleInPeriod.map((action) => {
+                      const activeTarget = resolveActiveTargetVersion(
+                        targetVersions,
+                        action.id,
+                        effectiveToday,
+                      );
+                      const isArchived = action.archived_at !== null;
+                      const itemProps = getItemProps(action.id);
+                      const isDragging =
+                        itemProps['data-dnd-dragging'] === 'true';
+                      const dropPos = itemProps['data-dnd-drop-position'];
+
+                      return (
+                        <div
+                          key={action.id}
+                          {...itemProps}
+                          className={[
+                            'schema-item-row',
+                            isArchived ? 'is-archived' : '',
+                            isDragging ? 'is-dragging' : '',
+                            dropPos === 'before' ? 'is-drop-before' : '',
+                            dropPos === 'after' ? 'is-drop-after' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          data-testid={`settings-action-${action.id}`}
+                        >
+                          <div className="schema-row-lead">
+                            <Tooltip
+                              content={
+                                isOnline
+                                  ? 'اسحب لإعادة الترتيب أو النقل لفترة أخرى (أو Alt مع الأسهم)'
+                                  : 'إعادة الترتيب متاحة عند الاتصال بالإنترنت فقط'
+                              }
+                            >
+                              <button
+                                type="button"
+                                className="drag-handle"
+                                data-testid={`action-drag-handle-${action.id}`}
+                                aria-label={`إعادة ترتيب ${action.title}`}
+                                {...getHandleProps(action.id)}
+                              >
+                                <IconGripVertical size="sm" />
+                              </button>
+                            </Tooltip>
+
+                            <div className="schema-item-main">
+                              <div className="action-title-line">
+                                <span className="action-title">
+                                  {action.title}
+                                </span>
+                                {activeTarget && (
+                                  <span className="target-tag">
+                                    {activeTarget.target_label}
+                                  </span>
+                                )}
+                                {isArchived && (
+                                  <span className="target-tag">مؤرشف</span>
+                                )}
+                              </div>
+                              <div className="schema-item-meta">
+                                {action.is_qadaa_eligible && <span>يُقضى</span>}
+                                {action.supports_percentage && (
+                                  <span>نسبة مئوية</span>
+                                )}
+                                {action.is_mosque_action && <span>مسجد</span>}
+                                {action.analytics_role !== 'standard' && (
+                                  <span>
+                                    {ROLE_LABELS[action.analytics_role]}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="schema-item-actions">
+                            <div className="schema-action-cluster">
+                              <button
+                                type="button"
+                                className="btn"
+                                data-testid={`action-rename-${action.id}`}
+                                disabled={!isOnline || busy}
+                                onClick={() => {
+                                  setRenameTarget(action);
+                                  setRenameTitle(action.title);
+                                }}
+                              >
+                                <span>
+                                  {AR_STRINGS.settings.simpleRenameAction}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                data-testid={`action-evolve-${action.id}`}
+                                disabled={!isOnline || busy}
+                                onClick={() => setEvolveAction(action)}
+                              >
+                                <IconTarget size="sm" />
+                                <span>
+                                  {AR_STRINGS.settings.evolveTargetAction}
+                                </span>
+                              </button>
+                            </div>
+
+                            <div className="schema-action-cluster">
+                              <button
+                                type="button"
+                                className="btn"
+                                data-testid={`action-edit-${action.id}`}
+                                disabled={!isOnline || busy}
+                                onClick={() => openEditDialog(action)}
+                              >
+                                <IconEdit size="sm" />
+                                <span>خصائص</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                disabled={!isOnline || busy}
+                                onClick={() => {
+                                  void handleToggleArchive(action);
+                                }}
+                              >
+                                {isArchived ? (
+                                  <>
+                                    <IconRefresh size="sm" />
+                                    <span>
+                                      {AR_STRINGS.settings.restoreAction}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <IconArchive size="sm" />
+                                    <span>
+                                      {AR_STRINGS.settings.archiveAction}
+                                    </span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      <PointerDragGhost dragState={dragState} />
 
       {/* Create / Full Edit Action Dialog */}
       <dialog
         ref={editDialogRef}
         className="app-dialog dialog-wide"
         aria-labelledby="action-dialog-title"
+        onCancel={(e) => {
+          e.preventDefault();
+          setEditDialogOpen(false);
+        }}
+        onClick={(e) => {
+          if (e.target === editDialogRef.current) {
+            setEditDialogOpen(false);
+          }
+        }}
         onClose={() => setEditDialogOpen(false)}
       >
         {editDialogOpen && form && (
@@ -826,6 +1039,15 @@ export function ActionsSection() {
         ref={renameDialogRef}
         className="app-dialog"
         aria-labelledby="simple-rename-title"
+        onCancel={(e) => {
+          e.preventDefault();
+          setRenameTarget(null);
+        }}
+        onClick={(e) => {
+          if (e.target === renameDialogRef.current) {
+            setRenameTarget(null);
+          }
+        }}
         onClose={() => setRenameTarget(null)}
       >
         {renameTarget && (
@@ -890,6 +1112,6 @@ export function ActionsSection() {
         onClose={() => setEvolveAction(null)}
         onChanged={(msg) => setFeedback({ text: msg, isError: false })}
       />
-    </section>
+    </div>
   );
 }

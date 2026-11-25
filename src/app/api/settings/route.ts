@@ -16,7 +16,7 @@ export async function PATCH(req: Request): Promise<Response> {
       requireCsrf: true,
       requireJsonContentType: true,
     },
-    async ({ req: request, requestId, supabase }) => {
+    async ({ req: request, requestId, config, supabase }) => {
       const body = await parseJsonBody(request, SettingsPatchSchema, requestId);
       if (!body.ok) {
         return body.response;
@@ -24,6 +24,7 @@ export async function PATCH(req: Request): Promise<Response> {
 
       const result = await updateSettings({
         supabase,
+        config,
         patch: body.data,
         requestId,
       });

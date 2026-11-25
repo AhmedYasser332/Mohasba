@@ -44,6 +44,10 @@ function makeSettings(): AppSettings {
     backup_reminder_enabled: true,
     onboarding_completed: true,
     last_pruned_date: null,
+    show_catchup_banner: true,
+    default_home_view: 'now',
+    default_week_mode: 'standard',
+    keyboard_shortcuts: {},
   };
 }
 

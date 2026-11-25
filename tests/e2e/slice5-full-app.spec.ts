@@ -188,6 +188,14 @@ test.describe('Slice 5: Full 5-View E2E (Qadaa, Analytics, Settings, Target Evol
     await navDesktop('الإعدادات');
     await expect(page.getByTestId('settings-periods-section')).toBeVisible();
 
+    // Expand Actions accordion & Quran group (accordions start collapsed by default)
+    await page.getByTestId('accordion-toggle-actions').click();
+    await page
+      .getByTestId(
+        `actions-period-toggle-${STARTER_PACK_PERIOD_IDS.GROUP_QURAN}`,
+      )
+      .click();
+
     // 3a. Live open-Qadaa warning when toggling is_qadaa_eligible true -> false on QURAN_WIRD
     await page
       .getByTestId(`action-edit-${STARTER_PACK_ACTION_IDS.QURAN_WIRD}`)
@@ -211,23 +219,34 @@ test.describe('Slice 5: Full 5-View E2E (Qadaa, Analytics, Settings, Target Evol
       timeout: 10_000,
     });
 
-    // 3c. Reorder period (POST /api/schema/reorder)
+    // 3c. Reorder period via 6-dot handle Alt+Arrow (POST /api/schema/reorder)
+    await page.getByTestId('accordion-toggle-periods').click();
     const reorderPromise = page.waitForResponse(
       (res) =>
         res.url().includes('/api/schema/reorder') &&
         res.request().method() === 'POST',
     );
-    await page
-      .getByTestId(`period-move-down-${STARTER_PACK_PERIOD_IDS.FAJR}`)
-      .click();
+    const fajrHandle = page.getByTestId(
+      `period-drag-handle-${STARTER_PACK_PERIOD_IDS.FAJR}`,
+    );
+    await fajrHandle.focus();
+    await page.keyboard.press('Alt+ArrowDown');
     const reorderRes = await reorderPromise;
     expect(reorderRes.status()).toBe(200);
+    await expect(fajrHandle).toBeEnabled({ timeout: 5_000 });
     // Restore original order
-    await page
-      .getByTestId(`period-move-up-${STARTER_PACK_PERIOD_IDS.FAJR}`)
-      .click();
+    const restoreReorderPromise = page.waitForResponse(
+      (res) =>
+        res.url().includes('/api/schema/reorder') &&
+        res.request().method() === 'POST',
+    );
+    await fajrHandle.focus();
+    await page.keyboard.press('Alt+ArrowUp');
+    const restoreReorderRes = await restoreReorderPromise;
+    expect(restoreReorderRes.status()).toBe(200);
 
     // 3d. ntfy settings update + test-ntfy button feedback
+    await page.getByTestId('accordion-toggle-ntfy').click();
     const ntfyToggle = page.getByTestId('ntfy-master-toggle');
     await ntfyToggle.check();
     await page.getByTestId('ntfy-save-btn').click();
@@ -329,6 +348,7 @@ test.describe('Slice 5: Full 5-View E2E (Qadaa, Analytics, Settings, Target Evol
 
     // 6. Settings: Online Export, Chunked JSON Import round-trip (setting active_from to D-2 for 48h catchup test!), Audit Logs & Screenshots
     await navDesktop('الإعدادات');
+    await page.getByTestId('accordion-toggle-backup').click();
 
     const [exportDownload] = await Promise.all([
       page.waitForEvent('download'),
@@ -441,7 +461,9 @@ test.describe('Slice 5: Full 5-View E2E (Qadaa, Analytics, Settings, Target Evol
     }
 
     await expect(page.getByTestId('settings-offline-banner')).toBeVisible();
+    await page.getByTestId('accordion-toggle-periods').click();
     await expect(page.getByTestId('add-period-btn')).toBeDisabled();
+    await page.getByTestId('accordion-toggle-backup').click();
     await expect(page.getByTestId('export-full-btn')).toBeDisabled();
     await expect(page.getByTestId('export-emergency-btn')).toBeEnabled();
 

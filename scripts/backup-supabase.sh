@@ -51,7 +51,7 @@ FINAL_FILE="${BACKUP_DIR}/mohasba-${DATE_STAMP}.sql.gz"
 TMP_FILE=""
 
 mkdir -p "$BACKUP_DIR"
-TMP_FILE="$(mktemp "${BACKUP_DIR}/.mohasba-${DATE_STAMP}.XXXXXX.sql.gz")"
+TMP_FILE="$(mktemp "${BACKUP_DIR}/.mohasba-${DATE_STAMP}.XXXXXX")"
 
 cleanup() {
   if [[ -n "$TMP_FILE" && -f "$TMP_FILE" ]]; then
@@ -60,8 +60,45 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[$(date -u +%FT%TZ)] Starting verified pg_dump backup..."
-pg_dump --no-owner --no-privileges --format=plain "$SUPABASE_DB_BACKUP_URL" \
+echo "[$(date -u +%FT%TZ)] Starting verified pg_dump backup (schema=public)..."
+# Make plain-text dump idempotent & error-free on Supabase Cloud `psql -v ON_ERROR_STOP=1`:
+#   1. Rewrite `CREATE SCHEMA public;` -> `CREATE SCHEMA IF NOT EXISTS public;` (public already exists on Supabase).
+#   2. Strip Supabase-managed `public.rls_auto_enable()` function & its ACLs (bound to platform `ensure_rls` event trigger).
+#   3. Strip `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin ...` (`postgres` role lacks `supabase_admin` membership).
+#   4. Never modify anything inside `COPY ... FROM stdin;` ... `\.` data blocks.
+pg_dump --schema=public --no-owner --format=plain "$SUPABASE_DB_BACKUP_URL" \
+  | awk '
+      /^COPY .* FROM stdin;$/ { in_copy = 1; print; next }
+      in_copy && /^\\\.$/ { in_copy = 0; print; next }
+      in_copy { print; next }
+
+      skip_rls_fn {
+        if ($0 ~ /^(\$\$|\$[A-Za-z0-9_]*\$);$/) {
+          skip_rls_fn = 0
+        }
+        next
+      }
+
+      /^CREATE SCHEMA public;$/ {
+        print "CREATE SCHEMA IF NOT EXISTS public;"
+        next
+      }
+
+      /^CREATE FUNCTION public\.rls_auto_enable\(\)/ {
+        skip_rls_fn = 1
+        next
+      }
+
+      /^(REVOKE|GRANT) .* ON FUNCTION public\.rls_auto_enable\(\)/ {
+        next
+      }
+
+      /^ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin / {
+        next
+      }
+
+      { print }
+    ' \
   | gzip -9 > "$TMP_FILE"
 
 # Validate archive integrity and non-trivial size BEFORE promoting or rotating

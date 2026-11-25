@@ -6,12 +6,15 @@ import {
   type Action,
   type AppSettings,
   type DailyLog,
+  type NtfySource,
   type Period,
   type TargetVersion,
 } from '@/domain/types';
 import type { RuntimeConfig } from '../config';
 import {
+  buildNtfyStatusMeta,
   fetchAppSettings,
+  fetchAppSettingsWithNtfySecrets,
   normalizeActionRow,
   normalizeAppSettingsRow,
   normalizePeriodRow,
@@ -24,6 +27,9 @@ import { writeAuditLog } from '../observability/logger';
 export interface BootstrapResponse {
   server_now: string;
   ntfy_configured: boolean;
+  ntfy_source: NtfySource;
+  ntfy_topic_hint: string | null;
+  ntfy_has_token: boolean;
   settings: AppSettings;
   periods: Period[];
   actions: Action[];
@@ -53,8 +59,8 @@ export async function getBootstrap(params: {
 
   const serverNow = new Date().toISOString();
 
-  const [settings, periodsRes, actionsRes, targetsRes] = await Promise.all([
-    fetchAppSettings(supabase),
+  const [settingsResult, periodsRes, actionsRes, targetsRes] = await Promise.all([
+    fetchAppSettingsWithNtfySecrets(supabase),
     supabase
       .from('periods')
       .select('*')
@@ -71,6 +77,7 @@ export async function getBootstrap(params: {
       .order('effective_from', { ascending: true })
       .order('id', { ascending: true }),
   ]);
+  const { settings, ntfyTopicUrlDb, ntfyAccessTokenDb } = settingsResult;
 
   if (periodsRes.error) {
     throw new Error(`Failed loading periods: ${periodsRes.error.message}`);
@@ -132,9 +139,15 @@ export async function getBootstrap(params: {
     });
   }
 
+  const ntfyMeta = buildNtfyStatusMeta({
+    ntfyTopicUrlDb,
+    ntfyAccessTokenDb,
+    envTopicUrl: config.ntfyTopicUrl,
+  });
+
   return {
     server_now: serverNow,
-    ntfy_configured: Boolean(config.ntfyTopicUrl),
+    ...ntfyMeta,
     settings,
     periods,
     actions,

@@ -6,6 +6,7 @@ import {
   type AvailabilityOverride,
   type CellStatus,
   type DailyLog,
+  type NtfySource,
   type Period,
   type SyncMutation,
   type SyncResultItem,
@@ -93,6 +94,9 @@ export interface DrainBeforeCrudResult {
 export interface BootstrapPayload {
   server_now: string;
   ntfy_configured: boolean;
+  ntfy_source?: NtfySource;
+  ntfy_topic_hint?: string | null;
+  ntfy_has_token?: boolean;
   settings: AppSettings;
   periods: Period[];
   actions: Action[];

@@ -42,6 +42,77 @@ export const PrayerOffsetsSchema = z.object({
 });
 export type PrayerOffsets = z.infer<typeof PrayerOffsetsSchema>;
 
+export const DefaultHomeViewSchema = z.enum([
+  'now',
+  'week',
+  'qadaa',
+  'analytics',
+]);
+export type DefaultHomeView = z.infer<typeof DefaultHomeViewSchema>;
+
+export const DefaultWeekModeSchema = z.enum(['standard', 'one_glance']);
+export type DefaultWeekMode = z.infer<typeof DefaultWeekModeSchema>;
+
+export const NtfySourceSchema = z.enum(['db', 'env', 'none']);
+export type NtfySource = z.infer<typeof NtfySourceSchema>;
+
+export const NtfyStatusMetaSchema = z.object({
+  ntfy_configured: z.boolean(),
+  ntfy_source: NtfySourceSchema,
+  ntfy_topic_hint: z.string().nullable(),
+  ntfy_has_token: z.boolean(),
+});
+export type NtfyStatusMeta = z.infer<typeof NtfyStatusMetaSchema>;
+
+export const KeyboardShortcutBindingSchema = z
+  .object({
+    code: z
+      .string()
+      .regex(
+        /^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-2])|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Space|Tab|Enter|Escape|Backspace|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown)$/,
+      ),
+    ctrl: z.boolean().optional(),
+    alt: z.boolean().optional(),
+    shift: z.boolean().optional(),
+  })
+  .strict();
+export type KeyboardShortcutBinding = z.infer<
+  typeof KeyboardShortcutBindingSchema
+>;
+
+export const KeyboardShortcutActionIdSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{1,39}$/)
+  .refine((k) => k !== 'constructor' && k !== 'prototype', {
+    message: 'Reserved property name is not allowed as shortcut action ID',
+  });
+export type KeyboardShortcutActionId = z.infer<
+  typeof KeyboardShortcutActionIdSchema
+>;
+
+export const KeyboardShortcutsMapSchema = z
+  .record(KeyboardShortcutActionIdSchema, KeyboardShortcutBindingSchema)
+  .refine((obj) => Object.keys(obj).length <= 32, {
+    message: 'At most 32 custom keyboard shortcuts are allowed',
+  })
+  .superRefine((obj, ctx) => {
+    const seen = new Map<string, string>();
+    for (const [actionId, binding] of Object.entries(obj)) {
+      const chord = `${Boolean(binding.ctrl)}:${Boolean(binding.alt)}:${Boolean(binding.shift)}:${binding.code}`;
+      const existingActionId = seen.get(chord);
+      if (existingActionId !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [actionId],
+          message: `Duplicate keyboard shortcut chord "${chord}" conflicts with "${existingActionId}"`,
+        });
+      } else {
+        seen.set(chord, actionId);
+      }
+    }
+  });
+export type KeyboardShortcutsMap = z.infer<typeof KeyboardShortcutsMapSchema>;
+
 export const AppSettingsSchema = z.object({
   id: z.literal(1),
   rollover_mode: RolloverModeSchema,
@@ -61,6 +132,10 @@ export const AppSettingsSchema = z.object({
   backup_reminder_enabled: z.boolean(),
   onboarding_completed: z.boolean(),
   last_pruned_date: IsoDateSchema.nullable(),
+  show_catchup_banner: z.boolean().default(true),
+  default_home_view: DefaultHomeViewSchema.default('now'),
+  default_week_mode: DefaultWeekModeSchema.default('standard'),
+  keyboard_shortcuts: KeyboardShortcutsMapSchema.default({}),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });

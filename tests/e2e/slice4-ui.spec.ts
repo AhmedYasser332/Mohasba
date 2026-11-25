@@ -226,7 +226,7 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.waitForTimeout(220);
 
-    // Open Cell Editor <dialog> on Quran Wird (supports_percentage) and save 50% + note
+    // Open Cell Editor <dialog> via right-click on Quran Wird (supports_percentage) and save 50% + note
     const quranRow = page
       .locator('.overview-split tr.data-row')
       .filter({ hasText: 'ورد قراءة القرآن' })
@@ -234,7 +234,7 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     const targetQuranCell = quranRow
       .locator('td.cell-status button.m-cell:not(.st-inactive)')
       .first();
-    await targetQuranCell.click();
+    await targetQuranCell.click({ button: 'right' });
 
     const dialog = page.locator('dialog.app-dialog[open]');
     await expect(dialog).toBeVisible();

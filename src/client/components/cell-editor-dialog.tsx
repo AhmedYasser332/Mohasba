@@ -185,6 +185,7 @@ function CellEditorContent({
           <button
             type="button"
             className={`btn ${choice === 'DONE' ? 'btn-live' : ''}`}
+            aria-pressed={choice === 'DONE'}
             onClick={() => handleSelectChoice('DONE')}
           >
             <IconCheck size="sm" />
@@ -194,6 +195,7 @@ function CellEditorContent({
           <button
             type="button"
             className={`btn ${choice === 'MISSED' ? 'btn-danger' : ''}`}
+            aria-pressed={choice === 'MISSED'}
             onClick={() => handleSelectChoice('MISSED')}
           >
             <IconCross size="sm" />
@@ -204,6 +206,7 @@ function CellEditorContent({
             <button
               type="button"
               className={`btn ${choice === 'QADAA_DONE' ? 'btn-live' : ''}`}
+              aria-pressed={choice === 'QADAA_DONE'}
               onClick={() => handleSelectChoice('QADAA_DONE')}
             >
               <IconQadaa size="sm" />
@@ -214,6 +217,7 @@ function CellEditorContent({
           <button
             type="button"
             className={`btn ${choice === 'DISABLED' ? 'btn-primary' : ''}`}
+            aria-pressed={choice === 'DISABLED'}
             onClick={() => handleSelectChoice('DISABLED')}
           >
             <IconDash size="sm" />
@@ -223,6 +227,7 @@ function CellEditorContent({
           <button
             type="button"
             className={`btn ${choice === 'EMPTY' ? 'btn-primary' : ''}`}
+            aria-pressed={choice === 'EMPTY'}
             onClick={() => handleSelectChoice('EMPTY')}
           >
             <span>
@@ -238,7 +243,13 @@ function CellEditorContent({
             <div className="flex items-center justify-between gap-2">
               <span>تحديد نسبة مئوية (خطوات 10%)</span>
               <strong className="nums">
-                {choice === 'PERCENT' ? `${percentVal}%` : 'غير محدد'}
+                {choice === 'PERCENT'
+                  ? `${percentVal}%`
+                  : choice === 'DONE'
+                    ? '100%'
+                    : choice === 'MISSED'
+                      ? '0%'
+                      : 'غير محدد'}
               </strong>
             </div>
 
@@ -248,7 +259,15 @@ function CellEditorContent({
               max={100}
               step={10}
               aria-label="نسبة الإنجاز"
-              value={choice === 'PERCENT' ? percentVal : 50}
+              value={
+                choice === 'DONE'
+                  ? 100
+                  : choice === 'MISSED'
+                    ? 0
+                    : choice === 'PERCENT'
+                      ? percentVal
+                      : 50
+              }
               onChange={(e) => {
                 const next = Number(e.target.value);
                 if (next >= 100) {
@@ -272,6 +291,7 @@ function CellEditorContent({
                     key={step}
                     type="button"
                     className={`pct-chip nums ${isSelected ? 'selected-pct' : ''}`}
+                    aria-pressed={isSelected}
                     onClick={() => {
                       setPercentVal(step);
                       handleSelectChoice('PERCENT');
@@ -284,6 +304,7 @@ function CellEditorContent({
               <button
                 type="button"
                 className={`pct-chip nums ${choice === 'DONE' ? 'selected-done' : ''}`}
+                aria-pressed={choice === 'DONE'}
                 onClick={() => handleSelectChoice('DONE')}
               >
                 100%
