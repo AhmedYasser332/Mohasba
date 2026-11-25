@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AR_STRINGS,
   getIsoDayOfWeek,
@@ -42,6 +42,7 @@ interface CellEditorContentProps {
   target: CellEditorTarget;
   existingLog: LocalDailyLog | undefined;
   historicalTarget: TargetVersion | null;
+  requestCloseRef: React.MutableRefObject<() => void>;
   onClose: () => void;
   onSaved: (message: string) => void;
 }
@@ -50,6 +51,7 @@ function CellEditorContent({
   target,
   existingLog,
   historicalTarget,
+  requestCloseRef,
   onClose,
   onSaved,
 }: CellEditorContentProps) {
@@ -71,27 +73,53 @@ function CellEditorContent({
     return 'EMPTY';
   }, [existingLog, target]);
 
-  const [choice, setChoice] = useState<EditorChoice>(initialChoice);
-  const [percentVal, setPercentVal] = useState<number>(
-    existingLog?.status === 'PERCENT' && existingLog.percent_value
-      ? existingLog.percent_value
-      : 50,
-  );
-  const [note, setNote] = useState<string>(existingLog?.note ?? '');
+  const [initialState] = useState(() => ({
+    choice: initialChoice,
+    percentVal:
+      existingLog?.status === 'PERCENT' && existingLog.percent_value
+        ? existingLog.percent_value
+        : 50,
+    note: existingLog?.note ?? '',
+  }));
+
+  const [choice, setChoice] = useState<EditorChoice>(initialState.choice);
+  const [percentVal, setPercentVal] = useState<number>(initialState.percentVal);
+  const [note, setNote] = useState<string>(initialState.note);
   const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const hasExistingLoggedStatus = existingLog?.status != null;
 
+  const isDirty =
+    choice !== initialState.choice ||
+    (choice === 'PERCENT' && percentVal !== initialState.percentVal) ||
+    note.trim() !== initialState.note.trim();
+
   const handleSelectChoice = (next: EditorChoice) => {
     setChoice(next);
+    setConfirmDiscardOpen(false);
     if (next !== 'DISABLED') {
       setConfirmDisableOpen(false);
     }
   };
 
+  const handleRequestClose = useCallback(() => {
+    if (saving) return;
+    if (isDirty) {
+      setConfirmDiscardOpen(true);
+      return;
+    }
+    onClose();
+  }, [isDirty, onClose, saving]);
+
+  useEffect(() => {
+    requestCloseRef.current = handleRequestClose;
+  }, [handleRequestClose, requestCloseRef]);
+
   const commitSave = async () => {
     if (saving) return;
+    setConfirmDiscardOpen(false);
 
     if (
       choice === 'DISABLED' &&
@@ -167,7 +195,7 @@ function CellEditorContent({
           type="button"
           className="btn btn-icon"
           aria-label="إغلاق"
-          onClick={onClose}
+          onClick={handleRequestClose}
         >
           <IconCross size="sm" />
         </button>
@@ -347,17 +375,61 @@ function CellEditorContent({
             className="field-textarea"
             maxLength={2000}
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setConfirmDiscardOpen(false);
+            }}
             placeholder={AR_STRINGS.street.notePlaceholder}
           />
         </label>
+
+        {confirmDiscardOpen && (
+          <div
+            className="confirm-banner"
+            data-testid="cell-editor-unsaved-banner"
+            role="alert"
+          >
+            <span>لديك تعديلات غير محفوظة</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn btn-live"
+                data-testid="cell-editor-save-and-close"
+                disabled={saving}
+                onClick={() => {
+                  void commitSave();
+                }}
+              >
+                حفظ وإغلاق
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                data-testid="cell-editor-discard"
+                disabled={saving}
+                onClick={onClose}
+              >
+                تجاهل التغييرات
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-testid="cell-editor-continue"
+                disabled={saving}
+                onClick={() => setConfirmDiscardOpen(false)}
+              >
+                متابعة التعديل
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="dialog-foot">
         <button
           type="button"
           className="btn"
-          onClick={onClose}
+          onClick={handleRequestClose}
           disabled={saving}
         >
           {AR_STRINGS.week.cancel}
@@ -385,6 +457,8 @@ export function CellEditorDialog({
 }: CellEditorDialogProps) {
   const { logsByKey, targetVersions } = useMohasba();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const backdropPointerDownRef = useRef(false);
+  const requestCloseRef = useRef<() => void>(onClose);
 
   const existingLog: LocalDailyLog | undefined = useMemo(() => {
     if (!target) return undefined;
@@ -412,13 +486,18 @@ export function CellEditorDialog({
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (target) {
+      backdropPointerDownRef.current = false;
       if (!dialog.open) {
         dialog.showModal();
       }
-    } else if (dialog.open) {
-      dialog.close();
+    } else {
+      backdropPointerDownRef.current = false;
+      requestCloseRef.current = onClose;
+      if (dialog.open) {
+        dialog.close();
+      }
     }
-  }, [target]);
+  }, [onClose, target]);
 
   return (
     <dialog
@@ -427,11 +506,16 @@ export function CellEditorDialog({
       aria-labelledby="cell-editor-title"
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        requestCloseRef.current();
+      }}
+      onPointerDown={(e) => {
+        backdropPointerDownRef.current = e.target === dialogRef.current;
       }}
       onClick={(e) => {
-        if (e.target === dialogRef.current) {
-          onClose();
+        const startedOnBackdrop = backdropPointerDownRef.current;
+        backdropPointerDownRef.current = false;
+        if (startedOnBackdrop && e.target === dialogRef.current) {
+          requestCloseRef.current();
         }
       }}
     >
@@ -441,6 +525,7 @@ export function CellEditorDialog({
           target={target}
           existingLog={existingLog}
           historicalTarget={historicalTarget}
+          requestCloseRef={requestCloseRef}
           onClose={onClose}
           onSaved={onSaved}
         />

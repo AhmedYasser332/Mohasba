@@ -404,14 +404,14 @@ export function MohasbaAppShell() {
       updateUrlState(
         {
           view,
-          period: view === 'now' ? effectiveUrlState.period : null,
-          date: view === 'now' ? effectiveUrlState.date : null,
+          period: null,
+          date: null,
           tab: view === 'qadaa' ? tab : null,
         },
         'push',
       );
     },
-    [effectiveUrlState.date, effectiveUrlState.period, updateUrlState],
+    [updateUrlState],
   );
 
   const handleSetOneGlance = useCallback((enabled: boolean) => {
@@ -488,7 +488,7 @@ export function MohasbaAppShell() {
             {
               ...effectiveUrlState,
               view: 'now',
-              date: todayIslamicDate,
+              date: null,
               period: null,
             },
             'replace',
@@ -1207,7 +1207,11 @@ export function MohasbaAppShell() {
               selectedDate={effectiveSelectedDate}
               onSelectDate={(d) =>
                 updateUrlState(
-                  { ...effectiveUrlState, view: 'now', date: d },
+                  {
+                    ...effectiveUrlState,
+                    view: 'now',
+                    date: d === todayIslamicDate ? null : d,
+                  },
                   'replace',
                 )
               }
@@ -1215,6 +1219,17 @@ export function MohasbaAppShell() {
               onSelectPeriodId={(periodId) =>
                 updateUrlState(
                   { ...effectiveUrlState, view: 'now', period: periodId },
+                  'replace',
+                )
+              }
+              onResetToToday={() =>
+                updateUrlState(
+                  {
+                    ...effectiveUrlState,
+                    view: 'now',
+                    date: null,
+                    period: null,
+                  },
                   'replace',
                 )
               }

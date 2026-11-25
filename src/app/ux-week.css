@@ -573,6 +573,76 @@
   padding: 0;
 }
 
+/* Cursor-Anchored Multi-Cell Right-Click Context Menu */
+.week-context-menu {
+  position: fixed;
+  z-index: 85;
+  min-width: 212px;
+  max-width: min(260px, calc(100vw - 16px));
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-overlay);
+}
+
+.week-context-menu-item {
+  width: 100%;
+  min-height: 32px;
+  padding-block: 5px;
+  padding-inline: 10px;
+  border: none;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--t-fast), color var(--t-fast);
+}
+
+.week-context-menu-item:hover,
+.week-context-menu-item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.week-context-menu-item.is-done {
+  color: var(--done-ink);
+}
+
+.week-context-menu-item.is-missed {
+  color: var(--missed-ink);
+}
+
+.week-context-menu-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.week-context-menu-kbd {
+  font-family: inherit;
+  font-size: 0.7rem;
+  color: var(--ink-secondary);
+}
+
+.week-context-menu-divider {
+  height: 1px;
+  margin-block: 4px;
+  margin-inline: 4px;
+  background: var(--border-hairline);
+}
+
 /* Bug D Polish: One-Glance Mode Row Height, Cell Height & Left-Table Column Proportions */
 .app-shell.overview-active .main-col {
   padding-block-end: 4px;

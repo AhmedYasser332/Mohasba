@@ -1,6 +1,13 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   AR_STRINGS,
   addDaysIso,
@@ -45,6 +52,7 @@ import {
 } from '../cell-display';
 import type { CellEditorTarget } from '../cell-editor-dialog';
 import {
+  IconArrowDown,
   IconCheck,
   IconChevronDown,
   IconChevronLeft,
@@ -122,6 +130,12 @@ interface SessionUndoEntry {
   mutationId: string | null;
   priorInputs: CellMutationInput[];
   appliedInputs: CellMutationInput[];
+  createdAt: number;
+}
+
+interface ContextMenuState {
+  x: number;
+  y: number;
 }
 
 const SINGLE_CLICK_COALESCE_HOLD_MS = 1_200;
@@ -133,6 +147,34 @@ function formatArabicCells(count: number): string {
   if (count === 2) return 'خانتين';
   if (count >= 3 && count <= 10) return `${count} خانات`;
   return `${count} خانة`;
+}
+
+function doesUndoEntryMatchLiveLogs(
+  entry: SessionUndoEntry,
+  logsByKey: ReadonlyMap<
+    string,
+    {
+      status: CellStatus | null;
+      percent_value: number | null;
+      availability_override: AvailabilityOverride | null;
+      note: string | null;
+    }
+  >,
+): boolean {
+  for (const input of entry.appliedInputs) {
+    const liveLog = logsByKey.get(makeCellKey(input.action.id, input.logDate));
+    if (!liveLog) return false;
+    if (
+      (liveLog.status ?? null) !== (input.status ?? null) ||
+      (liveLog.percent_value ?? null) !== (input.percent_value ?? null) ||
+      (liveLog.availability_override ?? null) !==
+        (input.availability_override ?? null) ||
+      (liveLog.note ?? null) !== (input.note ?? null)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function normalizeRect(selection: GridSelection): GridRect {
@@ -388,6 +430,7 @@ export function WeekView({
     activeWindowResolution,
     todayIslamicDate,
     isOnline,
+    activeUndoToast,
     fetchLogsRange,
     logCellBatch,
     logBulkNormalDay,
@@ -418,6 +461,7 @@ export function WeekView({
   const [hasClipboard, setHasClipboard] = useState(false);
   const [fillDrag, setFillDrag] = useState<FillDragState | null>(null);
   const [isGridDragging, setIsGridDragging] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const fetchedRangesRef = useRef<Set<string>>(new Set());
   const normalDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -431,6 +475,8 @@ export function WeekView({
   const cellButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const desktopGridAreaRef = useRef<HTMLDivElement | null>(null);
   const bulkBarRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const lastPointerTypeRef = useRef<string>('mouse');
   const fillDragRef = useRef<FillDragState | null>(null);
   const dragSelectRef = useRef<{
     startX: number;
@@ -714,6 +760,7 @@ export function WeekView({
   const clearSelection = useCallback(() => {
     setSelection(null);
     setExtraCoords([]);
+    setContextMenu(null);
   }, []);
 
   const clearAllInteractionState = useCallback(
@@ -725,6 +772,7 @@ export function WeekView({
       setSelection(null);
       setExtraCoords([]);
       setCopiedRect(null);
+      setContextMenu(null);
       document.body.style.cursor = '';
       if (options?.restoreFocus) {
         restoreFocusHandlerRef.current();
@@ -738,6 +786,7 @@ export function WeekView({
     setSelection(null);
     setExtraCoords([]);
     setCopiedRect(null);
+    setContextMenu(null);
     setHoveredCell(null);
   }, []);
 
@@ -994,13 +1043,16 @@ export function WeekView({
     }).length;
   }, [actions, effectiveBulkDate, logsByKey, nowMs, periods, settings]);
 
-  const pushUndoEntry = useCallback((entry: SessionUndoEntry) => {
-    undoStackRef.current = [
-      ...undoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
-      entry,
-    ];
-    redoStackRef.current = [];
-  }, []);
+  const pushUndoEntry = useCallback(
+    (entry: Omit<SessionUndoEntry, 'createdAt'> & { createdAt?: number }) => {
+      undoStackRef.current = [
+        ...undoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
+        { ...entry, createdAt: entry.createdAt ?? Date.now() },
+      ];
+      redoStackRef.current = [];
+    },
+    [],
+  );
 
   const capturePriorSnapshot = useCallback(
     (action: Action, logDate: string): CellMutationInput => {
@@ -1121,12 +1173,13 @@ export function WeekView({
           ...entry,
           batchId: res.batchId,
           mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
+          createdAt: Date.now(),
         },
       ];
     } else {
       undoStackRef.current = [
         ...undoStackRef.current.slice(-(MAX_SESSION_UNDO_ENTRIES - 1)),
-        entry,
+        { ...entry, createdAt: Date.now() },
       ];
     }
 
@@ -1212,6 +1265,7 @@ export function WeekView({
     action: Action,
     logDate: string,
     display: CellDisplayInfo,
+    options?: { showUndoToast?: boolean },
   ) => {
     if (isCellPostArchived(action, logDate)) return;
 
@@ -1262,15 +1316,15 @@ export function WeekView({
       display,
       nextTarget,
     );
-    const res = await logCellBatch(
-      [mutation],
-      SINGLE_CLICK_COALESCE_HOLD_MS,
-      false,
-    );
+    const showUndoToast = options?.showUndoToast ?? false;
+    const holdMs = showUndoToast
+      ? DEFAULT_UNDO_HOLD_MS
+      : SINGLE_CLICK_COALESCE_HOLD_MS;
+    const res = await logCellBatch([mutation], holdMs, showUndoToast);
     if (res.items.length > 0) {
       pushUndoEntry({
         batchId: res.batchId,
-        mutationId: res.items[0]?.mutation_id ?? null,
+        mutationId: res.batchId ? null : (res.items[0]?.mutation_id ?? null),
         priorInputs: [prior],
         appliedInputs: [mutation],
       });
@@ -1551,7 +1605,7 @@ export function WeekView({
     }
   };
 
-  const handleCutSelection = async () => {
+  const handleCutSelection = async (options?: { restoreFocus?: boolean }) => {
     const coords = getTargetCoords();
     if (coords.length === 0) return;
     handleCopySelection({ clearSelection: false, silent: true });
@@ -1562,6 +1616,7 @@ export function WeekView({
         showToast: true,
         actionNameAr: 'تم قص',
         clearSelection: true,
+        restoreFocus: options?.restoreFocus,
       },
     );
   };
@@ -1657,7 +1712,9 @@ export function WeekView({
     });
   };
 
-  const handleFillDownShortcut = async () => {
+  const handleFillDownShortcut = async (options?: {
+    restoreFocus?: boolean;
+  }) => {
     if (visibleGridRows.length === 0 || weekDates.length === 0) return;
 
     const entries: Array<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }> =
@@ -1711,6 +1768,7 @@ export function WeekView({
       showToast: true,
       actionNameAr: 'تم التعبئة للأسفل',
       clearSelection: true,
+      restoreFocus: options?.restoreFocus,
     });
   };
 
@@ -2062,6 +2120,17 @@ export function WeekView({
     // Global session Undo (capture phase — takes precedence over app-shell toast-only undo)
     if (matchesShortcutEvent(e, effectiveShortcuts.undo)) {
       if (undoStackRef.current.length > 0) {
+        const topEntry = undoStackRef.current[undoStackRef.current.length - 1]!;
+        if (activeUndoToast) {
+          const toastCreatedAt = activeUndoToast.expiresAt - DEFAULT_UNDO_HOLD_MS;
+          if (toastCreatedAt > topEntry.createdAt) {
+            return;
+          }
+        }
+        if (!doesUndoEntryMatchLiveLogs(topEntry, logsByKey)) {
+          undoStackRef.current = undoStackRef.current.slice(0, -1);
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         void handleSessionUndo();
@@ -2086,6 +2155,13 @@ export function WeekView({
     }
 
     if (e.key === 'Escape') {
+      if (contextMenu) {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu(null);
+        restoreFocusToGrid();
+        return;
+      }
       if (
         selectedCellCount > 0 ||
         copiedRect !== null ||
@@ -2191,6 +2267,7 @@ export function WeekView({
       const target = e.target;
       if (!(target instanceof Node)) return;
       if (bulkBarRef.current?.contains(target)) return;
+      if (contextMenuRef.current?.contains(target)) return;
       if (
         target instanceof Element &&
         target.closest(
@@ -2204,6 +2281,53 @@ export function WeekView({
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [clearSelection, extraCoords.length, selection]);
+
+  // Viewport-clamped RTL cursor positioning for Multi-Cell Right-Click Context Menu
+  useLayoutEffect(() => {
+    const el = contextMenuRef.current;
+    if (!el || !contextMenu || selectedCellCount < 2) return;
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const rect = el.getBoundingClientRect();
+
+    const rawLeft =
+      contextMenu.x - rect.width >= margin
+        ? contextMenu.x - rect.width
+        : contextMenu.x;
+    const left = Math.max(margin, Math.min(vw - rect.width - margin, rawLeft));
+
+    const rawTop =
+      contextMenu.y + rect.height <= vh - margin
+        ? contextMenu.y
+        : contextMenu.y - rect.height;
+    const top = Math.max(margin, Math.min(vh - rect.height - margin, rawTop));
+
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [contextMenu, selectedCellCount]);
+
+  // Focus first item & dismiss context menu on outside click
+  useEffect(() => {
+    if (!contextMenu || selectedCellCount < 2) return;
+    const focusTimer = requestAnimationFrame(() => {
+      contextMenuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+        ?.focus();
+    });
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) {
+        return;
+      }
+      setContextMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      cancelAnimationFrame(focusTimer);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [contextMenu, selectedCellCount]);
 
   if (!settings || !todayIslamicDate || weekDates.length === 0) {
     return null;
@@ -2426,14 +2550,43 @@ export function WeekView({
       return;
     }
 
-    // Open CellEditorDialog via Enter / ContextMenu / Shift+F10
+    // F2 / ContextMenu / Shift+F10 ALWAYS open CellEditorDialog
     if (
-      event.key === 'Enter' ||
+      (event.key === 'F2' && !mod && !event.altKey) ||
       event.key === 'ContextMenu' ||
       (event.shiftKey && event.key === 'F10')
     ) {
       event.preventDefault();
       if (!isCellPostArchived(action, logDate)) {
+        onOpenCellEditor({ action, logDate });
+      }
+      return;
+    }
+
+    // Enter respects settings.enter_key_mode ('editor' | 'move_down')
+    if (event.key === 'Enter' && !mod && !event.altKey) {
+      event.preventDefault();
+      const enterKeyMode = settings.enter_key_mode ?? 'editor';
+      if (enterKeyMode === 'move_down') {
+        const delta = event.shiftKey ? -1 : 1;
+        let targetRow = Math.min(Math.max(row + delta, sideMinRow), sideMaxRow);
+        while (targetRow >= sideMinRow && targetRow <= sideMaxRow) {
+          const btn = cellButtonRefs.current.get(`${targetRow}:${col}`);
+          if (btn && !btn.disabled) break;
+          if (
+            (delta > 0 && targetRow >= sideMaxRow) ||
+            (delta < 0 && targetRow <= sideMinRow)
+          ) {
+            break;
+          }
+          targetRow += delta;
+        }
+        const targetBtn = cellButtonRefs.current.get(`${targetRow}:${col}`);
+        clearSelection();
+        if (targetBtn && !targetBtn.disabled) {
+          focusGridCell(targetRow, col);
+        }
+      } else if (!isCellPostArchived(action, logDate)) {
         onOpenCellEditor({ action, logDate });
       }
       return;
@@ -2525,6 +2678,7 @@ export function WeekView({
     const nonInteractive = isCellPostArchived(action, logDate);
     const hasNote = display.note.trim().length > 0;
     const coordKey = `${rowIndex}:${colIndex}`;
+    const desktopCellKey = `dt:${action.id}:${logDate}`;
     const isTabStop =
       !nonInteractive &&
       effectiveFocusedCell !== null &&
@@ -2627,20 +2781,20 @@ export function WeekView({
             data-grid-row={rowIndex}
             data-grid-col={colIndex}
             className={`m-cell nums ${getCellStateClass(display.state)} ${
-              isFocused ? 'is-grid-focused' : ''
-            } ${isSelected ? 'is-grid-selected' : ''} ${
-              isSelTop ? 'is-sel-top' : ''
-            } ${isSelBottom ? 'is-sel-bottom' : ''} ${
-              isSelStart ? 'is-sel-start' : ''
-            } ${isSelEnd ? 'is-sel-end' : ''} ${
-              isCopied ? 'is-grid-copied' : ''
-            } ${isCopyTop ? 'is-copy-top' : ''} ${
-              isCopyBottom ? 'is-copy-bottom' : ''
-            } ${isCopyStart ? 'is-copy-start' : ''} ${
-              isCopyEnd ? 'is-copy-end' : ''
-            } ${isFillSource ? 'is-fill-source' : ''} ${
-              isFillPreview ? 'is-fill-preview' : ''
-            }`}
+              longPress.pressingKey === desktopCellKey ? 'is-pressing' : ''
+            } ${isFocused ? 'is-grid-focused' : ''} ${
+              isSelected ? 'is-grid-selected' : ''
+            } ${isSelTop ? 'is-sel-top' : ''} ${
+              isSelBottom ? 'is-sel-bottom' : ''
+            } ${isSelStart ? 'is-sel-start' : ''} ${
+              isSelEnd ? 'is-sel-end' : ''
+            } ${isCopied ? 'is-grid-copied' : ''} ${
+              isCopyTop ? 'is-copy-top' : ''
+            } ${isCopyBottom ? 'is-copy-bottom' : ''} ${
+              isCopyStart ? 'is-copy-start' : ''
+            } ${isCopyEnd ? 'is-copy-end' : ''} ${
+              isFillSource ? 'is-fill-source' : ''
+            } ${isFillPreview ? 'is-fill-preview' : ''}`}
             onFocus={() => {
               if (!nonInteractive) {
                 setFocusedCell({ row: rowIndex, col: colIndex });
@@ -2648,7 +2802,21 @@ export function WeekView({
             }}
             onPointerDown={(e) => {
               if (nonInteractive) return;
-              if (e.pointerType !== 'mouse' || e.button !== 0) return;
+              lastPointerTypeRef.current = e.pointerType || 'mouse';
+              if (e.pointerType !== 'mouse') {
+                longPress.handlePointerDown(
+                  e,
+                  desktopCellKey,
+                  nonInteractive,
+                  () => {
+                    clearSelection();
+                    setFocusedCell({ row: rowIndex, col: colIndex });
+                    onOpenCellEditor({ action, logDate });
+                  },
+                );
+                return;
+              }
+              if (e.button !== 0) return;
               suppressNextClickRef.current = false;
 
               if (e.ctrlKey || e.metaKey) {
@@ -2702,19 +2870,35 @@ export function WeekView({
                 active: false,
               };
             }}
-            onClick={() => {
+            onPointerMove={longPress.handlePointerMove}
+            onPointerUp={longPress.handlePointerUp}
+            onPointerCancel={longPress.handlePointerCancel}
+            onClick={(event) => {
               if (nonInteractive) return;
+              if (event.detail > 1) return;
+              if (longPress.shouldSuppressClick(event, desktopCellKey)) return;
               if (suppressNextClickRef.current) {
                 suppressNextClickRef.current = false;
                 return;
               }
               clearSelection();
               setFocusedCell({ row: rowIndex, col: colIndex });
-              void handleCellPrimaryCycle(action, logDate, display);
+              void handleCellPrimaryCycle(action, logDate, display, {
+                showUndoToast: lastPointerTypeRef.current !== 'mouse',
+              });
             }}
             onContextMenu={(e) => {
               if (nonInteractive) return;
+              if (longPress.shouldSuppressContextMenu(e, desktopCellKey)) {
+                return;
+              }
               e.preventDefault();
+              if (selectedCellCount >= 2 && selectedCoordSet.has(coordKey)) {
+                setFocusedCell({ row: rowIndex, col: colIndex });
+                setContextMenu({ x: e.clientX, y: e.clientY });
+                return;
+              }
+              setContextMenu(null);
               setFocusedCell({ row: rowIndex, col: colIndex });
               onOpenCellEditor({ action, logDate });
             }}
@@ -3021,7 +3205,9 @@ export function WeekView({
                       onClick={(e) => {
                         if (nonInteractive) return;
                         if (longPress.shouldSuppressClick(e, cellKey)) return;
-                        void handleCellPrimaryCycle(action, d, display);
+                        void handleCellPrimaryCycle(action, d, display, {
+                          showUndoToast: true,
+                        });
                       }}
                       onContextMenu={(e) => {
                         if (nonInteractive) return;
@@ -3646,6 +3832,271 @@ export function WeekView({
             </div>
           </div>
         )}
+
+        {/* Cursor-Anchored Multi-Cell Right-Click Context Menu */}
+        {contextMenu && selectedCellCount >= 2 && (
+          <div
+            ref={contextMenuRef}
+            role="menu"
+            aria-label="إجراءات التحديد المتعدد"
+            className="week-context-menu"
+            data-testid="week-context-menu"
+            style={{
+              left: `${Math.max(8, contextMenu.x - 212)}px`,
+              top: `${Math.max(8, contextMenu.y)}px`,
+            }}
+            onKeyDown={(e) => {
+              const items = Array.from(
+                e.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  '[role="menuitem"]',
+                ),
+              );
+              if (items.length === 0) return;
+              const currentIdx = items.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                items[(currentIdx + 1 + items.length) % items.length]?.focus();
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                items[(currentIdx - 1 + items.length) % items.length]?.focus();
+              } else if (e.key === 'Home') {
+                e.preventDefault();
+                items[0]?.focus();
+              } else if (e.key === 'End') {
+                e.preventDefault();
+                items[items.length - 1]?.focus();
+              }
+            }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="week-context-menu-item is-done"
+              onClick={() => {
+                setContextMenu(null);
+                void applyTargetStateToCoords(
+                  getTargetCoords(),
+                  { kind: 'DONE', percentValue: null },
+                  {
+                    showToast: true,
+                    actionNameAr: 'تم تحديد تم للكل',
+                    clearSelection: true,
+                    restoreFocus: true,
+                  },
+                );
+              }}
+            >
+              <span className="week-context-menu-item-label">
+                <IconCheck size="sm" />
+                <span>تم للكل</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              className="week-context-menu-item is-missed"
+              onClick={() => {
+                setContextMenu(null);
+                void applyTargetStateToCoords(
+                  getTargetCoords(),
+                  { kind: 'MISSED', percentValue: null },
+                  {
+                    showToast: true,
+                    actionNameAr: 'تم تحديد فات للكل',
+                    clearSelection: true,
+                    restoreFocus: true,
+                  },
+                );
+              }}
+            >
+              <span className="week-context-menu-item-label">
+                <IconCross size="sm" />
+                <span>فات للكل</span>
+              </span>
+            </button>
+
+            {selectedHasPercentageEligible && (
+              <button
+                type="button"
+                role="menuitem"
+                className="week-context-menu-item"
+                onClick={() => {
+                  setContextMenu(null);
+                  void applyTargetStateToCoords(
+                    getTargetCoords(),
+                    { kind: 'PERCENT', percentValue: 50 },
+                    {
+                      showToast: true,
+                      actionNameAr: 'تم تحديد 50%',
+                      clearSelection: true,
+                      restoreFocus: true,
+                    },
+                  );
+                }}
+              >
+                <span className="week-context-menu-item-label nums">
+                  <span>50% للكل</span>
+                </span>
+              </button>
+            )}
+
+            {selectedHasQadaaEligible && (
+              <button
+                type="button"
+                role="menuitem"
+                className="week-context-menu-item"
+                onClick={() => {
+                  setContextMenu(null);
+                  void applyTargetStateToCoords(
+                    getTargetCoords(),
+                    { kind: 'QADAA_DONE', percentValue: null },
+                    {
+                      showToast: true,
+                      actionNameAr: 'تم تسجيل القضاء',
+                      clearSelection: true,
+                      restoreFocus: true,
+                    },
+                  );
+                }}
+              >
+                <span className="week-context-menu-item-label">
+                  <IconQadaa size="sm" />
+                  <span>قضاء للكل</span>
+                </span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              role="menuitem"
+              className="week-context-menu-item"
+              onClick={() => {
+                setContextMenu(null);
+                void applyTargetStateToCoords(
+                  getTargetCoords(),
+                  { kind: 'DISABLED', percentValue: null },
+                  {
+                    showToast: true,
+                    actionNameAr: 'تم تعطيل',
+                    clearSelection: true,
+                    restoreFocus: true,
+                  },
+                );
+              }}
+            >
+              <span className="week-context-menu-item-label">
+                <IconDash size="sm" />
+                <span>تعطيل للكل</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              className="week-context-menu-item"
+              onClick={() => {
+                setContextMenu(null);
+                void applyTargetStateToCoords(
+                  getTargetCoords(),
+                  { kind: 'EMPTY', percentValue: null },
+                  {
+                    showToast: true,
+                    actionNameAr: 'تم مسح الحالات',
+                    clearSelection: true,
+                    restoreFocus: true,
+                  },
+                );
+              }}
+            >
+              <span className="week-context-menu-item-label">
+                <span>مسح الخلايا</span>
+              </span>
+            </button>
+
+            <div role="separator" className="week-context-menu-divider" />
+
+            <button
+              type="button"
+              role="menuitem"
+              className="week-context-menu-item"
+              onClick={() => {
+                setContextMenu(null);
+                handleCopySelection({
+                  clearSelection: true,
+                  restoreFocus: true,
+                });
+              }}
+            >
+              <span className="week-context-menu-item-label">
+                <IconCopy size="sm" />
+                <span>نسخ</span>
+              </span>
+              <kbd className="week-context-menu-kbd" dir="ltr">
+                Ctrl+C
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              className="week-context-menu-item"
+              onClick={() => {
+                setContextMenu(null);
+                void handleCutSelection({ restoreFocus: true });
+              }}
+            >
+              <span className="week-context-menu-item-label">
+                <span>قص</span>
+              </span>
+              <kbd className="week-context-menu-kbd" dir="ltr">
+                Ctrl+X
+              </kbd>
+            </button>
+
+            {hasClipboard && (
+              <button
+                type="button"
+                role="menuitem"
+                className="week-context-menu-item"
+                onClick={() => {
+                  setContextMenu(null);
+                  void handlePasteSelection({ restoreFocus: true });
+                }}
+              >
+                <span className="week-context-menu-item-label">
+                  <IconClipboard size="sm" />
+                  <span>لصق</span>
+                </span>
+                <kbd className="week-context-menu-kbd" dir="ltr">
+                  Ctrl+V
+                </kbd>
+              </button>
+            )}
+
+            {selectedRect && selectedRect.r2 > selectedRect.r1 && (
+              <button
+                type="button"
+                role="menuitem"
+                className="week-context-menu-item"
+                onClick={() => {
+                  setContextMenu(null);
+                  void handleFillDownShortcut({ restoreFocus: true });
+                }}
+              >
+                <span className="week-context-menu-item-label">
+                  <IconArrowDown size="sm" />
+                  <span>تعبئة لأسفل</span>
+                </span>
+                <kbd className="week-context-menu-kbd" dir="ltr">
+                  Ctrl+D
+                </kbd>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Mobile View: WHOOP 7-Day Boxes (Sat..Fri) + Compact Grid Toggle */}
@@ -3774,6 +4225,7 @@ export function WeekView({
                                     action,
                                     d,
                                     display,
+                                    { showUndoToast: true },
                                   );
                                 }}
                                 onContextMenu={(e) => {

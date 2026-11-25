@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DefaultHomeViewSchema,
   DefaultWeekModeSchema,
+  EnterKeyModeSchema,
   KeyboardShortcutsMapSchema,
   type Action,
   type AppSettings,
@@ -16,6 +17,7 @@ export function normalizeAppSettingsRow(
 ): AppSettings {
   const parsedHomeView = DefaultHomeViewSchema.safeParse(row.default_home_view);
   const parsedWeekMode = DefaultWeekModeSchema.safeParse(row.default_week_mode);
+  const parsedEnterKeyMode = EnterKeyModeSchema.safeParse(row.enter_key_mode);
   const parsedShortcuts = KeyboardShortcutsMapSchema.safeParse(
     row.keyboard_shortcuts ?? {},
   );
@@ -54,6 +56,9 @@ export function normalizeAppSettingsRow(
         : Boolean(row.show_catchup_banner),
     default_home_view: parsedHomeView.success ? parsedHomeView.data : 'now',
     default_week_mode: parsedWeekMode.success ? parsedWeekMode.data : 'standard',
+    enter_key_mode: parsedEnterKeyMode.success
+      ? parsedEnterKeyMode.data
+      : 'editor',
     keyboard_shortcuts: parsedShortcuts.success ? parsedShortcuts.data : {},
     created_at:
       row.created_at === undefined ? undefined : String(row.created_at),

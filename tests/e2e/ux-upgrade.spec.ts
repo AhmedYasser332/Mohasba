@@ -219,7 +219,18 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     // 3. Bug A: Topbar .top-bar-inner 100% inside viewport on 1440x900
     await assertTopBarInsideViewport(page, 1440, 900);
 
-    // 4. Bug C: الضحى والصباح hides btn-mosque-done (no dead disabled mosque button)
+    // 4. Opus A1 (Stale-date banner) + Bug C: الضحى والصباح hides btn-mosque-done (no dead disabled mosque button)
+    await page
+      .locator('.day-strip .day-tile:not(:has(.day-tile-dot))')
+      .first()
+      .click();
+    await expect(page.getByTestId('stale-date-banner')).toBeVisible();
+    await expect(page.getByTestId('stale-date-banner')).toContainText(
+      'أنت تسجّل ليوم',
+    );
+    await page.getByTestId('stale-date-reset-btn').click();
+    await expect(page.getByTestId('stale-date-banner')).toHaveCount(0);
+
     await page.getByRole('tab', { name: 'الضحى والصباح' }).click();
     await expect(
       page.getByTestId(`now-action-${STARTER_PACK_ACTION_IDS.DHUHA_PRAYER}`),
@@ -289,6 +300,15 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
 
+    // Opus A4: Double-click guard — dblclick on clean binary cell executes single cycle to st-done (NOT st-missed)
+    await fajrCell.dblclick();
+    await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
+    await expect(fajrCell).toHaveClass(/st-done/);
+    await expect(fajrCell).not.toHaveClass(/st-missed/);
+    await fajrCell.click();
+    await fajrCell.click();
+    await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
+
     // 6b. Left-click percentage cell (ورد قراءة القرآن) 4 times: EMPTY -> DONE -> 50% -> MISSED -> EMPTY
     const quranCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.QURAN_WIRD}-${todayIslamic}`,
@@ -310,7 +330,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(quranCell).not.toHaveClass(/st-done|st-missed|st-percent/);
 
-    // 6c. Right-click cell -> opens CellEditorDialog, saves DONE + personal note -> verify .m-cell-note-dot renders
+    // 6c. Right-click cell -> opens CellEditorDialog, Opus A6 unsaved-note guard on إلغاء -> حفظ وإغلاق saves DONE + personal note -> verify .m-cell-note-dot renders
     const dhuhaCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.DHUHA_PRAYER}-${todayIslamic}`,
     );
@@ -320,7 +340,11 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(editorDialog).toBeVisible();
     await editorDialog.getByRole('button', { name: 'تم', exact: true }).click();
     await editorDialog.locator('textarea').fill('ملاحظة اختبار UX');
-    await editorDialog.getByTestId('cell-editor-save').click();
+    await editorDialog.getByRole('button', { name: 'إلغاء' }).click();
+    await expect(
+      editorDialog.getByTestId('cell-editor-unsaved-banner'),
+    ).toBeVisible();
+    await editorDialog.getByTestId('cell-editor-save-and-close').click();
     await expect(editorDialog).toBeHidden();
 
     await expect(dhuhaCell).toHaveClass(/st-done/);
@@ -607,6 +631,50 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       ).toHaveClass(/st-done/);
     }
 
+    // 6s. Opus A5: Ctrl+Z note protection — cycle cell A, save newer note via CellEditor, let toast expire, Ctrl+Z must NOT wipe newer note
+    const fajrAdhkarCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_ADHKAR}-${todayIslamic}`,
+    );
+    await fajrAdhkarCell.click();
+    await expect(fajrAdhkarCell).toHaveClass(/st-done/);
+    await fajrAdhkarCell.click({ button: 'right' });
+    await expect(editorDialog).toBeVisible();
+    await editorDialog.locator('textarea').fill('ملاحظة محمية من التراجع');
+    await editorDialog.getByTestId('cell-editor-save').click();
+    await expect(editorDialog).toBeHidden();
+    await expect(fajrAdhkarCell.locator('.m-cell-note-dot')).toBeVisible();
+
+    await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
+    await fajrAdhkarCell.focus();
+    await page.keyboard.press('Control+KeyZ');
+    await expect(fajrAdhkarCell).toHaveClass(/st-done/);
+    await expect(fajrAdhkarCell.locator('.m-cell-note-dot')).toBeVisible();
+
+    // 6t. User Decision #2: Multi-cell Right-Click Context Menu -> تم للكل marks 3 cells st-done, closes menu & clears selection
+    const otherWeekDate = weekDates.find((d) => d !== todayIslamic)!;
+    const ctxAsrFard = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ASR_FARD}-${otherWeekDate}`,
+    );
+    const ctxAsrJamaah = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ASR_JAMAAH}-${otherWeekDate}`,
+    );
+    const ctxAsrAdhkar = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.ASR_ADHKAR}-${otherWeekDate}`,
+    );
+    await ctxAsrFard.focus();
+    await ctxAsrAdhkar.click({ modifiers: ['Shift'] });
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(3);
+    await ctxAsrJamaah.click({ button: 'right' });
+
+    const contextMenu = page.getByTestId('week-context-menu');
+    await expect(contextMenu).toBeVisible();
+    await contextMenu.getByRole('menuitem', { name: 'تم للكل' }).click();
+    await expect(ctxAsrFard).toHaveClass(/st-done/);
+    await expect(ctxAsrJamaah).toHaveClass(/st-done/);
+    await expect(ctxAsrAdhkar).toHaveClass(/st-done/);
+    await expect(contextMenu).toHaveCount(0);
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+
     // Put Quran cell into 50% and Fajr Fard into DONE for a rich One-Glance screenshot, then wait for sync
     await quranCell.click();
     await quranCell.click();
@@ -813,18 +881,41 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       page.locator('.desktop-rail .nav-btn', { hasText: 'القضاء' }).locator('.count-chip'),
     ).toContainText('1');
 
-    // Set default_home_view = 'week' -> reload bare / -> lands directly on الجدول الأسبوعي
+    // Set enter_key_mode = 'move_down' & default_home_view = 'week' -> reload bare / -> lands directly on الجدول الأسبوعي
     await page
       .locator('.desktop-rail')
       .getByRole('button', { name: 'الإعدادات' })
       .click();
     await page.getByTestId('accordion-toggle-general').click();
+    await page
+      .getByTestId('pref-enter-key-mode')
+      .getByTestId('pref-enter-key-mode-move_down')
+      .click();
+    await expect(
+      page.getByTestId('pref-enter-key-mode-move_down'),
+    ).toHaveAttribute('aria-checked', 'true');
     await page.getByTestId('pref-home-view-week').click();
     await expect(page.getByTestId('general-prefs-feedback')).toBeVisible();
 
     await page.goto(`${BASE_URL}/`, { waitUntil: 'networkidle' });
     await expect(page.locator('.page-heading')).toHaveText('الجدول الأسبوعي');
     await expect(page.locator('.matrix-desktop-wrap')).toBeVisible();
+
+    // User Decision #1: Enter moves focus down from row 0 (FAJR_FARD) to row 1 (FAJR_JAMAAH) with zero dialog; F2 opens CellEditorDialog
+    const row0Cell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${todayIslamic}`,
+    );
+    const row1Cell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_JAMAAH}-${todayIslamic}`,
+    );
+    await row0Cell.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
+    await expect(row1Cell).toBeFocused();
+    await page.keyboard.press('F2');
+    await expect(page.locator('dialog.app-dialog[open]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('dialog.app-dialog[open]')).toBeHidden();
 
     // 8. Mobile 390x844 Light & Dark checks + screenshots
     await page.setViewportSize({ width: 390, height: 844 });

@@ -53,6 +53,9 @@ export type DefaultHomeView = z.infer<typeof DefaultHomeViewSchema>;
 export const DefaultWeekModeSchema = z.enum(['standard', 'one_glance']);
 export type DefaultWeekMode = z.infer<typeof DefaultWeekModeSchema>;
 
+export const EnterKeyModeSchema = z.enum(['editor', 'move_down']);
+export type EnterKeyMode = z.infer<typeof EnterKeyModeSchema>;
+
 export const NtfySourceSchema = z.enum(['db', 'env', 'none']);
 export type NtfySource = z.infer<typeof NtfySourceSchema>;
 
@@ -135,6 +138,7 @@ export const AppSettingsSchema = z.object({
   show_catchup_banner: z.boolean().default(true),
   default_home_view: DefaultHomeViewSchema.default('now'),
   default_week_mode: DefaultWeekModeSchema.default('standard'),
+  enter_key_mode: EnterKeyModeSchema.default('editor'),
   keyboard_shortcuts: KeyboardShortcutsMapSchema.default({}),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),

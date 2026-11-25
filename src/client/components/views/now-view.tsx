@@ -44,6 +44,7 @@ interface NowViewProps {
   onSelectDate: (date: string) => void;
   selectedPeriodId: string | null;
   onSelectPeriodId: (periodId: string) => void;
+  onResetToToday: () => void;
   onNavigateToCatchUp: () => void;
   onOpenCellEditor: (target: CellEditorTarget) => void;
   onActionFeedback: (message: string) => void;
@@ -56,6 +57,7 @@ export function NowView({
   onSelectDate,
   selectedPeriodId,
   onSelectPeriodId,
+  onResetToToday,
   onNavigateToCatchUp,
   onOpenCellEditor,
   onActionFeedback,
@@ -296,6 +298,11 @@ export function NowView({
       windowCache,
     });
 
+    if (info.state === 'QADAA_DONE' || info.state === 'DISABLED') {
+      onOpenCellEditor({ action, logDate: selectedDate });
+      return;
+    }
+
     const isClearing = info.state === 'DONE';
     const isDefaultOff = action.default_disabled_days.includes(
       getIsoDayOfWeek(selectedDate),
@@ -329,6 +336,11 @@ export function NowView({
       windowCache,
     });
 
+    if (info.state === 'QADAA_DONE' || info.state === 'DISABLED') {
+      onOpenCellEditor({ action, logDate: selectedDate });
+      return;
+    }
+
     const isClearing = info.state === 'MISSED';
     const isDefaultOff = action.default_disabled_days.includes(
       getIsoDayOfWeek(selectedDate),
@@ -361,6 +373,12 @@ export function NowView({
       nowMs,
       windowCache,
     });
+
+    if (info.state === 'QADAA_DONE' || info.state === 'DISABLED') {
+      onOpenCellEditor({ action, logDate: selectedDate });
+      return;
+    }
+
     const isDefaultOff = action.default_disabled_days.includes(
       getIsoDayOfWeek(selectedDate),
     );
@@ -565,8 +583,33 @@ export function NowView({
     );
   };
 
+  const isStaleDate = Boolean(
+    todayIslamicDate && selectedDate && selectedDate !== todayIslamicDate,
+  );
+
   return (
     <>
+      {isStaleDate && (
+        <div
+          className="stale-date-banner"
+          data-testid="stale-date-banner"
+          role="region"
+          aria-label="تنبيه التاريخ المحدد"
+        >
+          <span className="stale-date-text">
+            أنت تسجّل ليوم <strong>{formatArabicDateFull(selectedDate)}</strong>
+          </span>
+          <button
+            type="button"
+            className="btn btn-live"
+            data-testid="stale-date-reset-btn"
+            onClick={onResetToToday}
+          >
+            العودة لليوم
+          </button>
+        </div>
+      )}
+
       <div className="day-strip-bar">
         <button
           type="button"

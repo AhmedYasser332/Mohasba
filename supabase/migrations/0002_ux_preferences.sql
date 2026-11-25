@@ -9,6 +9,8 @@ ALTER TABLE public.app_settings
     CHECK (default_home_view IN ('now', 'week', 'qadaa', 'analytics')),
   ADD COLUMN IF NOT EXISTS default_week_mode TEXT NOT NULL DEFAULT 'standard'
     CHECK (default_week_mode IN ('standard', 'one_glance')),
+  ADD COLUMN IF NOT EXISTS enter_key_mode TEXT NOT NULL DEFAULT 'editor'
+    CHECK (enter_key_mode IN ('editor', 'move_down')),
   ADD COLUMN IF NOT EXISTS keyboard_shortcuts JSONB NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(keyboard_shortcuts) = 'object'),
   ADD COLUMN IF NOT EXISTS ntfy_topic_url TEXT NULL

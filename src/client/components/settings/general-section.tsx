@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import type { DefaultHomeView, DefaultWeekMode } from '@/domain';
+import type { DefaultHomeView, DefaultWeekMode, EnterKeyMode } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
 
 const HOME_VIEW_OPTIONS: ReadonlyArray<{
@@ -22,6 +22,17 @@ const WEEK_MODE_OPTIONS: ReadonlyArray<{
   { value: 'one_glance', label: 'نظرة واحدة' },
 ];
 
+const ENTER_KEY_MODE_OPTIONS: ReadonlyArray<{
+  value: EnterKeyMode;
+  label: string;
+}> = [
+  { value: 'editor', label: 'فتح محرر الخانة (الافتراضي)' },
+  {
+    value: 'move_down',
+    label: 'الانتقال للصف التالي (مثل Excel — وF2 لفتح المحرر)',
+  },
+];
+
 export function GeneralPreferencesSection() {
   const { settings, isOnline, updateSettings } = useMohasba();
   const [busy, setBusy] = useState(false);
@@ -37,6 +48,7 @@ export function GeneralPreferencesSection() {
     patch: Partial<{
       default_home_view: DefaultHomeView;
       default_week_mode: DefaultWeekMode;
+      enter_key_mode: EnterKeyMode;
       show_catchup_banner: boolean;
     }>,
     successText: string,
@@ -136,6 +148,43 @@ export function GeneralPreferencesSection() {
                     void commitPatch(
                       { default_week_mode: opt.value },
                       `تم تعيين «${opt.label}» وضعاً افتراضياً للجدول الأسبوعي.`,
+                    );
+                  }
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="pref-block">
+        <span className="pref-heading" id="enter-key-mode-label">
+          سلوك مفتاح Enter في الجدول الأسبوعي
+        </span>
+        <div
+          className="pref-seg-group"
+          role="radiogroup"
+          aria-labelledby="enter-key-mode-label"
+          data-testid="pref-enter-key-mode"
+        >
+          {ENTER_KEY_MODE_OPTIONS.map((opt) => {
+            const checked = (settings.enter_key_mode ?? 'editor') === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                className="pref-seg-btn"
+                data-testid={`pref-enter-key-mode-${opt.value}`}
+                disabled={!isOnline || busy}
+                onClick={() => {
+                  if (!checked) {
+                    void commitPatch(
+                      { enter_key_mode: opt.value },
+                      `تم تعيين سلوك مفتاح Enter إلى «${opt.label}».`,
                     );
                   }
                 }}

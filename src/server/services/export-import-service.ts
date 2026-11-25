@@ -9,6 +9,7 @@ import {
   CellStatusSchema,
   DefaultHomeViewSchema,
   DefaultWeekModeSchema,
+  EnterKeyModeSchema,
   HhmmSchema,
   IsoDateSchema,
   KeyboardShortcutsMapSchema,
@@ -119,6 +120,7 @@ const ImportSettingsSchema = z
     show_catchup_banner: z.boolean().optional(),
     default_home_view: DefaultHomeViewSchema.optional(),
     default_week_mode: DefaultWeekModeSchema.optional(),
+    enter_key_mode: EnterKeyModeSchema.optional(),
     keyboard_shortcuts: KeyboardShortcutsMapSchema.optional(),
   })
   .optional();

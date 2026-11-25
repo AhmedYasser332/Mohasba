@@ -30,6 +30,7 @@ const DEFAULT_APP_SETTINGS = {
   show_catchup_banner: true,
   default_home_view: 'now',
   default_week_mode: 'standard',
+  enter_key_mode: 'editor',
   keyboard_shortcuts: {},
   ntfy_topic_url: null,
   ntfy_access_token: null,

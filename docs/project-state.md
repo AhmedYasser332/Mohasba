@@ -3,7 +3,7 @@
 ## Identity and scope
 - **Project:** Mohasba Tracker v2 (`جدول المحاسبة`)
 - **Governance mode:** Strict (No phase transition or production code without explicit user authorization)
-- **Project date / revision:** 2026-11-21
+- **Project date / revision:** 2026-11-25
 - **3-Dimensional Classification:** `[APPROVED — 2026-11-20]`
   - **Delivery intent:** Production Application / MVP (Long-lived Personal App + Open-Source Self-Hostable Starter for developer friends)
   - **Engineering rigor:** `Focused` overall, with **targeted `Standard`-level rigor** on Offline Sync, Single-Instance Access Boundary, and Deterministic Prayer/Domain Core
@@ -25,7 +25,7 @@
 - **Right-Sized Personal OSS Simplicity (2026-11-20 User Directive):** Keep architecture moderate and right-sized for a personal single-instance open-source app — **NO** user-account auth/authorization/RBAC/multi-tenant ceremony.
 
 ## Stage and authorization
-- **Current stage/workstream:** **Stage 8 Verified (Automated & Live `mohasba-test` Drills Complete)** — Ready for User Hands-On Docker / `.sql.gz` Check & Stage 9 Deploy Consent
+- **Current stage/workstream:** **Stage 8 Verified & UX-Hardened (`mohasba-test` + Local Docker `node:22-alpine` + Live `.sql.gz` Restore Drill + Opus 5.5 High Practicality Audit Complete)** — Ready for User Hands-On UX Review, Optional Stage 8 Final Security/Release Gate, & Stage 9 Deploy Consent
 - **Approved scope:**
   - v1 Google Sheets + Apps Script prototype archived cleanly in `_archive_v1_sheets/` (2026-11-14).
   - **Gate 1 APPROVED (2026-11-20):** Approved 3D Classification, Adaptive Lifecycle Roadmap, Hosting strategy, Arabic primary UI + i18n dictionary, 3 lean MVP Insights, Action Target Evolution, and `v1.1+` Scoped REST API + Thin Skill.
@@ -35,10 +35,10 @@
   - **Gate 5 APPROVED (2026-11-21):** Approved [docs/04-data-and-security.md](file:///d:/Ahmed/Projects/mohasba/docs/04-data-and-security.md) & [docs/04b-sql-vs-app-best-practices.md](file:///d:/Ahmed/Projects/mohasba/docs/04b-sql-vs-app-best-practices.md) (9 tables, NULL-safe `CHECK`s, per-item subtransaction `commit_sync_batch` + `trim_audit_logs_if_needed`, keyset pagination, per-row reorder, resumable Starter Pack, `pg_dump` encrypted off-VPS backup, Hybrid Observability).
   - **Gate 6 APPROVED (2026-11-21):** Approved [docs/05-implementation-plan.md](file:///d:/Ahmed/Projects/mohasba/docs/05-implementation-plan.md) (7 test-heavy vertical slices `Slice 0`–`Slice 6`, `mohasba-test` vs untouched `Mohasba`, Oracle VPS Docker + `cloudflared` Tunnel).
   - **Stage 7 EXECUTED (2026-11-21):** All 7 vertical slices (`Slice 0` → `Slice 6`) implemented, independently audited, verified live against `mohasba-test`, and committed slice-by-slice to `origin main`.
-  - **Stage 8 EXECUTED (2026-11-21):** Dual-device Airplane-Mode Phone vs PC sync & dropped-ACK (`M1 → M2`) E2E verified live; `1,260`-row full JSON Export → Wipe → Chunked Import Restore Drill passed with 100% parity; Fresh-Clone OSS build (`0` secrets) passed; full regression suite passed (`mohasba-test` only; `Mohasba` prod confirmed `0` tables).
+  - **Stage 8 EXECUTED & UX-HARDENED (2026-11-21 → 2026-11-25):** Dual-device Airplane-Mode Phone vs PC sync & dropped-ACK (`M1 → M2`) E2E verified live; `1,260`-row full JSON Export → Wipe → Chunked Import Restore Drill passed with 100% parity; live `.sql.gz` `pg_dump 17` → Drop 9 tables/2 RPCs → `psql -v ON_ERROR_STOP=1` Restore Drill passed (`12/12` `schema-security.test.ts` on restored DB); local Docker (`node:22-alpine`) verified `healthy` on `127.0.0.1:3000`; `supabase/migrations/0002_ux_preferences.sql` applied to `mohasba-test`; UX upgrades (1-click cycling, 450ms long-press, Fill Handle, Google Sheets keyboard/bulk polish, in-app SSRF-safe `ntfy` URL/token, 6-dot pointer DnD, customizable shortcuts, `enter_key_mode`, cursor-anchored Multi-Cell Right-Click Context Menu) + **Claude Opus 5.5 High Practicality Audit (`A1–A7` + iPad touch long-press)** applied & verified (`mohasba-test` only; Production `Mohasba` confirmed `0` tables).
 - **Pending gate(s):**
-  - **Optional Local Docker & `.sql.gz` `pg_dump 17` Drill:** Deferred locally only because Docker Desktop daemon & `postgresql-client-17` / `SUPABASE_DB_BACKUP_URL` are not active on this Windows machine (run directly once Docker Desktop / Oracle VPS is ready).
-  - **Stage 9 Deploy Consent:** Explicit consent required before applying `0001_init.sql` to Production `Mohasba` or deploying to live Oracle VPS.
+  - **Optional Stage 8 Final Security/Release Opus Gate:** Ready to run before Stage 9 once user finalizes any remaining UX trade-offs.
+  - **Stage 9 Deploy Consent:** Explicit consent required before applying `0001_init.sql` + `0002_ux_preferences.sql` to Production `Mohasba` or deploying to live Oracle VPS.
 
 ## Decisions and uncertainties
 - **Confirmed decisions (`[CONFIRMED]`):**
@@ -51,21 +51,17 @@
   - Google Sheets / Apps Script; `ورقة الأوقات` & `ورقة الذنوب`; Hosted Multi-Tenant SaaS; Supabase Auth / RBAC / multi-user accounts; Vercel hosting; Super-app bloat; Naive binary streaks; Heavy MCP server.
 
 ## Implementation and verification
-- **Current milestone/slice/task:** **Stage 7 COMPLETE (`Slice 0` → `Slice 6`)** — Ready for Stage 8 (Integrated Quality Verification on `mohasba-test`).
+- **Current milestone/slice/task:** **Stage 8 Drills & UX Practicality Hardening COMPLETE** — Ready for User UX Trade-Off Decisions, Optional Stage 8 Final Security/Release Opus Gate, and Stage 9 Production Deploy Consent.
 - **Verified completed tasks:**
   - Gates 1–6 formally closed and pushed to `origin main`.
-  - **Slice 0 (`3d15931`):** Next.js 16 + Tailwind v4 + ESLint boundary guards + `0001_init.sql` applied to `mohasba-test` (`0` security/perf WARN/ERROR advisors, `12/12` live DB lockdown & CHECK tests).
-  - **Slice 1 (`8f959ff`):** Pure `src/domain/*` (`prayer-engine` DST/Cairo parity, `lifecycle`, `qadaa`, `targets`, `conflict`, `analytics`, `starter-pack`, `i18n/ar`) — `45/45` unit tests passing.
-  - **Slice 2 (`a322242`):** Web-Standard `src/server/*` + all 20 API operations (19 route files) — `31/31` live integration tests on `mohasba-test` (concurrency, intra-batch chaining, poison isolation, `trim_audit_logs_if_needed`, `1,250+`-row keyset pagination, resumable Starter Pack, per-row reorder, auth/CSRF/cron/privacy).
-  - **Slice 3 (`cde67db`):** Offline-First PWA Engine (`idb` 4 stores, outbox engine, `MohasbaProvider`, `public/sw.js`, `scripts/generate-sw-manifest.mjs`) — `51/51` unit tests + Playwright SW E2E passing.
-  - **Slice 4 (`e289080`):** *Al-Mizan Al-Ma'dani* Single App Shell (`○ Static`), `الآن` Street Mode (`2px` Horizon Rail), `الجدول الأسبوعي` (Standard + One-Glance enforcing all 3 Gate 3 §6 conditions + `<dialog>` Cell Editor) — `impeccable detect` `[]`, Desktop & Mobile Light/Dark screenshots visually inspected.
-  - **Slice 5 (`6220763`):** `القضاء` (Cross-Upgrade historical target snapshot, 48h Catch-Up, Non-Recoverable), `التحليلات` (3 Lean Insights), `الإعدادات` (Online-only CRUD, Simple Rename vs `تطوير الهدف`, `ntfy`, Export/Import, Audit Logs drawer, Sign Out) — `impeccable detect` `[]`, full 5-view Playwright E2E + offline 5-view switching + screenshots inspected.
-  - **Slice 6:** `Dockerfile` (3-stage `node:20-alpine` standalone + Node `fetch` healthcheck), `docker-compose.yml` (`mohasba` + `cloudflared` under `profiles: ["tunnel"]`), `scripts/backup-supabase.sh` (`set -euo pipefail`, `pg_dump` 17 Session Pooler `5432`, `gzip -t`, `age`/`rclone crypt`), `deploy/crontab.example`, OSS `README.md` & `LICENSE` (MIT).
-- **Actual test evidence:**
-  - `npx tsc --noEmit`, `npm run lint`, `npm run test:unit` (`51/51`), `npm run test:integration` (`31/31` live on `mohasba-test`), `npm run build` (`/` `○ Static`), `impeccable.cmd detect --json src/app src/client` (`[]`), `npx playwright test --workers=1` (`3/3` E2E specs + Desktop/Mobile Light/Dark screenshots inspected), `bash -n scripts/backup-supabase.sh` (`0`), `docker compose config --quiet` (`0`), Production `Mohasba` confirmed 100% untouched.
+  - **Slice 0 (`3d15931`) → Slice 6 (`deef7dc`):** Full vertical stack implemented, audited, and pushed cleanly to `origin main`.
+  - **Stage 8 Drills (`9de1d78`, `4d4da6f`, `a59664c`):** Dual-device Airplane-Mode sync & dropped-ACK (`M1 → M2`), `1,260`-row JSON Export/Restore, Fresh-Clone OSS build (`0` secrets), Docker `node:22-alpine` live container (`http://127.0.0.1:3000`), and live `.sql.gz` `pg_dump 17` → Drop → `psql` Restore Drill (`12/12` `schema-security.test.ts`).
+  - **UX Upgrades & Opus 5.5 High Practicality Fixes (`a59664c`, `708dca6`, `ee32926`, latest):** [docs/06-ux-best-practices-guide.md](file:///d:/Ahmed/Projects/mohasba/docs/06-ux-best-practices-guide.md), `supabase/migrations/0002_ux_preferences.sql` (applied on `mohasba-test`), SSRF-safe in-app `ntfy` URL/token, unrestricted past/future editing, Google Sheets Fill Handle / `Ctrl+Z` / `Ctrl+Y` / keyboard & bulk actions, `enter_key_mode`, cursor-anchored Multi-Cell Right-Click Context Menu, and all 7 Claude Opus 5.5 High practicality fixes (`A1–A7` + iPad touch long-press).
+- **Actual test evidence (2026-11-25):**
+  - `npx tsc --noEmit` (`0`), `npm run lint` (`0`), `npm run test:unit` (`9` files, `66/66`), `npm run test:integration` (`8` files, `36/36` live on `mohasba-test`), `npm run build` (`/` `○ Static`), `impeccable.cmd detect --json src/app src/client` (`[]`), `npx playwright test --workers=1` (`5/5` E2E specs), live Docker `mohasba-app` `healthy` (`GET http://127.0.0.1:3000/api/health` -> `200 {"ok":true}`), Production `Mohasba` confirmed `0` tables untouched.
 
 ## Handoff and resumption
-- **Last meaningful milestone:** Stage 7 (`Slice 0` → `Slice 6`) completed, verified, and pushed to `origin main`.
-- **Authoritative specs and plans:** [docs/00-discovery-qa.md](file:///d:/Ahmed/Projects/mohasba/docs/00-discovery-qa.md), [docs/01-requirements.md](file:///d:/Ahmed/Projects/mohasba/docs/01-requirements.md), [docs/02-ux-design-system.md](file:///d:/Ahmed/Projects/mohasba/docs/02-ux-design-system.md), [docs/02b-anti-ai-slop-guide.md](file:///d:/Ahmed/Projects/mohasba/docs/02b-anti-ai-slop-guide.md), [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md), [docs/04-data-and-security.md](file:///d:/Ahmed/Projects/mohasba/docs/04-data-and-security.md), [docs/04b-sql-vs-app-best-practices.md](file:///d:/Ahmed/Projects/mohasba/docs/04b-sql-vs-app-best-practices.md), [docs/05-implementation-plan.md](file:///d:/Ahmed/Projects/mohasba/docs/05-implementation-plan.md)
-- **Exact next action:** Begin **Stage 8 (Integrated Quality Verification)** on `mohasba-test` (real-device Airplane-Mode sync test + Dual `.sql.gz` & `>1,000`-row JSON Restore Drills) upon user review, followed by Stage 9 Production Release only with explicit deploy consent.
-- **New approval needed?** Yes — User review before Stage 8/9, and explicit deploy consent before touching Production `Mohasba` or live Oracle VPS.
+- **Last meaningful milestone:** Stage 8 automated/live drills + UX upgrades + Claude Opus 5.5 High practicality audit (`A1–A7`) verified and pushed to `origin main`.
+- **Authoritative specs and plans:** [docs/00-discovery-qa.md](file:///d:/Ahmed/Projects/mohasba/docs/00-discovery-qa.md), [docs/01-requirements.md](file:///d:/Ahmed/Projects/mohasba/docs/01-requirements.md), [docs/02-ux-design-system.md](file:///d:/Ahmed/Projects/mohasba/docs/02-ux-design-system.md), [docs/02b-anti-ai-slop-guide.md](file:///d:/Ahmed/Projects/mohasba/docs/02b-anti-ai-slop-guide.md), [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md), [docs/04-data-and-security.md](file:///d:/Ahmed/Projects/mohasba/docs/04-data-and-security.md), [docs/04b-sql-vs-app-best-practices.md](file:///d:/Ahmed/Projects/mohasba/docs/04b-sql-vs-app-best-practices.md), [docs/05-implementation-plan.md](file:///d:/Ahmed/Projects/mohasba/docs/05-implementation-plan.md), [docs/06-ux-best-practices-guide.md](file:///d:/Ahmed/Projects/mohasba/docs/06-ux-best-practices-guide.md)
+- **Exact next action:** Resolve Opus List B's 3 UX trade-offs with user, optionally run Stage 8 Security/Release Opus Gate, then proceed to Stage 9 Production Release only with explicit deploy consent.
+- **New approval needed?** Yes — User decision on 3 UX trade-offs, and explicit deploy consent before touching Production `Mohasba` or live Oracle VPS.

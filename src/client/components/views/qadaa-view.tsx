@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AR_STRINGS,
   getIsoDayOfWeek,
@@ -8,6 +8,7 @@ import {
   type CatchUpItem,
 } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
+import { DEFAULT_UNDO_HOLD_MS } from '../../sync/outbox-engine';
 import { ARABIC_NOUN_FORMS, formatArabicCount } from '../../utils/arabic-plural';
 import { formatArabicDateFull } from '../cell-display';
 import type { CellEditorTarget } from '../cell-editor-dialog';
@@ -66,6 +67,27 @@ export function QadaaView({
   const [multiBatchUndoIds, setMultiBatchUndoIds] = useState<string[] | null>(
     null,
   );
+  const [undoFeedback, setUndoFeedback] = useState<{
+    text: string;
+    isError: boolean;
+  } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearMultiBatchUndo = useCallback(() => {
+    if (undoTimerRef.current !== null) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    setMultiBatchUndoIds(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current !== null) {
+        clearTimeout(undoTimerRef.current);
+      }
+    };
+  }, []);
 
   const currentTab = normalizeQadaaTab(activeTab);
 
@@ -156,7 +178,8 @@ export function QadaaView({
   const handleDeferAllCatchUp = async () => {
     if (deferBusy || catchUp48hItems.length === 0) return;
     setDeferBusy(true);
-    setMultiBatchUndoIds(null);
+    clearMultiBatchUndo();
+    setUndoFeedback(null);
     try {
       const uniqueDates = Array.from(
         new Set(catchUp48hItems.map((item) => item.logDate)),
@@ -178,6 +201,10 @@ export function QadaaView({
         );
         if (batchIds.length > 1) {
           setMultiBatchUndoIds(batchIds);
+          undoTimerRef.current = setTimeout(() => {
+            undoTimerRef.current = null;
+            setMultiBatchUndoIds(null);
+          }, DEFAULT_UNDO_HOLD_MS);
         }
       }
     } finally {
@@ -188,11 +215,19 @@ export function QadaaView({
   const handleUndoMultiDefer = async () => {
     if (!multiBatchUndoIds || multiBatchUndoIds.length === 0) return;
     const ids = [...multiBatchUndoIds];
-    setMultiBatchUndoIds(null);
+    clearMultiBatchUndo();
+    const results = [];
     for (const batchId of ids) {
-      await undoBatch(batchId);
+      results.push(await undoBatch(batchId));
     }
-    onActionFeedback?.('تم التراجع عن ترحيل الخانات');
+    const allUndone =
+      results.length === ids.length &&
+      results.every((res) => res.undoneCount > 0);
+    const message = allUndone
+      ? 'تم التراجع عن ترحيل الخانات'
+      : 'تمت مزامنة التعديل بالفعل — يمكنك تعديله من الجدول';
+    setUndoFeedback({ text: message, isError: !allUndone });
+    onActionFeedback?.(message);
   };
 
   return (
@@ -336,12 +371,25 @@ export function QadaaView({
       {/* Tab 2: 48h Unlogged Catch-Up */}
       {currentTab === 'catchup' && (
         <div role="tabpanel" aria-label={AR_STRINGS.qadaa.tabCatchUp48h}>
-          {multiBatchUndoIds && multiBatchUndoIds.length > 0 && (
+          {undoFeedback && (
             <div className="catchup-bulk-bar">
+              <div
+                className={`status-note ${undoFeedback.isError ? 'is-error' : ''}`}
+                data-testid="qadaa-undo-feedback"
+                role="status"
+              >
+                {undoFeedback.text}
+              </div>
+            </div>
+          )}
+
+          {multiBatchUndoIds && multiBatchUndoIds.length > 0 && (
+            <div className="catchup-bulk-bar" data-testid="qadaa-multi-undo-bar">
               <span className="panel-meta">تم ترحيل جميع الخانات غير المسجلة للقضاء.</span>
               <button
                 type="button"
                 className="btn"
+                data-testid="qadaa-multi-undo-btn"
                 onClick={() => {
                   void handleUndoMultiDefer();
                 }}

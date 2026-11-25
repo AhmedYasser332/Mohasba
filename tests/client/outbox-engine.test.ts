@@ -47,6 +47,7 @@ function makeSettings(): AppSettings {
     show_catchup_banner: true,
     default_home_view: 'now',
     default_week_mode: 'standard',
+    enter_key_mode: 'editor',
     keyboard_shortcuts: {},
   };
 }
