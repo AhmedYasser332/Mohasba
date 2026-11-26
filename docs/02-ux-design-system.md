@@ -55,6 +55,8 @@ Every state pairs a uniform `1.5px` stroke SVG glyph with a `1px` border and sub
 
 - **Single Workhorse Font:** **`Readex Pro`** (`400`, `500`, `600`, `700`) across all headings, controls, and 50-row tables.
 - **Numerals:** `font-variant-numeric: tabular-nums` enforced on all percentages, 7-day counts, prayer countdowns, and Qadaa ages.
+- **Clock & Countdown Format (Post-Gate Amendment 2026-11-26):** All displayed period clock times use **12-hour `h:mm AM/PM`** (e.g. `6:44 AM - 11:33 AM`, rendered inside an LTR span). The active period's remaining time in `الآن` is a **live descending countdown** `باقي H:MM` (1s tick); tapping it toggles `H:MM:SS` and the choice persists per device (`localStorage` key `mohasba.countdown.showSeconds`).
+- **Matrix Hover Crosshair (Post-Gate Amendment 2026-11-26):** Row/column hover highlight is painted imperatively via `.is-row-hover` / `.is-col-hover` classes (zero React re-render on mouse move); the focus crosshair is shown only while the pointer is outside the table.
 - **Fixed `rem` Scale (No fluid `clamp()`):**
   - `0.75rem` (12px / 1.35): matrix column headers, `"هدف جديد"` chip, sync status, countdowns
   - `0.8125rem` (13px / 1.45): 50-row PC matrix titles & percentage chips (`36px` row height)

@@ -28,6 +28,13 @@ Mohasba Tracker v2 serves two radically different physical contexts with one coh
 
 ### 1.1 Zero-Modal 1-Click / 1-Tap State Cycling
 
+> **Post-Gate Amendment (2026-11-26, user decision) — Desktop Matrix is now _Select-First_ (Google Sheets model):**
+> - On the **desktop weekly matrix** (mouse, pen, or touch on the desktop grid), a **single click/tap only focuses & selects** the cell (no state change). This keeps any copy marquee alive so `Ctrl+C` → click target → `Ctrl+V` works without corrupting the target.
+> - A **repeat click on the same cell within `450ms`** (`MULTI_TAP_WINDOW_MS`) runs the cycle below: **double-click = 1 cycle step** (e.g. `EMPTY → DONE`), **triple-click = 2 steps** (`EMPTY → DONE → MISSED`), and so on.
+> - `Space`, `Digit1/2/3/4/0`, right-click / `Enter` / long-press editor paths are unchanged.
+> - The **mobile weekly list** (`< 1024px`) and `الآن` Street Mode keep **1-tap** logging (no selection/paste model exists there, and the `<3s` street-logging goal wins).
+> - Wherever this section says "1-click" for the desktop matrix, read it as "double-click"; the cycle matrix itself is unchanged.
+
 #### Comparative UX Analysis (Loop Habit Tracker vs. Streaks vs. WHOOP vs. Google Sheets)
 - **Loop Habit Tracker & Streaks** prove that 1-tap cell toggling creates effortless daily momentum, provided accidental taps are effortlessly reversible via an Undo snackbar/toast rather than slow confirmation modals.
 - **WHOOP** demonstrates that when states carry analytical consequences (such as Mohasba's `QADAA_DONE` `0.85` weight or `DISABLED` denominator exclusion), high-consequence states must never be triggered accidentally during routine tapping.
@@ -96,7 +103,7 @@ Mobile browsers — especially **iOS Safari (WebKit)** — fire native text sele
 #### Solving NN/g's Hidden-Gesture Discoverability Problem
 Per NN/g research, pure right-click/long-press gestures have low organic discovery without visual scent:
 1. **Desktop Inline Hint Strip (Matrix Toolbar Footer):** Compact single-line subtle legend using `1px` vertical dividers (never `·` middle-dots):
-   - `نقرة: تبديل` | `كليك يمين أو Enter: تعديل مفصّل` | `Shift+نقرة: تحديد متعدد` | `Ctrl+C / Ctrl+V: نسخ ولصق`
+   - `نقرة: تحديد` | `نقرتان: تم، ثلاث: فائت` | `كليك يمين أو Enter: تعديل مفصّل` | `Shift+نقرة: تحديد متعدد` | `Ctrl+C / Ctrl+V: نسخ ولصق` *(amended 2026-11-26 for Select-First)*
 2. **Mobile Dual-Path Affordance:**
    - In **`الآن` Street Mode**, keep the explicit visible `•••` (`IconMoreDots`) button on every row (NN/g Escape Hatch).
    - In **`الجدول الأسبوعي` Mobile View**, display a concise muted caption beneath the week header: `نقرة لتبديل الحالة، واضغط مطوّلاً للتعديل المفصّل أو إضافة ملاحظة`.
@@ -139,7 +146,7 @@ Because Mohasba runs in `dir="rtl"`, weekday columns flow **right-to-left** (`Sa
 > **Important Note on `ArrowLeft`/`ArrowRight`:** Never invert spatial direction! Pressing physical Left Arrow MUST move the focus ring physically leftward on screen (which in RTL is the next column `colIdx + 1`). Inverting this breaks both Material 3 RTL guidelines and user spatial memory.
 
 #### C. Mouse Multi-Cell, Column & Row Selection (Desktop)
-1. **Single Click (without modifiers, drag `< 6px`):** Clears any multi-cell selection, focuses clicked cell, and executes the 1-click state cycle.
+1. **Single Click (without modifiers, drag `< 6px`):** Clears any multi-cell selection and focuses the clicked cell **only** (copy marquee is kept for paste). **Repeat click on the same cell within `450ms`** executes the state cycle (double-click = 1 step, triple-click = 2 steps). *(Amended 2026-11-26 — Select-First model.)*
 2. **`Shift + Click`:** Keeps anchor cell, selects the full rectangular range `[minRow..maxRow] × [minCol..maxCol]` **without** mutating cell states.
 3. **Click-and-Drag Range Selection (Mouse Only):** On `pointerdown` (`pointerType === 'mouse'`, primary button), if pointer drags `> 6px` into a second cell, enters range-selection mode (suppresses single-click state cycling on `pointerup`!).
 4. **Day Column Header Click:** Clicking a weekday header (`السبت`, `الأحد`, ...) selects that entire day column across all visible rows AND updates `effectiveBulkDate` so the toolbar's `يوم اعتيادي` / `ترحيل للقضاء` buttons operate on that exact day. Clicking again (or pressing `Escape`) deselects.
@@ -225,7 +232,7 @@ In `ActionsSection` (~50 actions across 8–10 periods) and `PeriodsSection`, cl
 | :--- | :--- | :--- |
 | **Primary Job** | Log 3–6 items walking out of the mosque in `<3s` with one thumb | Review & bulk-edit 50 actions × 7 days with keyboard + mouse |
 | **Navigation Shell** | Fixed bottom nav (`5` tabs, `44×44px+` touch targets in Green Thumb Zone) + `48px` compact top bar | Collapsible RTL inline-start rail (`228px ↔ 0px`, `Ctrl+KeyI`) + Full-width ledger |
-| **Primary Logging Gesture** | Explicit inline `✓` / `✕` buttons (`44×44px`, `8px` gap) + inline `25/50/75/100/0%` chips + split bulk buttons (`تم ما في المسجد` / `تم الفترة بالكامل`) | Matrix 1-click cycle + keyboard `1/2/3/4/0` + `Shift+click` multi-select + `Ctrl+C/V` |
+| **Primary Logging Gesture** | Explicit inline `✓` / `✕` buttons (`44×44px`, `8px` gap) + inline `25/50/75/100/0%` chips + split bulk buttons (`تم ما في المسجد` / `تم الفترة بالكامل`) | Matrix double-click cycle (select-first) + keyboard `1/2/3/4/0` + `Shift+click` multi-select + `Ctrl+C/V` |
 | **Precision / Secondary Edit** | Visible `•••` button (`الآن`) + `450ms` Long-Press (`الجدول الأسبوعي`) | Right-click (`contextmenu`) or `Enter` on focused cell |
 | **Reordering / Structure** | Settings only (via `44×44px` `6-dot` grip handle + Edit `<select>`); disabled inside Weekly Matrix to protect scrolling | Settings **and** inline Weekly Matrix Standard Mode (`6-dot` grip + `Alt+ArrowUp/Down`) |
 | **Modal Budget** | Near-zero (only rare notes/excuse/Qadaa edits) | Near-zero (only precision `<dialog>` edits, Target Evolution, and `?` shortcut map) |

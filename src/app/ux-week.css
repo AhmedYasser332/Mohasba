@@ -148,27 +148,40 @@
   user-select: none;
 }
 
-.ledger-table thead th.col-day.is-col-crosshair {
+/* Focus crosshair (React state) shows only while the mouse is not over the table;
+   hover crosshair (imperative .is-*-hover classes) takes over during mouse movement. */
+.ledger-table:not(.is-hovering) thead th.col-day.is-col-crosshair,
+.ledger-table thead th.col-day.is-col-hover {
   background: var(--bg-hover);
   color: var(--ink-primary);
 }
 
-.ledger-table thead th.col-day.is-today.is-col-crosshair {
+.ledger-table:not(.is-hovering) thead th.col-day.is-today.is-col-crosshair,
+.ledger-table.is-hovering thead th.col-day.is-today.is-col-hover {
   background: var(--accent-live-soft);
   color: var(--accent-live);
 }
 
-.ledger-table td.cell-status.is-col-crosshair {
+.ledger-table:not(.is-hovering) td.cell-status.is-col-crosshair,
+.ledger-table td.cell-status.is-col-hover {
   background: color-mix(in srgb, var(--accent-live-soft) 35%, transparent);
 }
 
-.ledger-table tbody tr.data-row.is-row-crosshair {
+.ledger-table:not(.is-hovering) tbody tr.data-row.is-row-crosshair,
+.ledger-table tbody tr.data-row.is-row-hover {
   background: color-mix(in srgb, var(--accent-live-soft) 28%, transparent);
 }
 
-.row-title-btn.is-row-crosshair {
+.ledger-table:not(.is-hovering) .row-title-btn.is-row-crosshair,
+.ledger-table .row-title-btn.is-row-hover {
   background: var(--bg-subtle);
   color: var(--ink-primary);
+}
+
+/* Disable background fade while pointer sweeps across the grid so crosshair snaps cleanly */
+.ledger-table.is-hovering .row-title-btn,
+.ledger-table.is-hovering thead th.col-day {
+  transition: none;
 }
 
 .m-cell-wrap {

@@ -163,7 +163,9 @@ export function getWeekDotClass(state: EffectiveCellState): string {
 
 export function formatHhmmInTz(instantMs: number, ianaTimezone: string): string {
   const parts = getLocalTimeParts(instantMs, ianaTimezone);
-  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
+  const meridiem = parts.hour >= 12 ? 'PM' : 'AM';
+  const hour12 = parts.hour % 12 === 0 ? 12 : parts.hour % 12;
+  return `${hour12}:${String(parts.minute).padStart(2, '0')} ${meridiem}`;
 }
 
 export function formatArabicDateFull(isoDate: string): string {
@@ -185,14 +187,12 @@ export function formatArabicDateRange(startIso: string, endIso: string): string 
   return `${s.day} ${sMonth} إلى ${e.day} ${eMonth}`;
 }
 
-export function formatRemainingMinutes(remainingMinutes: number): string {
-  const rounded = Math.max(0, Math.ceil(remainingMinutes));
-  if (rounded === 0) return 'أقل من دقيقة';
-  if (rounded < 60) return `باقي ${rounded} دقيقة`;
-  const hours = Math.floor(rounded / 60);
-  const mins = rounded % 60;
-  if (mins === 0) {
-    return hours === 1 ? 'باقي ساعة واحدة' : `باقي ${hours} ساعات`;
-  }
-  return `باقي ${hours} س ${mins} د`;
+/** Live countdown clock text: `H:MM` or `H:MM:SS` (floored, never negative). */
+export function formatCountdownClock(remainingMs: number, withSeconds: boolean): string {
+  const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const hm = `${hours}:${String(minutes).padStart(2, '0')}`;
+  return withSeconds ? `${hm}:${String(seconds).padStart(2, '0')}` : hm;
 }

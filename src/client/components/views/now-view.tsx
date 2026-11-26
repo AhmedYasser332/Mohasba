@@ -22,7 +22,6 @@ import { ARABIC_NOUN_FORMS, formatArabicCount } from '../../utils/arabic-plural'
 import {
   formatArabicDateFull,
   formatHhmmInTz,
-  formatRemainingMinutes,
   getWeekDotClass,
   resolveCellDisplay,
 } from '../cell-display';
@@ -38,6 +37,7 @@ import {
   IconMosque,
   IconQadaa,
 } from '../icons';
+import { PeriodCountdown } from '../period-countdown';
 
 interface NowViewProps {
   selectedDate: string;
@@ -277,11 +277,9 @@ export function NowView({
     : 0;
 
   const timeStatusText = activeWindow
-    ? activeWindow.isOpen
-      ? formatRemainingMinutes(activeWindow.remainingMinutes)
-      : activeWindow.isExpired
-        ? 'انتهى الوقت'
-        : 'قادم'
+    ? activeWindow.isExpired
+      ? 'انتهى الوقت'
+      : 'قادم'
     : '';
 
   const handleToggleDone = async (action: Action) => {
@@ -759,11 +757,14 @@ export function NowView({
                     settings.iana_timezone,
                   )}
                 </span>
-                <span
-                  className={`window-countdown ${isClosing ? 'closing' : ''}`}
-                >
-                  {timeStatusText}
-                </span>
+                {activeWindow.isOpen ? (
+                  <PeriodCountdown
+                    endInstant={activeWindow.endInstant}
+                    isClosing={isClosing}
+                  />
+                ) : (
+                  <span className="window-countdown">{timeStatusText}</span>
+                )}
               </div>
             ) : (
               <span className="panel-meta">

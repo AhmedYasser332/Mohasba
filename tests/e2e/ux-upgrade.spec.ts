@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { addDaysIso, getWeekDates, resolveIslamicDate } from '../../src/domain/prayer-engine';
 import {
   STARTER_PACK_ACTION_IDS,
@@ -18,6 +18,15 @@ const SCREENSHOT_DIR =
   'C:/Users/ahmed/.gemini/antigravity/brain/f71a0285-daff-460c-9b19-50e9a1762d6f/scratch/screenshots/ux-upgrade';
 
 let serverProcess: ChildProcess | null = null;
+
+/** Must exceed MULTI_TAP_WINDOW_MS (450ms) in week-view.tsx so consecutive cycles stay independent. */
+const MULTI_TAP_SETTLE_MS = 520;
+
+/** Select-first grid: double-click = exactly one state cycle; then let the multi-tap window expire. */
+async function cycleCell(page: Page, cell: Locator): Promise<void> {
+  await cell.dblclick();
+  await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
+}
 
 async function waitForHealth(url: string, timeoutMs = 25_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -312,6 +321,22 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page).not.toHaveURL(/date=/);
     await expect(page).not.toHaveURL(/period=/);
 
+    // Verify 12-hour AM/PM clock & live tappable countdown in الآن (live window is active)
+    const timeMeta = page.locator('.window-time-meta');
+    await expect(timeMeta).toBeVisible();
+    await expect(timeMeta).toContainText(/(AM|PM)\s*-\s*\d{1,2}:\d{2}\s*(AM|PM)/);
+    const liveCountdown = page.getByTestId('period-countdown');
+    if ((await liveCountdown.count()) > 0) {
+      await expect(liveCountdown).toHaveAttribute('aria-pressed', 'false');
+      await expect(liveCountdown).toContainText(/باقي\s+\d+:\d{2}$/);
+      await liveCountdown.click();
+      await expect(liveCountdown).toHaveAttribute('aria-pressed', 'true');
+      await expect(liveCountdown).toContainText(/باقي\s+\d+:\d{2}:\d{2}$/);
+      await liveCountdown.click();
+      await expect(liveCountdown).toHaveAttribute('aria-pressed', 'false');
+      await expect(liveCountdown).toContainText(/باقي\s+\d+:\d{2}$/);
+    }
+
     await page.getByRole('tab', { name: 'الضحى والصباح' }).click();
     await expect(
       page.getByTestId(`now-action-${STARTER_PACK_ACTION_IDS.DHUHA_PRAYER}`),
@@ -363,51 +388,63 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('.toolbar-bulk-group')).toBeVisible();
     await assertTopBarInsideViewport(page, 1440, 900);
 
-    // 6a. Left-click binary cell 3 times: EMPTY -> DONE -> MISSED -> EMPTY with ZERO modal popup
+    // 6a. Select-first: single click only focuses (no state change, no modal);
+    // each double-click cycles EMPTY -> DONE -> MISSED -> EMPTY; triple-click = 2 cycles.
     const fajrCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${todayIslamic}`,
     );
     await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
 
     await fajrCell.click();
+    await expect(fajrCell).toBeFocused();
+    await expect(fajrCell).toHaveClass(/is-grid-focused/);
+    // Hover crosshair: imperative .is-row-hover / .is-col-hover without React lag
+    await fajrCell.hover();
+    await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(/is-row-hover/);
+    await expect(fajrCell.locator('xpath=ancestor::td[1]')).toHaveClass(/is-col-hover/);
+    await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
+    await fajrCell.click();
+    await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
+    await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
+    await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
+
+    await cycleCell(page, fajrCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(fajrCell).toHaveClass(/st-done/);
 
-    await fajrCell.click();
+    await cycleCell(page, fajrCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(fajrCell).toHaveClass(/st-missed/);
 
-    await fajrCell.click();
+    await cycleCell(page, fajrCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
 
-    // Opus A4: Double-click guard — dblclick on clean binary cell executes single cycle to st-done (NOT st-missed)
-    await fajrCell.dblclick();
-    await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
-    await expect(fajrCell).toHaveClass(/st-done/);
-    await expect(fajrCell).not.toHaveClass(/st-missed/);
-    await fajrCell.click();
-    await fajrCell.click();
+    // Triple-click on a clean cell: select + DONE + MISSED ("3 clicks = missed")
+    await fajrCell.click({ clickCount: 3 });
+    await expect(fajrCell).toHaveClass(/st-missed/);
+    await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
+    await cycleCell(page, fajrCell);
     await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
 
-    // 6b. Left-click percentage cell (ورد قراءة القرآن) 4 times: EMPTY -> DONE -> 50% -> MISSED -> EMPTY
+    // 6b. Percentage cell (ورد قراءة القرآن) 4 double-clicks: EMPTY -> DONE -> 50% -> MISSED -> EMPTY
     const quranCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.QURAN_WIRD}-${todayIslamic}`,
     );
-    await quranCell.click();
+    await cycleCell(page, quranCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(quranCell).toHaveClass(/st-done/);
 
-    await quranCell.click();
+    await cycleCell(page, quranCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(quranCell).toHaveClass(/st-percent/);
     await expect(quranCell).toContainText('50%');
 
-    await quranCell.click();
+    await cycleCell(page, quranCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(quranCell).toHaveClass(/st-missed/);
 
-    await quranCell.click();
+    await cycleCell(page, quranCell);
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
     await expect(quranCell).not.toHaveClass(/st-done|st-missed|st-percent/);
 
@@ -449,6 +486,19 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await page.keyboard.press('Control+KeyV');
     await expect(dhuhrCell).toHaveClass(/st-done/);
 
+    // 6d-2. User bug: copy, then plain-CLICK a target cell (must NOT cycle it), then paste
+    const dhuhrQablCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.DHUHR_QABLIYAH}-${todayIslamic}`,
+    );
+    await expect(dhuhrQablCell).not.toHaveClass(/st-done|st-missed/);
+    await dhuhaCell.focus();
+    await page.keyboard.press('Control+KeyC');
+    await dhuhrQablCell.click();
+    await expect(dhuhrQablCell).not.toHaveClass(/st-done|st-missed/);
+    await expect(dhuhaCell).toHaveClass(/is-grid-copied/);
+    await page.keyboard.press('Control+KeyV');
+    await expect(dhuhrQablCell).toHaveClass(/st-done/);
+    await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
     // 6e. Shift+Click 3 cells + Auto-clear after bulk apply
     const asrFardCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.ASR_FARD}-${todayIslamic}`,
@@ -508,7 +558,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const ishaWitrCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.ISHA_WITR}-${todayIslamic}`,
     );
-    await ishaFardCell.click();
+    await cycleCell(page, ishaFardCell);
     await expect(ishaFardCell).toHaveClass(/st-done/);
 
     const ishaFardWrap = ishaFardCell.locator('..');
@@ -589,7 +639,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const pastCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${pastPreActiveDate}`,
     );
-    await pastCell.click();
+    await cycleCell(page, pastCell);
     await expect(pastCell).toHaveClass(/st-done/);
     if (satDate >= twoDaysAgo) {
       await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
@@ -601,26 +651,29 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const futureCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${futureDate}`,
     );
-    await futureCell.click();
+    await cycleCell(page, futureCell);
     await expect(futureCell).toHaveClass(/st-done/);
     if (friDate <= todayIslamic) {
       await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
     }
 
-    // 6l. Crosshair hover & focus highlight (.is-row-crosshair & .is-col-crosshair)
+    // 6l. Crosshair hover (imperative .is-row-hover/.is-col-hover) & focus fallback (.is-row-crosshair/.is-col-crosshair)
     await fajrCell.hover();
     await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
-      /is-row-crosshair/,
+      /is-row-hover/,
     );
     const todayColIdx = weekDates.indexOf(todayIslamic);
     await expect(
       page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
-    ).toHaveClass(/is-col-crosshair/);
+    ).toHaveClass(/is-col-hover/);
     await fajrCell.focus();
     await page.mouse.move(10, 10);
     await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
       /is-row-crosshair/,
     );
+    await expect(
+      page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
+    ).toHaveClass(/is-col-crosshair/);
 
     // 6m. Global Ctrl+Z after bulk bar click + focus restoration + Ctrl+Y Redo
     const habitNoSnoozeCell = page.getByTestId(
@@ -722,7 +775,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const fajrAdhkarCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_ADHKAR}-${todayIslamic}`,
     );
-    await fajrAdhkarCell.click();
+    await cycleCell(page, fajrAdhkarCell);
     await expect(fajrAdhkarCell).toHaveClass(/st-done/);
     await fajrAdhkarCell.click({ button: 'right' });
     await expect(editorDialog).toBeVisible();
@@ -763,8 +816,8 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
 
     // Put Quran cell into 50% and Fajr Fard into DONE for a rich One-Glance screenshot, then wait for sync
-    await quranCell.click();
-    await quranCell.click();
+    await cycleCell(page, quranCell);
+    await cycleCell(page, quranCell);
     await expect(quranCell).toContainText('50%');
 
     await page.screenshot({

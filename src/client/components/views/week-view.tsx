@@ -66,6 +66,9 @@ import {
   IconX,
 } from '../icons';
 
+/** Max gap between clicks/taps on the same cell to count as a repeat (cycle) click. */
+const MULTI_TAP_WINDOW_MS = 450;
+
 interface WeekViewProps {
   oneGlanceMode: boolean;
   onSetOneGlanceMode: (enabled: boolean) => void;
@@ -452,9 +455,21 @@ export function WeekView({
 
   // Desktop spreadsheet grid focus, selection, copy marquee, fill drag, crosshair & clipboard
   const [focusedCell, setFocusedCell] = useState<GridCoord | null>(null);
-  const [hoveredCell, setHoveredCell] = useState<
-    (GridCoord & { side?: 'TIME_BOUND' | 'DAILY_GROUP' }) | null
-  >(null);
+  // Hover crosshair is painted imperatively (no React state) so mouse movement never
+  // re-renders the whole ledger; focus crosshair stays declarative below.
+  const hoverCrosshairRef = useRef<{
+    table: HTMLTableElement;
+    row: number;
+    col: number;
+  } | null>(null);
+  const hoverMarkedElsRef = useRef<Element[]>([]);
+  // Select-first click model: 1st click selects, a repeat click on the same cell cycles.
+  const lastCellTapRef = useRef<{
+    key: string;
+    at: number;
+    plannedFrom?: string;
+    plannedTo?: string;
+  } | null>(null);
   const [selection, setSelection] = useState<GridSelection | null>(null);
   const [extraCoords, setExtraCoords] = useState<GridCoord[]>([]);
   const [copiedRect, setCopiedRect] = useState<GridRect | null>(null);
@@ -713,7 +728,6 @@ export function WeekView({
   }, [selectedCoordsList, visibleGridRows]);
 
   const crosshairCoord = useMemo(() => {
-    if (hoveredCell) return hoveredCell;
     if (!focusedCell || visibleGridRows.length === 0 || weekDates.length === 0) {
       return null;
     }
@@ -730,7 +744,69 @@ export function WeekView({
       col: clampedCol,
       side: visibleGridRows[clampedRow]?.side,
     };
-  }, [focusedCell, hoveredCell, visibleGridRows, weekDates.length]);
+  }, [focusedCell, visibleGridRows, weekDates.length]);
+
+  const unmarkHoverCrosshair = useCallback(() => {
+    for (const el of hoverMarkedElsRef.current) {
+      el.classList.remove('is-row-hover', 'is-col-hover');
+    }
+    hoverMarkedElsRef.current = [];
+  }, []);
+
+  const markHoverCrosshair = useCallback(() => {
+    unmarkHoverCrosshair();
+    const target = hoverCrosshairRef.current;
+    if (!target || !target.table.isConnected) return;
+    const { table, row, col } = target;
+    const marked: Element[] = [];
+    const rowEl = table
+      .querySelector(`[data-grid-row="${row}"][data-grid-col="${col}"]`)
+      ?.closest('tr');
+    if (rowEl) {
+      rowEl.classList.add('is-row-hover');
+      marked.push(rowEl);
+      const titleBtn = rowEl.querySelector('.row-title-btn');
+      if (titleBtn) {
+        titleBtn.classList.add('is-row-hover');
+        marked.push(titleBtn);
+      }
+    }
+    table.querySelectorAll(`[data-col-index="${col}"]`).forEach((el) => {
+      el.classList.add('is-col-hover');
+      marked.push(el);
+    });
+    hoverMarkedElsRef.current = marked;
+  }, [unmarkHoverCrosshair]);
+
+  const handleCellHoverEnter = useCallback(
+    (event: React.PointerEvent<HTMLTableCellElement>, row: number, col: number) => {
+      const table = event.currentTarget.closest('table');
+      if (!table) return;
+      const prev = hoverCrosshairRef.current;
+      if (prev && prev.table === table && prev.row === row && prev.col === col) return;
+      if (prev && prev.table !== table) {
+        prev.table.classList.remove('is-hovering');
+      }
+      hoverCrosshairRef.current = { table, row, col };
+      table.classList.add('is-hovering');
+      markHoverCrosshair();
+    },
+    [markHoverCrosshair],
+  );
+
+  const handleTableHoverLeave = useCallback(
+    (event: React.PointerEvent<HTMLTableElement>) => {
+      event.currentTarget.classList.remove('is-hovering');
+      hoverCrosshairRef.current = null;
+      unmarkHoverCrosshair();
+    },
+    [unmarkHoverCrosshair],
+  );
+
+  // React may rewrite className on rows/cells after a commit; re-apply the hover marks.
+  useLayoutEffect(() => {
+    if (hoverCrosshairRef.current) markHoverCrosshair();
+  });
 
   useEffect(() => {
     extraCoordsRef.current = extraCoords;
@@ -761,7 +837,7 @@ export function WeekView({
     setSelection(null);
     setExtraCoords([]);
     setContextMenu(null);
-  }, []);
+  }, [setContextMenu]);
 
   const clearAllInteractionState = useCallback(
     (options?: { restoreFocus?: boolean }) => {
@@ -778,7 +854,7 @@ export function WeekView({
         restoreFocusHandlerRef.current();
       }
     },
-    [],
+    [setContextMenu],
   );
 
   const navigateWeek = useCallback((nextAnchor: string) => {
@@ -787,8 +863,12 @@ export function WeekView({
     setExtraCoords([]);
     setCopiedRect(null);
     setContextMenu(null);
-    setHoveredCell(null);
-  }, []);
+    if (hoverCrosshairRef.current) {
+      hoverCrosshairRef.current.table.classList.remove('is-hovering');
+      hoverCrosshairRef.current = null;
+    }
+    unmarkHoverCrosshair();
+  }, [setContextMenu, unmarkHoverCrosshair]);
 
   // Mouse drag-select (>6px activation) & Google Sheets Fill Handle pointer tracking
   useEffect(() => {
@@ -1265,9 +1345,18 @@ export function WeekView({
     action: Action,
     logDate: string,
     display: CellDisplayInfo,
-    options?: { showUndoToast?: boolean },
+    options?: {
+      showUndoToast?: boolean;
+      /** Rapid multi-click: state already planned by the previous click but not yet rendered. */
+      stateOverride?: CellDisplayInfo['state'];
+      onPlanned?: (fromState: CellDisplayInfo['state'], toState: CellDisplayInfo['state']) => void;
+    },
   ) => {
     if (isCellPostArchived(action, logDate)) return;
+    const effective: CellDisplayInfo = options?.stateOverride
+      ? { ...display, state: options.stateOverride }
+      : display;
+    display = effective;
 
     // Protect historical QADAA_DONE & DISABLED cells from accidental stray overwrites
     if (display.state === 'QADAA_DONE' || display.state === 'DISABLED') {
@@ -1310,6 +1399,10 @@ export function WeekView({
     }
 
     const prior = capturePriorSnapshot(action, logDate);
+    options?.onPlanned?.(
+      display.state,
+      nextTarget.kind === 'EMPTY' ? 'PENDING' : nextTarget.kind,
+    );
     const mutation = buildCellMutationForTarget(
       action,
       logDate,
@@ -2746,9 +2839,8 @@ export function WeekView({
         key={logDate}
         className={`cell-status ${isColCrosshair ? 'is-col-crosshair' : ''}`}
         role="presentation"
-        onPointerEnter={() =>
-          setHoveredCell({ row: rowIndex, col: colIndex, side: rowSide })
-        }
+        data-col-index={colIndex}
+        onPointerEnter={(e) => handleCellHoverEnter(e, rowIndex, colIndex)}
       >
         <div
           className={`m-cell-wrap ${isFocused ? 'has-focus' : ''} ${
@@ -2875,16 +2967,41 @@ export function WeekView({
             onPointerCancel={longPress.handlePointerCancel}
             onClick={(event) => {
               if (nonInteractive) return;
-              if (event.detail > 1) return;
               if (longPress.shouldSuppressClick(event, desktopCellKey)) return;
               if (suppressNextClickRef.current) {
                 suppressNextClickRef.current = false;
+                lastCellTapRef.current = null;
                 return;
               }
+              // Google-Sheets-style select-first: a plain click only selects/focuses
+              // (keeping any copy marquee for paste). Repeat clicks on the same cell
+              // within MULTI_TAP_WINDOW_MS cycle the state (2 clicks = DONE, 3 = MISSED...).
+              const tapAt = performance.now();
+              const prevTap = lastCellTapRef.current;
+              const isRepeatTap =
+                prevTap !== null &&
+                prevTap.key === coordKey &&
+                tapAt - prevTap.at <= MULTI_TAP_WINDOW_MS;
+              lastCellTapRef.current = { key: coordKey, at: tapAt };
               clearSelection();
               setFocusedCell({ row: rowIndex, col: colIndex });
+              if (!isRepeatTap) return;
+              // If React has not re-rendered since the previous cycle click, continue
+              // from the state that click planned (prevents DONE->DONE on fast triple-clicks).
+              const staleOverride =
+                prevTap?.plannedFrom === display.state && prevTap.plannedTo
+                  ? (prevTap.plannedTo as CellDisplayInfo['state'])
+                  : undefined;
               void handleCellPrimaryCycle(action, logDate, display, {
                 showUndoToast: lastPointerTypeRef.current !== 'mouse',
+                stateOverride: staleOverride,
+                onPlanned: (fromState, toState) => {
+                  if (lastCellTapRef.current?.key === coordKey) {
+                    lastCellTapRef.current.plannedFrom = display.state;
+                    lastCellTapRef.current.plannedTo = toState;
+                  }
+                  void fromState;
+                },
               });
             }}
             onContextMenu={(e) => {
@@ -3259,7 +3376,7 @@ export function WeekView({
               ? AR_STRINGS.week.rightSideTitle
               : AR_STRINGS.week.leftSideTitle
           }
-          onPointerLeave={() => setHoveredCell(null)}
+          onPointerLeave={handleTableHoverLeave}
         >
           <thead>
             <tr role="row">
@@ -3289,6 +3406,7 @@ export function WeekView({
                     className={`col-day ${isToday ? 'is-today' : ''} ${
                       isColCrosshair ? 'is-col-crosshair' : ''
                     }`}
+                    data-col-index={colIdx}
                     scope="col"
                   >
                     <button
@@ -3557,7 +3675,8 @@ export function WeekView({
           data-testid="week-hint-strip"
           aria-label="تلميحات استخدام الجدول"
         >
-          <span className="matrix-hint-item">نقرة: تبديل فوري</span>
+          <span className="matrix-hint-item">نقرة: تحديد</span>
+          <span className="matrix-hint-item">نقرتان: تم، ثلاث: فائت</span>
           <span className="matrix-hint-item">كليك يمين: تعديل وملاحظة</span>
           <span className="matrix-hint-item">سحب أو Shift: تحديد متعدد</span>
           <span className="matrix-hint-item">مقبض الزاوية: تعبئة سريعة</span>
@@ -3583,7 +3702,7 @@ export function WeekView({
                 role="grid"
                 aria-multiselectable="true"
                 aria-label="الجدول الأسبوعي"
-                onPointerLeave={() => setHoveredCell(null)}
+                onPointerLeave={handleTableHoverLeave}
               >
                 <thead>
                   <tr role="row">
@@ -3608,6 +3727,7 @@ export function WeekView({
                           className={`col-day ${isToday ? 'is-today' : ''} ${
                             isColCrosshair ? 'is-col-crosshair' : ''
                           }`}
+                          data-col-index={colIdx}
                           scope="col"
                         >
                           <button

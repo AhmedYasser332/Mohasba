@@ -149,9 +149,10 @@ function formatLastSynced(iso: string | null): string {
   if (!iso) return 'لم تتم المزامنة بعد';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return 'لم تتم المزامنة بعد';
-  const timeText = date.toLocaleTimeString('ar-EG', {
-    hour: '2-digit',
+  const timeText = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
     minute: '2-digit',
+    hour12: true,
   });
   const now = new Date();
   const isSameDay =

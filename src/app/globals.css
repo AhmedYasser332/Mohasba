@@ -1063,6 +1063,38 @@
   color: var(--percent-ink);
 }
 
+/* Live countdown toggle (H:MM <-> H:MM:SS) */
+button.window-countdown.is-live-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -4px -6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--t-fast);
+}
+
+button.window-countdown.is-live-countdown:hover {
+  background: var(--bg-hover);
+}
+
+button.window-countdown.is-live-countdown:focus-visible {
+  outline: 2px solid var(--accent-live);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  button.window-countdown.is-live-countdown {
+    min-height: 44px;
+    margin-block: -12px;
+  }
+}
+
 .horizon-track {
   position: absolute;
   inset-block-end: 0;
