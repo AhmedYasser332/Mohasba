@@ -127,7 +127,7 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+  transition: border-color var(--t-fast);
 }
 
 .col-day-btn:hover {
@@ -148,39 +148,58 @@
   user-select: none;
 }
 
-/* Focus crosshair (React state) shows only while the mouse is not over the table;
-   hover crosshair (imperative .is-*-hover classes) takes over during mouse movement. */
-.ledger-table:not(.is-hovering) thead th.col-day.is-col-crosshair,
-.ledger-table thead th.col-day.is-col-hover {
+/* Focus crosshair (React state) shows only while the pointer is not hovering any matrix cell;
+   pure CSS :has() hover crosshair takes over instantaneously with zero JS / zero React re-renders. */
+.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table thead th.col-day.is-col-crosshair,
+.ledger-table:has(td.cell-status[data-col-index="0"]:hover) thead th.col-day[data-col-index="0"],
+.ledger-table:has(td.cell-status[data-col-index="1"]:hover) thead th.col-day[data-col-index="1"],
+.ledger-table:has(td.cell-status[data-col-index="2"]:hover) thead th.col-day[data-col-index="2"],
+.ledger-table:has(td.cell-status[data-col-index="3"]:hover) thead th.col-day[data-col-index="3"],
+.ledger-table:has(td.cell-status[data-col-index="4"]:hover) thead th.col-day[data-col-index="4"],
+.ledger-table:has(td.cell-status[data-col-index="5"]:hover) thead th.col-day[data-col-index="5"],
+.ledger-table:has(td.cell-status[data-col-index="6"]:hover) thead th.col-day[data-col-index="6"] {
   background: var(--bg-hover);
   color: var(--ink-primary);
 }
 
-.ledger-table:not(.is-hovering) thead th.col-day.is-today.is-col-crosshair,
-.ledger-table.is-hovering thead th.col-day.is-today.is-col-hover {
-  background: var(--accent-live-soft);
+.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table thead th.col-day.is-today.is-col-crosshair,
+.ledger-table:has(td.cell-status[data-col-index="0"]:hover) thead th.col-day.is-today[data-col-index="0"],
+.ledger-table:has(td.cell-status[data-col-index="1"]:hover) thead th.col-day.is-today[data-col-index="1"],
+.ledger-table:has(td.cell-status[data-col-index="2"]:hover) thead th.col-day.is-today[data-col-index="2"],
+.ledger-table:has(td.cell-status[data-col-index="3"]:hover) thead th.col-day.is-today[data-col-index="3"],
+.ledger-table:has(td.cell-status[data-col-index="4"]:hover) thead th.col-day.is-today[data-col-index="4"],
+.ledger-table:has(td.cell-status[data-col-index="5"]:hover) thead th.col-day.is-today[data-col-index="5"],
+.ledger-table:has(td.cell-status[data-col-index="6"]:hover) thead th.col-day.is-today[data-col-index="6"] {
+  background: color-mix(in srgb, var(--accent-live) 22%, transparent);
   color: var(--accent-live);
+  box-shadow: inset 0 -2px 0 var(--accent-live);
 }
 
-.ledger-table:not(.is-hovering) td.cell-status.is-col-crosshair,
-.ledger-table td.cell-status.is-col-hover {
-  background: color-mix(in srgb, var(--accent-live-soft) 35%, transparent);
+.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table td.cell-status.is-col-crosshair,
+.ledger-table:has(td.cell-status[data-col-index="0"]:hover) td.cell-status[data-col-index="0"],
+.ledger-table:has(td.cell-status[data-col-index="1"]:hover) td.cell-status[data-col-index="1"],
+.ledger-table:has(td.cell-status[data-col-index="2"]:hover) td.cell-status[data-col-index="2"],
+.ledger-table:has(td.cell-status[data-col-index="3"]:hover) td.cell-status[data-col-index="3"],
+.ledger-table:has(td.cell-status[data-col-index="4"]:hover) td.cell-status[data-col-index="4"],
+.ledger-table:has(td.cell-status[data-col-index="5"]:hover) td.cell-status[data-col-index="5"],
+.ledger-table:has(td.cell-status[data-col-index="6"]:hover) td.cell-status[data-col-index="6"] {
+  background: color-mix(in srgb, var(--accent-live) 10%, transparent);
 }
 
-.ledger-table:not(.is-hovering) tbody tr.data-row.is-row-crosshair,
-.ledger-table tbody tr.data-row.is-row-hover {
-  background: color-mix(in srgb, var(--accent-live-soft) 28%, transparent);
+.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table tbody tr.data-row.is-row-crosshair,
+.ledger-table tbody tr.data-row:has(> td.cell-status:hover) {
+  background: color-mix(in srgb, var(--accent-live) 8%, transparent);
 }
 
-.ledger-table:not(.is-hovering) .row-title-btn.is-row-crosshair,
-.ledger-table .row-title-btn.is-row-hover {
-  background: var(--bg-subtle);
+.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table .row-title-btn.is-row-crosshair:not(.is-row-selected),
+.ledger-table tbody tr.data-row:has(> td.cell-status:hover) .row-title-btn:not(.is-row-selected) {
+  background: var(--bg-hover);
   color: var(--ink-primary);
 }
 
-/* Disable background fade while pointer sweeps across the grid so crosshair snaps cleanly */
-.ledger-table.is-hovering .row-title-btn,
-.ledger-table.is-hovering thead th.col-day {
+/* Crosshair row/column headers snap instantaneously (0ms) on both entry and exit */
+.matrix-desktop-wrap .row-title-btn,
+.matrix-desktop-wrap thead th.col-day {
   transition: none;
 }
 
@@ -261,8 +280,8 @@
 
 .m-fill-handle {
   position: absolute;
-  inset-block-end: -2px;
-  inset-inline-end: -2px;
+  inset-block-end: -1px;
+  inset-inline-end: -1px;
   width: 7px;
   height: 7px;
   background: var(--accent-live);
@@ -278,7 +297,11 @@
 .m-fill-handle::before {
   content: '';
   position: absolute;
-  inset: -4px;
+  inset: -2px;
+}
+
+.overview-split .m-fill-handle::before {
+  inset: -1px;
 }
 
 .m-cell-wrap.is-fill-eligible:hover .m-fill-handle,
@@ -328,7 +351,7 @@
   font: inherit;
   text-align: start;
   cursor: pointer;
-  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+  transition: border-color var(--t-fast);
 }
 
 .row-title-btn:hover {
@@ -351,13 +374,25 @@
 
 .overview-split .ledger-table td.cell-period {
   position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
 }
 
 .cell-period-inner {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   width: 100%;
+  padding-block: 1px;
+}
+
+.overview-split .ledger-table td.cell-period[rowspan="1"] .cell-period-inner {
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 3px;
 }
 
 .period-select-btn {
@@ -367,48 +402,71 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  line-height: inherit;
-  padding-block: 2px;
+  line-height: 1.15;
+  padding-block: 1px;
   padding-inline: 3px;
   cursor: pointer;
-  transition: background-color var(--t-fast), border-color var(--t-fast);
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 
 .period-select-btn:hover {
   background: var(--bg-hover);
 }
 
+.period-select-btn.is-period-selected {
+  background: var(--accent-live-soft);
+  border-color: var(--accent-live);
+  color: var(--accent-live);
+}
+
 .period-quick-done-btn {
-  position: absolute;
-  inset-block-start: 2px;
-  inset-inline-end: 2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  border: 1px solid var(--done-border);
-  border-radius: var(--r-cell);
-  background: var(--done-fill);
-  color: var(--done-ink);
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  background: var(--bg-surface);
+  color: var(--ink-muted);
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  z-index: 2;
-  transition: opacity var(--t-fast), background-color var(--t-fast);
+  transition: opacity var(--t-fast), background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+
+.period-quick-done-btn .icon-sm {
+  width: 11px;
+  height: 11px;
 }
 
 .overview-split .ledger-table td.cell-period:hover .period-quick-done-btn,
-.overview-split .ledger-table td.cell-period:focus-within .period-quick-done-btn {
+.overview-split .ledger-table td.cell-period:focus-within .period-quick-done-btn,
+.period-quick-done-btn.is-all-done {
   opacity: 1;
   pointer-events: auto;
 }
 
 .period-quick-done-btn:hover {
-  background: var(--accent-live);
-  border-color: var(--accent-live);
-  color: var(--bg-surface);
+  background: var(--done-fill);
+  border-color: var(--done-border);
+  color: var(--done-ink);
+}
+
+.period-quick-done-btn.is-all-done {
+  background: var(--done-ink);
+  border-color: var(--done-ink);
+  color: var(--ink-inverse);
+}
+
+.period-quick-done-btn.is-all-done:hover {
+  background: color-mix(in srgb, var(--done-ink) 80%, var(--bg-surface));
+  border-color: var(--done-ink);
+  color: var(--ink-inverse);
 }
 
 .group-row-bar {
@@ -428,7 +486,7 @@
 .group-row-actions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -437,16 +495,29 @@
   padding-block: 2px;
   padding-inline: 8px;
   font-size: 0.72rem;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.group-select-btn.is-period-selected {
+  background: var(--accent-live-soft);
+  border-color: var(--accent-live);
+  color: var(--accent-live);
 }
 
 .group-row-bar .group-quick-done-btn {
-  position: static;
   width: 24px;
   height: 24px;
 }
 
+.group-row-bar .group-quick-done-btn .icon-sm {
+  width: 13px;
+  height: 13px;
+}
+
 .ledger-table tbody tr.group-row:hover .group-quick-done-btn,
-.ledger-table tbody tr.group-row:focus-within .group-quick-done-btn {
+.ledger-table tbody tr.group-row:focus-within .group-quick-done-btn,
+.group-row-bar .group-quick-done-btn.is-all-done {
   opacity: 1;
   pointer-events: auto;
 }

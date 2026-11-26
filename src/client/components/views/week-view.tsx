@@ -455,14 +455,6 @@ export function WeekView({
 
   // Desktop spreadsheet grid focus, selection, copy marquee, fill drag, crosshair & clipboard
   const [focusedCell, setFocusedCell] = useState<GridCoord | null>(null);
-  // Hover crosshair is painted imperatively (no React state) so mouse movement never
-  // re-renders the whole ledger; focus crosshair stays declarative below.
-  const hoverCrosshairRef = useRef<{
-    table: HTMLTableElement;
-    row: number;
-    col: number;
-  } | null>(null);
-  const hoverMarkedElsRef = useRef<Element[]>([]);
   // Select-first click model: 1st click selects, a repeat click on the same cell cycles.
   const lastCellTapRef = useRef<{
     key: string;
@@ -501,7 +493,24 @@ export function WeekView({
     anchorSide: 'TIME_BOUND' | 'DAILY_GROUP';
     active: boolean;
   } | null>(null);
+  const periodAnchorRef = useRef<{
+    periodId: string;
+    side: 'TIME_BOUND' | 'DAILY_GROUP';
+    colIdx: number;
+  } | null>(null);
+  const periodDragRef = useRef<{
+    startX: number;
+    startY: number;
+    anchorPeriodId: string;
+    anchorFirstRow: number;
+    anchorLastRow: number;
+    anchorSide: 'TIME_BOUND' | 'DAILY_GROUP';
+    colIdx: number;
+    lastPeriodId: string;
+    active: boolean;
+  } | null>(null);
   const suppressNextClickRef = useRef(false);
+  const suppressNextPeriodClickRef = useRef(false);
 
   // Respect settings.default_week_mode on initial mount (Desktop >= 1024px)
   useEffect(() => {
@@ -746,68 +755,6 @@ export function WeekView({
     };
   }, [focusedCell, visibleGridRows, weekDates.length]);
 
-  const unmarkHoverCrosshair = useCallback(() => {
-    for (const el of hoverMarkedElsRef.current) {
-      el.classList.remove('is-row-hover', 'is-col-hover');
-    }
-    hoverMarkedElsRef.current = [];
-  }, []);
-
-  const markHoverCrosshair = useCallback(() => {
-    unmarkHoverCrosshair();
-    const target = hoverCrosshairRef.current;
-    if (!target || !target.table.isConnected) return;
-    const { table, row, col } = target;
-    const marked: Element[] = [];
-    const rowEl = table
-      .querySelector(`[data-grid-row="${row}"][data-grid-col="${col}"]`)
-      ?.closest('tr');
-    if (rowEl) {
-      rowEl.classList.add('is-row-hover');
-      marked.push(rowEl);
-      const titleBtn = rowEl.querySelector('.row-title-btn');
-      if (titleBtn) {
-        titleBtn.classList.add('is-row-hover');
-        marked.push(titleBtn);
-      }
-    }
-    table.querySelectorAll(`[data-col-index="${col}"]`).forEach((el) => {
-      el.classList.add('is-col-hover');
-      marked.push(el);
-    });
-    hoverMarkedElsRef.current = marked;
-  }, [unmarkHoverCrosshair]);
-
-  const handleCellHoverEnter = useCallback(
-    (event: React.PointerEvent<HTMLTableCellElement>, row: number, col: number) => {
-      const table = event.currentTarget.closest('table');
-      if (!table) return;
-      const prev = hoverCrosshairRef.current;
-      if (prev && prev.table === table && prev.row === row && prev.col === col) return;
-      if (prev && prev.table !== table) {
-        prev.table.classList.remove('is-hovering');
-      }
-      hoverCrosshairRef.current = { table, row, col };
-      table.classList.add('is-hovering');
-      markHoverCrosshair();
-    },
-    [markHoverCrosshair],
-  );
-
-  const handleTableHoverLeave = useCallback(
-    (event: React.PointerEvent<HTMLTableElement>) => {
-      event.currentTarget.classList.remove('is-hovering');
-      hoverCrosshairRef.current = null;
-      unmarkHoverCrosshair();
-    },
-    [unmarkHoverCrosshair],
-  );
-
-  // React may rewrite className on rows/cells after a commit; re-apply the hover marks.
-  useLayoutEffect(() => {
-    if (hoverCrosshairRef.current) markHoverCrosshair();
-  });
-
   useEffect(() => {
     extraCoordsRef.current = extraCoords;
   }, [extraCoords]);
@@ -819,14 +766,35 @@ export function WeekView({
     rightRowCount: 0,
     totalRows: 0,
     visibleSides: [] as ('TIME_BOUND' | 'DAILY_GROUP')[],
+    periodRanges: new Map<
+      string,
+      { firstRow: number; lastRow: number; side: 'TIME_BOUND' | 'DAILY_GROUP' }
+    >(),
   });
 
   useEffect(() => {
+    const periodRanges = new Map<
+      string,
+      { firstRow: number; lastRow: number; side: 'TIME_BOUND' | 'DAILY_GROUP' }
+    >();
+    for (const r of visibleGridRows) {
+      const existing = periodRanges.get(r.group.id);
+      if (existing) {
+        existing.lastRow = r.rowIndex;
+      } else {
+        periodRanges.set(r.group.id, {
+          firstRow: r.rowIndex,
+          lastRow: r.rowIndex,
+          side: r.side,
+        });
+      }
+    }
     gridBoundsRef.current = {
       oneGlanceMode,
       rightRowCount,
       totalRows: visibleGridRows.length,
       visibleSides: visibleGridRows.map((r) => r.side),
+      periodRanges,
     };
   }, [oneGlanceMode, rightRowCount, visibleGridRows]);
 
@@ -844,6 +812,8 @@ export function WeekView({
       fillDragRef.current = null;
       setFillDrag(null);
       dragSelectRef.current = null;
+      periodDragRef.current = null;
+      periodAnchorRef.current = null;
       setIsGridDragging(false);
       setSelection(null);
       setExtraCoords([]);
@@ -857,18 +827,18 @@ export function WeekView({
     [setContextMenu],
   );
 
-  const navigateWeek = useCallback((nextAnchor: string) => {
-    setWeekAnchorDate(nextAnchor);
-    setSelection(null);
-    setExtraCoords([]);
-    setCopiedRect(null);
-    setContextMenu(null);
-    if (hoverCrosshairRef.current) {
-      hoverCrosshairRef.current.table.classList.remove('is-hovering');
-      hoverCrosshairRef.current = null;
-    }
-    unmarkHoverCrosshair();
-  }, [setContextMenu, unmarkHoverCrosshair]);
+  const navigateWeek = useCallback(
+    (nextAnchor: string) => {
+      setWeekAnchorDate(nextAnchor);
+      setSelection(null);
+      setExtraCoords([]);
+      setCopiedRect(null);
+      setContextMenu(null);
+      periodDragRef.current = null;
+      periodAnchorRef.current = null;
+    },
+    [setContextMenu],
+  );
 
   // Mouse drag-select (>6px activation) & Google Sheets Fill Handle pointer tracking
   useEffect(() => {
@@ -937,6 +907,53 @@ export function WeekView({
         return;
       }
 
+      const pd = periodDragRef.current;
+      if (pd) {
+        const el = document.elementFromPoint(event.clientX, event.clientY);
+        const periodEl = el?.closest<HTMLElement>('[data-period-id]');
+        const hoveredPeriodId = periodEl?.dataset.periodId;
+        const dist = Math.hypot(
+          event.clientX - pd.startX,
+          event.clientY - pd.startY,
+        );
+        if (!pd.active) {
+          if (
+            dist <= 4 &&
+            (!hoveredPeriodId || hoveredPeriodId === pd.anchorPeriodId)
+          ) {
+            return;
+          }
+          pd.active = true;
+          setIsGridDragging(true);
+          setExtraCoords([]);
+          window.getSelection()?.removeAllRanges();
+          periodAnchorRef.current = {
+            periodId: pd.anchorPeriodId,
+            side: pd.anchorSide,
+            colIdx: pd.colIdx,
+          };
+          setSelection({
+            anchor: { row: pd.anchorFirstRow, col: pd.colIdx },
+            extent: { row: pd.anchorLastRow, col: pd.colIdx },
+          });
+        }
+        if (!hoveredPeriodId) return;
+        const bounds = gridBoundsRef.current;
+        const targetRange = bounds.periodRanges.get(hoveredPeriodId);
+        if (!targetRange) return;
+        if (bounds.oneGlanceMode && targetRange.side !== pd.anchorSide) return;
+        if (hoveredPeriodId === pd.lastPeriodId) return;
+        pd.lastPeriodId = hoveredPeriodId;
+        const minRow = Math.min(pd.anchorFirstRow, targetRange.firstRow);
+        const maxRow = Math.max(pd.anchorLastRow, targetRange.lastRow);
+        setSelection({
+          anchor: { row: minRow, col: pd.colIdx },
+          extent: { row: maxRow, col: pd.colIdx },
+        });
+        setFocusedCell({ row: targetRange.firstRow, col: pd.colIdx });
+        return;
+      }
+
       const ds = dragSelectRef.current;
       if (!ds) return;
       if (!ds.active) {
@@ -981,12 +998,18 @@ export function WeekView({
         setIsGridDragging(false);
         document.body.style.cursor = '';
         suppressNextClickRef.current = true;
-        setTimeout(() => {
-          suppressNextClickRef.current = false;
-        }, 50);
         if (event.type !== 'pointercancel') {
           fillCommitHandlerRef.current(fd);
         }
+      }
+
+      const pd = periodDragRef.current;
+      if (pd) {
+        if (pd.active) {
+          setIsGridDragging(false);
+          suppressNextPeriodClickRef.current = true;
+        }
+        periodDragRef.current = null;
       }
 
       const ds = dragSelectRef.current;
@@ -994,9 +1017,6 @@ export function WeekView({
       if (ds.active) {
         setIsGridDragging(false);
         suppressNextClickRef.current = true;
-        setTimeout(() => {
-          suppressNextClickRef.current = false;
-        }, 50);
         if (
           ds.lastExtent.row === ds.anchor.row &&
           ds.lastExtent.col === ds.anchor.col &&
@@ -1211,23 +1231,52 @@ export function WeekView({
       entry,
     ];
 
-    const batchStillHeld =
-      entry.batchId !== null &&
-      outbox.some((o) => o.batch_id === entry.batchId && o.state === 'held');
-    const mutStillHeld =
-      entry.mutationId !== null &&
-      outbox.some(
-        (o) => o.mutation_id === entry.mutationId && o.state === 'held',
-      );
+    const priorByKey = new Map(
+      entry.priorInputs.map((p) => [makeCellKey(p.action.id, p.logDate), p]),
+    );
+    const doesHeldMatchPrior = (items: typeof outbox): boolean => {
+      if (items.length === 0 || items.length !== entry.priorInputs.length) {
+        return false;
+      }
+      for (const item of items) {
+        const prior = priorByKey.get(item.cell_key);
+        if (!prior) return false;
+        const snap = item.undo_prior_snapshot;
+        if (
+          (snap?.status ?? null) !== (prior.status ?? null) ||
+          (snap?.percent_value ?? null) !== (prior.percent_value ?? null) ||
+          (snap?.availability_override ?? null) !==
+            (prior.availability_override ?? null) ||
+          (snap?.note ?? null) !== (prior.note ?? null)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    };
 
-    if (batchStillHeld && entry.batchId) {
+    const heldBatchItems =
+      entry.batchId !== null
+        ? outbox.filter(
+            (o) => o.batch_id === entry.batchId && o.state === 'held',
+          )
+        : [];
+    const heldMutItems =
+      entry.mutationId !== null
+        ? outbox.filter(
+            (o) => o.mutation_id === entry.mutationId && o.state === 'held',
+          )
+        : [];
+
+    if (entry.batchId && doesHeldMatchPrior(heldBatchItems)) {
       await undoBatch(entry.batchId);
       dismissUndoToast();
-    } else if (mutStillHeld && entry.mutationId) {
+    } else if (entry.mutationId && doesHeldMatchPrior(heldMutItems)) {
       await undoMutation(entry.mutationId);
       dismissUndoToast();
     } else if (entry.priorInputs.length > 0) {
       await logCellBatch(entry.priorInputs, 0, false);
+      dismissUndoToast();
     }
 
     onActionFeedback('تم التراجع عن آخر تعديل');
@@ -2036,11 +2085,113 @@ export function WeekView({
     focusGridCell(rowIndex, 0);
   };
 
-  const handleSelectPeriodColumn = (periodId: string, colIdx: number) => {
-    const matchingRows = visibleGridRows.filter((r) => r.group.id === periodId);
-    if (matchingRows.length === 0) return;
-    const firstRow = matchingRows[0]!.rowIndex;
-    const lastRow = matchingRows[matchingRows.length - 1]!.rowIndex;
+  const getPeriodRowRange = (
+    periodId: string,
+  ): {
+    firstRow: number;
+    lastRow: number;
+    side: 'TIME_BOUND' | 'DAILY_GROUP';
+  } | null => {
+    let firstRow = -1;
+    let lastRow = -1;
+    let side: 'TIME_BOUND' | 'DAILY_GROUP' = 'TIME_BOUND';
+    for (const r of visibleGridRows) {
+      if (r.group.id === periodId) {
+        if (firstRow === -1) {
+          firstRow = r.rowIndex;
+          side = r.side;
+        }
+        lastRow = r.rowIndex;
+      }
+    }
+    if (firstRow === -1) return null;
+    return { firstRow, lastRow, side };
+  };
+
+  const isPeriodFullySelected = (periodId: string, colIdx: number): boolean => {
+    const range = getPeriodRowRange(periodId);
+    if (!range) return false;
+    for (let r = range.firstRow; r <= range.lastRow; r += 1) {
+      if (!selectedCoordSet.has(`${r}:${colIdx}`)) return false;
+    }
+    return true;
+  };
+
+  const getPeriodQuickDoneState = (
+    group: Period,
+    logDate: string,
+  ): { hasEditable: boolean; allDone: boolean } => {
+    if (!logDate) return { hasEditable: false, allDone: false };
+    const groupActions = actionsByPeriodId.get(group.id) ?? [];
+    let editableCount = 0;
+    let nonDoneCount = 0;
+    for (const action of groupActions) {
+      if (isCellPostArchived(action, logDate)) continue;
+      const display = resolveDisplay(action, logDate);
+      if (display.state === 'DISABLED' || display.state === 'QADAA_DONE') {
+        continue;
+      }
+      editableCount += 1;
+      if (display.state !== 'DONE') {
+        nonDoneCount += 1;
+      }
+    }
+    return {
+      hasEditable: editableCount > 0,
+      allDone: editableCount > 0 && nonDoneCount === 0,
+    };
+  };
+
+  const handleSelectPeriodColumn = (
+    periodId: string,
+    colIdx: number,
+    event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean },
+  ) => {
+    const range = getPeriodRowRange(periodId);
+    if (!range) return;
+    const { firstRow, lastRow, side } = range;
+
+    const periodCoords: GridCoord[] = [];
+    for (let r = firstRow; r <= lastRow; r += 1) {
+      periodCoords.push({ row: r, col: colIdx });
+    }
+
+    if (event && (event.ctrlKey || event.metaKey)) {
+      toggleCoordsInSelection(periodCoords);
+      periodAnchorRef.current = { periodId, side, colIdx };
+      focusGridCell(firstRow, colIdx);
+      return;
+    }
+
+    if (event?.shiftKey) {
+      let anchorRange = range;
+      const storedAnchor = periodAnchorRef.current;
+      if (
+        storedAnchor &&
+        (!oneGlanceMode || storedAnchor.side === side)
+      ) {
+        const resolved = getPeriodRowRange(storedAnchor.periodId);
+        if (resolved) anchorRange = resolved;
+      } else {
+        const fallbackRow = selection?.anchor.row ?? effectiveFocusedCell?.row;
+        if (fallbackRow !== undefined) {
+          const fallbackMeta = visibleGridRows[fallbackRow];
+          if (fallbackMeta && (!oneGlanceMode || fallbackMeta.side === side)) {
+            const resolved = getPeriodRowRange(fallbackMeta.group.id);
+            if (resolved) anchorRange = resolved;
+          }
+        }
+      }
+      const minRow = Math.min(anchorRange.firstRow, firstRow);
+      const maxRow = Math.max(anchorRange.lastRow, lastRow);
+      setExtraCoords([]);
+      setSelection({
+        anchor: { row: minRow, col: colIdx },
+        extent: { row: maxRow, col: colIdx },
+      });
+      focusGridCell(firstRow, colIdx);
+      return;
+    }
 
     const isAlreadySelected =
       extraCoords.length === 0 &&
@@ -2052,9 +2203,11 @@ export function WeekView({
 
     if (isAlreadySelected) {
       clearSelection();
+      periodAnchorRef.current = null;
       return;
     }
 
+    periodAnchorRef.current = { periodId, side, colIdx };
     setExtraCoords([]);
     setSelection({
       anchor: { row: firstRow, col: colIdx },
@@ -2063,39 +2216,95 @@ export function WeekView({
     focusGridCell(firstRow, colIdx);
   };
 
+  const handlePeriodHeaderPointerDown = (
+    e: React.PointerEvent<HTMLElement>,
+    group: Period,
+    colIdx: number,
+  ) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    if ((e.target as Element | null)?.closest('.period-quick-done-btn')) {
+      return;
+    }
+    suppressNextPeriodClickRef.current = false;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      return;
+    }
+    const range = getPeriodRowRange(group.id);
+    if (!range) return;
+    periodDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      anchorPeriodId: group.id,
+      anchorFirstRow: range.firstRow,
+      anchorLastRow: range.lastRow,
+      anchorSide: range.side,
+      colIdx,
+      lastPeriodId: group.id,
+      active: false,
+    };
+  };
+
   const handleQuickCompletePeriod = async (group: Period, logDate: string) => {
     if (!logDate) return;
     const groupActions = actionsByPeriodId.get(group.id) ?? [];
-    const mutations: CellMutationInput[] = [];
-    const priorInputs: CellMutationInput[] = [];
+    const editableEntries: Array<{ action: Action; display: CellDisplayInfo }> =
+      [];
 
     for (const action of groupActions) {
       if (isCellPostArchived(action, logDate)) continue;
       const display = resolveDisplay(action, logDate);
-      if (
-        display.state === 'DISABLED' ||
-        display.state === 'DONE' ||
-        display.state === 'QADAA_DONE'
-      ) {
+      if (display.state === 'DISABLED' || display.state === 'QADAA_DONE') {
         continue;
       }
-      priorInputs.push(capturePriorSnapshot(action, logDate));
-      mutations.push(
-        buildCellMutationForTarget(action, logDate, display, {
-          kind: 'DONE',
-          percentValue: null,
-        }),
-      );
+      editableEntries.push({ action, display });
     }
 
     clearSelection();
 
-    if (mutations.length === 0) {
-      onActionFeedback(`جميع أعمال «${group.title}» مكتملة بالفعل`);
+    if (editableEntries.length === 0) {
+      onActionFeedback(`لا توجد أعمال قابلة للتحديث في «${group.title}»`);
       return;
     }
 
-    const res = await logCellBatch(mutations, DEFAULT_UNDO_HOLD_MS, true);
+    const incompleteEntries = editableEntries.filter(
+      (entry) => entry.display.state !== 'DONE',
+    );
+    const isToggleOff = incompleteEntries.length === 0;
+    const targetEntries = isToggleOff ? editableEntries : incompleteEntries;
+    const nextSnapshot: ClipboardCellSnapshot = isToggleOff
+      ? { kind: 'EMPTY', percentValue: null }
+      : { kind: 'DONE', percentValue: null };
+
+    const mutations: CellMutationInput[] = [];
+    const priorInputs: CellMutationInput[] = [];
+    for (const { action, display } of targetEntries) {
+      priorInputs.push(capturePriorSnapshot(action, logDate));
+      mutations.push(
+        buildCellMutationForTarget(action, logDate, display, nextSnapshot),
+      );
+    }
+
+    if (mutations.length === 0) return;
+
+    const hasActiveOutbox = mutations.some((m) => {
+      const cellKey = makeCellKey(m.action.id, m.logDate);
+      return outbox.some(
+        (o) =>
+          o.cell_key === cellKey &&
+          o.attempt_count === 0 &&
+          (o.state === 'held' || o.state === 'pending'),
+      );
+    });
+    if (hasActiveOutbox) {
+      dismissUndoToast();
+    }
+
+    const res = await logCellBatch(
+      mutations,
+      hasActiveOutbox ? 0 : DEFAULT_UNDO_HOLD_MS,
+      !hasActiveOutbox,
+    );
     if (res.items.length > 0) {
       pushUndoEntry({
         batchId: res.batchId,
@@ -2105,7 +2314,9 @@ export function WeekView({
       });
     }
     onActionFeedback(
-      `تم إكمال ${group.title} (${formatArabicCells(mutations.length)})`,
+      isToggleOff
+        ? `تم إلغاء إكمال ${group.title} (${formatArabicCells(mutations.length)})`
+        : `تم إكمال ${group.title} (${formatArabicCells(mutations.length)})`,
     );
   };
 
@@ -2259,7 +2470,8 @@ export function WeekView({
         selectedCellCount > 0 ||
         copiedRect !== null ||
         fillDragRef.current !== null ||
-        dragSelectRef.current !== null
+        dragSelectRef.current !== null ||
+        periodDragRef.current !== null
       ) {
         e.preventDefault();
         e.stopPropagation();
@@ -2364,7 +2576,7 @@ export function WeekView({
       if (
         target instanceof Element &&
         target.closest(
-          '[data-grid-row][data-grid-col], .col-day-btn, .row-title-btn, .period-select-btn, .period-quick-done-btn, .group-select-btn',
+          '[data-grid-row][data-grid-col], .col-day-btn, .row-title-btn, .cell-period, .period-select-btn, .period-quick-done-btn, .group-select-btn',
         )
       ) {
         return;
@@ -2466,7 +2678,8 @@ export function WeekView({
         selection ||
         extraCoords.length > 0 ||
         fillDragRef.current ||
-        dragSelectRef.current
+        dragSelectRef.current ||
+        periodDragRef.current
       ) {
         event.preventDefault();
         clearAllInteractionState({ restoreFocus: true });
@@ -2840,7 +3053,6 @@ export function WeekView({
         className={`cell-status ${isColCrosshair ? 'is-col-crosshair' : ''}`}
         role="presentation"
         data-col-index={colIndex}
-        onPointerEnter={(e) => handleCellHoverEnter(e, rowIndex, colIndex)}
       >
         <div
           className={`m-cell-wrap ${isFocused ? 'has-focus' : ''} ${
@@ -2914,9 +3126,6 @@ export function WeekView({
               if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
                 suppressNextClickRef.current = true;
-                setTimeout(() => {
-                  suppressNextClickRef.current = false;
-                }, 50);
                 toggleCoordsInSelection([{ row: rowIndex, col: colIndex }]);
                 focusGridCell(rowIndex, colIndex);
                 return;
@@ -2925,9 +3134,6 @@ export function WeekView({
               if (e.shiftKey) {
                 e.preventDefault();
                 suppressNextClickRef.current = true;
-                setTimeout(() => {
-                  suppressNextClickRef.current = false;
-                }, 50);
                 const anchor =
                   selection?.anchor ??
                   effectiveFocusedCell ?? { row: rowIndex, col: colIndex };
@@ -2968,7 +3174,12 @@ export function WeekView({
             onClick={(event) => {
               if (nonInteractive) return;
               if (longPress.shouldSuppressClick(event, desktopCellKey)) return;
-              if (suppressNextClickRef.current) {
+              if (
+                suppressNextClickRef.current ||
+                event.shiftKey ||
+                event.ctrlKey ||
+                event.metaKey
+              ) {
                 suppressNextClickRef.current = false;
                 lastCellTapRef.current = null;
                 return;
@@ -3102,10 +3313,19 @@ export function WeekView({
       weekDates.includes(todayIslamicDate) && livePeriodIds.has(group.id);
     const liveWin = isLive ? todayWindowsByPeriodId.get(group.id) : undefined;
     const groupDropProps = dnd.getGroupDropProps(group.id);
+    const periodDoneState = getPeriodQuickDoneState(group, activeDayDate);
+    const isPeriodSelected =
+      !isCollapsed && isPeriodFullySelected(group.id, activeDayCol);
 
     return (
       <React.Fragment key={group.id}>
-        <tr className="group-row" role="row" {...groupDropProps}>
+        <tr
+          className="group-row"
+          role="row"
+          data-period-id={group.id}
+          data-period-side={group.side}
+          {...groupDropProps}
+        >
           <td colSpan={9}>
             <div className="group-row-bar">
               <button
@@ -3145,16 +3365,27 @@ export function WeekView({
               <div className="group-row-actions">
                 <button
                   type="button"
-                  className="btn group-select-btn"
+                  className={`btn group-select-btn ${isPeriodSelected ? 'is-period-selected' : ''}`}
+                  data-period-id={group.id}
+                  data-period-side={group.side}
                   aria-label={`تحديد مجموعة ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
-                  onClick={() => {
+                  onPointerDown={(e) => {
+                    if (!isCollapsed) {
+                      handlePeriodHeaderPointerDown(e, group, activeDayCol);
+                    }
+                  }}
+                  onClick={(e) => {
+                    if (suppressNextPeriodClickRef.current) {
+                      suppressNextPeriodClickRef.current = false;
+                      return;
+                    }
                     if (isCollapsed) {
                       setCollapsedGroups((prev) => ({
                         ...prev,
                         [group.id]: false,
                       }));
                     } else {
-                      handleSelectPeriodColumn(group.id, activeDayCol);
+                      handleSelectPeriodColumn(group.id, activeDayCol, e);
                     }
                   }}
                 >
@@ -3162,9 +3393,20 @@ export function WeekView({
                 </button>
                 <button
                   type="button"
-                  className="period-quick-done-btn group-quick-done-btn"
-                  aria-label={`إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
-                  title={`إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`}
+                  className={`period-quick-done-btn group-quick-done-btn ${
+                    periodDoneState.allDone ? 'is-all-done' : ''
+                  }`}
+                  aria-pressed={periodDoneState.allDone}
+                  aria-label={
+                    periodDoneState.allDone
+                      ? `إلغاء إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`
+                      : `إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`
+                  }
+                  title={
+                    periodDoneState.allDone
+                      ? `إلغاء إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`
+                      : `إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`
+                  }
                   onClick={() => {
                     void handleQuickCompletePeriod(group, activeDayDate);
                   }}
@@ -3198,6 +3440,8 @@ export function WeekView({
                   isRowCrosshair ? 'is-row-crosshair' : ''
                 }`}
                 role="row"
+                data-period-id={group.id}
+                data-period-side={group.side}
                 {...itemProps}
               >
                 <td className="cell-title" title={action.title}>
@@ -3376,7 +3620,6 @@ export function WeekView({
               ? AR_STRINGS.week.rightSideTitle
               : AR_STRINGS.week.leftSideTitle
           }
-          onPointerLeave={handleTableHoverLeave}
         >
           <thead>
             <tr role="row">
@@ -3438,6 +3681,14 @@ export function WeekView({
                 weekDates.includes(todayIslamicDate) &&
                 livePeriodIds.has(group.id);
               const isLastGroup = groupIdx === populatedGroups.length - 1;
+              const periodDoneState = getPeriodQuickDoneState(
+                group,
+                activeDayDate,
+              );
+              const isPeriodSelected = isPeriodFullySelected(
+                group.id,
+                activeDayCol,
+              );
 
               return (
                 <React.Fragment key={group.id}>
@@ -3451,6 +3702,8 @@ export function WeekView({
                       <tr
                         key={action.id}
                         role="row"
+                        data-period-id={group.id}
+                        data-period-side={side}
                         className={`data-row ${isLastInGroup ? 'period-end-row' : ''} ${
                           isRowSelected ? 'is-row-selected' : ''
                         } ${isRowCrosshair ? 'is-row-crosshair' : ''}`}
@@ -3459,23 +3712,69 @@ export function WeekView({
                           <td
                             className={`cell-period ${isLive ? 'is-live-period' : ''}`}
                             rowSpan={groupActions.length}
+                            data-period-id={group.id}
+                            data-period-side={side}
+                            onPointerDown={(e) =>
+                              handlePeriodHeaderPointerDown(
+                                e,
+                                group,
+                                activeDayCol,
+                              )
+                            }
+                            onClick={(e) => {
+                              if ((e.target as Element | null)?.closest('button')) {
+                                return;
+                              }
+                              if (suppressNextPeriodClickRef.current) {
+                                suppressNextPeriodClickRef.current = false;
+                                return;
+                              }
+                              handleSelectPeriodColumn(
+                                group.id,
+                                activeDayCol,
+                                e,
+                              );
+                            }}
                           >
                             <div className="cell-period-inner">
                               <button
                                 type="button"
-                                className="period-select-btn"
+                                className={`period-select-btn ${
+                                  isPeriodSelected ? 'is-period-selected' : ''
+                                }`}
+                                data-period-id={group.id}
+                                data-period-side={side}
                                 aria-label={`تحديد فترة ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
-                                onClick={() =>
-                                  handleSelectPeriodColumn(group.id, activeDayCol)
-                                }
+                                onClick={(e) => {
+                                  if (suppressNextPeriodClickRef.current) {
+                                    suppressNextPeriodClickRef.current = false;
+                                    return;
+                                  }
+                                  handleSelectPeriodColumn(
+                                    group.id,
+                                    activeDayCol,
+                                    e,
+                                  );
+                                }}
                               >
                                 {group.title}
                               </button>
                               <button
                                 type="button"
-                                className="period-quick-done-btn"
-                                aria-label={`إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
-                                title={`إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`}
+                                className={`period-quick-done-btn ${
+                                  periodDoneState.allDone ? 'is-all-done' : ''
+                                }`}
+                                aria-pressed={periodDoneState.allDone}
+                                aria-label={
+                                  periodDoneState.allDone
+                                    ? `إلغاء إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`
+                                    : `إكمال جميع أعمال ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`
+                                }
+                                title={
+                                  periodDoneState.allDone
+                                    ? `إلغاء إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`
+                                    : `إكمال ${group.title} (${formatArabicDateFull(activeDayDate)})`
+                                }
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void handleQuickCompletePeriod(
@@ -3702,7 +4001,6 @@ export function WeekView({
                 role="grid"
                 aria-multiselectable="true"
                 aria-label="الجدول الأسبوعي"
-                onPointerLeave={handleTableHoverLeave}
               >
                 <thead>
                   <tr role="row">

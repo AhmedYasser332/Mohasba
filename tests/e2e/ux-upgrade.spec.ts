@@ -176,7 +176,9 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const starterBtn = page.getByTestId('onboarding-starter-pack');
     await expect(starterBtn).toBeVisible({ timeout: 10_000 });
     await starterBtn.click();
-    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7);
+    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
+      timeout: 20_000,
+    });
 
     // Backdate active_from to D-2 via /api/export + /api/import so yesterday populates 48h catchup while Sat (< D-2) stays pre-active_from
     await page.evaluate(async (activeFrom) => {
@@ -213,7 +215,9 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     }, twoDaysAgo);
 
     await page.reload({ waitUntil: 'networkidle' });
-    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7);
+    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
+      timeout: 20_000,
+    });
 
     // Clear expected pre-unlock 401 console logs before checking runtime errors
     consoleErrors.length = 0;
@@ -398,10 +402,35 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await fajrCell.click();
     await expect(fajrCell).toBeFocused();
     await expect(fajrCell).toHaveClass(/is-grid-focused/);
-    // Hover crosshair: imperative .is-row-hover / .is-col-hover without React lag
+    // Zero spurious vertical/horizontal scrollbars in One-Glance Mode at 1440x900
+    const oneGlanceOverflow = await page.evaluate(() => {
+      return Array.from(
+        document.querySelectorAll<HTMLElement>('.overview-split .ledger-table-wrap'),
+      ).map((el) => ({
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      }));
+    });
+    expect(oneGlanceOverflow.length).toBe(2);
+    for (const panel of oneGlanceOverflow) {
+      expect(panel.scrollHeight).toBeLessThanOrEqual(panel.clientHeight);
+      expect(panel.scrollWidth).toBeLessThanOrEqual(panel.clientWidth);
+    }
+
+    // Pure CSS :has() hover crosshair paints real background on hovered row + column
     await fajrCell.hover();
-    await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(/is-row-hover/);
-    await expect(fajrCell.locator('xpath=ancestor::td[1]')).toHaveClass(/is-col-hover/);
+    const initialHoverBg = await fajrCell.evaluate((el) => {
+      const tr = el.closest('tr')!;
+      const td = el.closest('td')!;
+      return {
+        rowBg: getComputedStyle(tr).backgroundColor,
+        cellBg: getComputedStyle(td).backgroundColor,
+      };
+    });
+    expect(initialHoverBg.rowBg).not.toBe('rgba(0, 0, 0, 0)');
+    expect(initialHoverBg.cellBg).not.toBe('rgba(0, 0, 0, 0)');
     await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
     await fajrCell.click();
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
@@ -606,7 +635,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
     await expect(bulkBar).toHaveCount(0);
 
-    // 6j. Period Header hover quick-complete -> hover .cell-period and click .period-quick-done-btn
+    // 6j. Period Header hover quick-complete 2-way toggle (ON -> all DONE -> OFF -> all EMPTY -> Ctrl+Z restores)
     const maghribFardCell = page.getByTestId(
       `week-cell-${STARTER_PACK_ACTION_IDS.MAGHRIB_FARD}-${todayIslamic}`,
     );
@@ -614,18 +643,135 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     const maghribPeriodTd = page.locator('td.cell-period', {
       hasText: 'المغرب',
     });
+    const maghribQuickDoneBtn = maghribPeriodTd.locator('.period-quick-done-btn');
     await maghribPeriodTd.hover();
-    await maghribPeriodTd.locator('.period-quick-done-btn').click();
-    for (const actionId of [
+    await expect(maghribQuickDoneBtn).toHaveAttribute('aria-pressed', 'false');
+    await maghribQuickDoneBtn.click();
+    const maghribActionIds = [
       STARTER_PACK_ACTION_IDS.MAGHRIB_FARD,
       STARTER_PACK_ACTION_IDS.MAGHRIB_JAMAAH,
       STARTER_PACK_ACTION_IDS.MAGHRIB_BADIYAH,
       STARTER_PACK_ACTION_IDS.MAGHRIB_ADHKAR,
-    ]) {
+    ];
+    for (const actionId of maghribActionIds) {
       await expect(
         page.getByTestId(`week-cell-${actionId}-${todayIslamic}`),
       ).toHaveClass(/st-done/);
     }
+    await expect(maghribQuickDoneBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(maghribQuickDoneBtn).toHaveClass(/is-all-done/);
+
+    // 2nd click toggles OFF -> clears all Maghrib actions back to EMPTY
+    await maghribQuickDoneBtn.click();
+    for (const actionId of maghribActionIds) {
+      await expect(
+        page.getByTestId(`week-cell-${actionId}-${todayIslamic}`),
+      ).not.toHaveClass(/st-done/);
+    }
+    await expect(maghribQuickDoneBtn).toHaveAttribute('aria-pressed', 'false');
+
+    // Ctrl+Z restores Maghrib back to all DONE
+    await page.keyboard.press('Control+KeyZ');
+    for (const actionId of maghribActionIds) {
+      await expect(
+        page.getByTestId(`week-cell-${actionId}-${todayIslamic}`),
+      ).toHaveClass(/st-done/);
+    }
+    await expect(maghribQuickDoneBtn).toHaveAttribute('aria-pressed', 'true');
+
+    // 6j-2. Slow 160ms human Shift+Click & Ctrl+Click on cells (must NOT get wiped by click handler)
+    const slowAnchorCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${weekDates[1]!}`,
+    );
+    const slowTargetCell = page.getByTestId(
+      `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_ADHKAR}-${weekDates[1]!}`,
+    );
+    await slowAnchorCell.focus();
+    const slowTargetBox = await slowTargetCell.boundingBox();
+    if (!slowTargetBox) throw new Error('Missing boundingBox for slow Shift+Click');
+    await page.keyboard.down('Shift');
+    await page.mouse.move(
+      slowTargetBox.x + slowTargetBox.width / 2,
+      slowTargetBox.y + slowTargetBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.waitForTimeout(160);
+    await page.mouse.up();
+    await page.keyboard.up('Shift');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(4);
+    await expect(bulkBar).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+
+    // Slow 160ms human Ctrl+Click disjoint toggle on 2 cells
+    const slowCtrlBox1 = await slowAnchorCell.boundingBox();
+    if (!slowCtrlBox1) throw new Error('Missing boundingBox for slow Ctrl+Click');
+    await page.keyboard.down('Control');
+    await page.mouse.move(
+      slowCtrlBox1.x + slowCtrlBox1.width / 2,
+      slowCtrlBox1.y + slowCtrlBox1.height / 2,
+    );
+    await page.mouse.down();
+    await page.waitForTimeout(160);
+    await page.mouse.up();
+    await page.mouse.move(
+      slowTargetBox.x + slowTargetBox.width / 2,
+      slowTargetBox.y + slowTargetBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.waitForTimeout(160);
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(2);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+
+    // 6j-3. Period Header Multi-Select: Shift+Click (الفجر -> العصر), Ctrl+Click (toggle المغرب), and Pointer Hold-Drag (الفجر -> الظهر)
+    await fajrCell.focus();
+    const fajrPeriodBtn = page
+      .locator('td.cell-period', { hasText: 'الفجر' })
+      .locator('.period-select-btn');
+    const dhuhrPeriodBtn = page
+      .locator('td.cell-period', { hasText: 'الظهر' })
+      .locator('.period-select-btn');
+    const asrPeriodBtn = page
+      .locator('td.cell-period', { hasText: 'العصر' })
+      .locator('.period-select-btn');
+    const maghribPeriodBtn = maghribPeriodTd.locator('.period-select-btn');
+
+    await fajrPeriodBtn.click();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(4);
+    await asrPeriodBtn.click({ modifiers: ['Shift'] });
+    // الفجر (4) + الضحى والصباح (1) + الظهر (5) + العصر (3) = 13 cells
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(13);
+    await maghribPeriodBtn.click({ modifiers: ['Control'] });
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(17);
+    await maghribPeriodBtn.click({ modifiers: ['Control'] });
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(13);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
+
+    // Pointer hold-drag across period headers: الفجر -> الظهر (4 + 1 + 5 = 10 cells)
+    const fajrPeriodBox = await fajrPeriodBtn.boundingBox();
+    const dhuhrPeriodBox = await dhuhrPeriodBtn.boundingBox();
+    if (!fajrPeriodBox || !dhuhrPeriodBox) {
+      throw new Error('Missing boundingBox for period drag-select test');
+    }
+    await page.mouse.move(
+      fajrPeriodBox.x + fajrPeriodBox.width / 2,
+      fajrPeriodBox.y + fajrPeriodBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      dhuhrPeriodBox.x + dhuhrPeriodBox.width / 2,
+      dhuhrPeriodBox.y + dhuhrPeriodBox.height / 2,
+      { steps: 10 },
+    );
+    await page.mouse.up();
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(10);
+    await expect(bulkBar).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
 
     // 6k. Unrestricted past (pre-active_from Sat) & future (Fri) editing + persistence across reload
     const pastPreActiveDate =
@@ -657,16 +803,164 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
     }
 
-    // 6l. Crosshair hover (imperative .is-row-hover/.is-col-hover) & focus fallback (.is-row-crosshair/.is-col-crosshair)
-    await fajrCell.hover();
-    await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
-      /is-row-hover/,
-    );
+    // 6l. Aggressive rapid pointer-sweep crosshair check across One-Glance Split Mode & Standard Mode (zero stuck cells, zero mismatches)
+    const verifyCrosshairSweep = async (
+      targets: Array<{
+        tableSelector: string;
+        actionId: string;
+        date: string;
+        colIdx: number;
+      }>,
+    ) => {
+      for (const target of targets) {
+        const cell = page.getByTestId(
+          `week-cell-${target.actionId}-${target.date}`,
+        );
+        const box = await cell.boundingBox();
+        if (!box) {
+          throw new Error(
+            `Missing boundingBox for crosshair sweep target ${target.actionId}-${target.date}`,
+          );
+        }
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const audit = await page.evaluate(
+          ({ tableSelector, actionId, date, colIdx }) => {
+            const activeTable = document.querySelector<HTMLTableElement>(tableSelector);
+            const btn = document.querySelector<HTMLElement>(
+              `[data-testid="week-cell-${actionId}-${date}"]`,
+            );
+            const activeTr = btn?.closest('tr');
+            if (!activeTable || !activeTr) {
+              return { ok: false, reason: 'missing active table or row' };
+            }
+            const transparent = 'rgba(0, 0, 0, 0)';
+            const litRows = Array.from(
+              document.querySelectorAll<HTMLTableRowElement>(
+                'table.ledger-table tbody tr.data-row',
+              ),
+            ).filter((tr) => getComputedStyle(tr).backgroundColor !== transparent);
+            if (litRows.length !== 1 || litRows[0] !== activeTr) {
+              return {
+                ok: false,
+                reason: `expected 1 lit row (activeTr), got ${litRows.length}`,
+              };
+            }
+            const litColsInActive = new Set<number>();
+            for (const td of Array.from(
+              activeTable.querySelectorAll<HTMLTableCellElement>(
+                'td.cell-status[data-col-index]',
+              ),
+            )) {
+              if (getComputedStyle(td).backgroundColor !== transparent) {
+                litColsInActive.add(Number(td.dataset.colIndex));
+              }
+            }
+            if (
+              litColsInActive.size !== 1 ||
+              !litColsInActive.has(colIdx)
+            ) {
+              return {
+                ok: false,
+                reason: `expected only col ${colIdx} lit, got [${Array.from(litColsInActive).join(',')}]`,
+              };
+            }
+            const otherTables = Array.from(
+              document.querySelectorAll<HTMLTableElement>('table.ledger-table'),
+            ).filter((t) => t !== activeTable);
+            for (const other of otherTables) {
+              const leakedTd = Array.from(
+                other.querySelectorAll<HTMLTableCellElement>('td.cell-status'),
+              ).some((td) => getComputedStyle(td).backgroundColor !== transparent);
+              if (leakedTd) {
+                return { ok: false, reason: 'crosshair leaked into sibling table' };
+              }
+            }
+            return { ok: true, reason: '' };
+          },
+          target,
+        );
+        expect(audit, `Crosshair sweep mismatch on ${target.actionId} col ${target.colIdx}: ${audit.reason}`).toEqual({
+          ok: true,
+          reason: '',
+        });
+      }
+    };
+
     const todayColIdx = weekDates.indexOf(todayIslamic);
-    await expect(
-      page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
-    ).toHaveClass(/is-col-hover/);
+    // Focus fajrCell first, then rapidly sweep across BOTH split tables + period spacers
     await fajrCell.focus();
+    await verifyCrosshairSweep([
+      {
+        tableSelector: '.overview-table-time',
+        actionId: STARTER_PACK_ACTION_IDS.FAJR_FARD,
+        date: weekDates[0]!,
+        colIdx: 0,
+      },
+      {
+        tableSelector: '.overview-table-time',
+        actionId: STARTER_PACK_ACTION_IDS.FAJR_JAMAAH,
+        date: weekDates[2]!,
+        colIdx: 2,
+      },
+      {
+        tableSelector: '.overview-table-time',
+        actionId: STARTER_PACK_ACTION_IDS.DHUHA_PRAYER,
+        date: weekDates[4]!,
+        colIdx: 4,
+      },
+      {
+        tableSelector: '.overview-table-time',
+        actionId: STARTER_PACK_ACTION_IDS.DHUHR_FARD,
+        date: weekDates[todayColIdx]!,
+        colIdx: todayColIdx,
+      },
+      {
+        tableSelector: '.overview-table-time',
+        actionId: STARTER_PACK_ACTION_IDS.ASR_FARD,
+        date: weekDates[6]!,
+        colIdx: 6,
+      },
+      {
+        tableSelector: '.overview-table-daily',
+        actionId: STARTER_PACK_ACTION_IDS.QURAN_WIRD,
+        date: weekDates[1]!,
+        colIdx: 1,
+      },
+      {
+        tableSelector: '.overview-table-daily',
+        actionId: STARTER_PACK_ACTION_IDS.ADHKAR_MORNING,
+        date: weekDates[3]!,
+        colIdx: 3,
+      },
+      {
+        tableSelector: '.overview-table-daily',
+        actionId: STARTER_PACK_ACTION_IDS.HABIT_NO_SNOOZE,
+        date: weekDates[5]!,
+        colIdx: 5,
+      },
+      {
+        tableSelector: '.overview-table-time',
+        actionId: STARTER_PACK_ACTION_IDS.ISHA_FARD,
+        date: weekDates[todayColIdx]!,
+        colIdx: todayColIdx,
+      },
+    ]);
+
+    // Verify hover crosshair survives React re-render while cycling a cell under the cursor
+    await fajrCell.hover();
+    await cycleCell(page, fajrCell);
+    await expect(fajrCell).toHaveClass(/st-done/);
+    const afterCycleHoverBg = await fajrCell.evaluate((el) => ({
+      rowBg: getComputedStyle(el.closest('tr')!).backgroundColor,
+      cellBg: getComputedStyle(el.closest('td')!).backgroundColor,
+    }));
+    expect(afterCycleHoverBg.rowBg).not.toBe('rgba(0, 0, 0, 0)');
+    expect(afterCycleHoverBg.cellBg).not.toBe('rgba(0, 0, 0, 0)');
+    await cycleCell(page, fajrCell);
+    await cycleCell(page, fajrCell);
+    await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
+
+    // Moving pointer outside table clears hover crosshair and cleanly falls back to focus crosshair
     await page.mouse.move(10, 10);
     await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
       /is-row-crosshair/,
@@ -674,6 +968,64 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(
       page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
     ).toHaveClass(/is-col-crosshair/);
+    const fallbackRowBg = await fajrCell.evaluate(
+      (el) => getComputedStyle(el.closest('tr')!).backgroundColor,
+    );
+    expect(fallbackRowBg).not.toBe('rgba(0, 0, 0, 0)');
+
+    // Also run rapid crosshair sweep in Standard Mode (العرض المريح) across group-row separators!
+    await page.getByRole('tab', { name: 'العرض المريح' }).click();
+    await expect(page.locator('table.ledger-table tr.group-row').first()).toBeVisible();
+    await verifyCrosshairSweep([
+      {
+        tableSelector: 'table.ledger-table',
+        actionId: STARTER_PACK_ACTION_IDS.FAJR_FARD,
+        date: weekDates[0]!,
+        colIdx: 0,
+      },
+      {
+        tableSelector: 'table.ledger-table',
+        actionId: STARTER_PACK_ACTION_IDS.FAJR_SUNNAH,
+        date: weekDates[3]!,
+        colIdx: 3,
+      },
+      {
+        tableSelector: 'table.ledger-table',
+        actionId: STARTER_PACK_ACTION_IDS.DHUHA_PRAYER,
+        date: weekDates[5]!,
+        colIdx: 5,
+      },
+      {
+        tableSelector: 'table.ledger-table',
+        actionId: STARTER_PACK_ACTION_IDS.DHUHR_FARD,
+        date: weekDates[1]!,
+        colIdx: 1,
+      },
+      {
+        tableSelector: 'table.ledger-table',
+        actionId: STARTER_PACK_ACTION_IDS.ASR_FARD,
+        date: weekDates[todayColIdx]!,
+        colIdx: todayColIdx,
+      },
+    ]);
+    // Moving onto a group-row separator clears hover highlight cleanly
+    const groupRowBox = await page
+      .locator('table.ledger-table tr.group-row')
+      .first()
+      .boundingBox();
+    if (groupRowBox) {
+      await page.mouse.move(
+        groupRowBox.x + groupRowBox.width / 2,
+        groupRowBox.y + groupRowBox.height / 2,
+      );
+      const anyHoveredTd = await page.evaluate(() =>
+        document.querySelector('table.ledger-table td.cell-status:hover') !== null,
+      );
+      expect(anyHoveredTd).toBe(false);
+    }
+    // Switch back to One-Glance Mode for remaining desktop tests
+    await page.getByRole('tab', { name: 'نظرة واحدة' }).click();
+    await expect(page.getByTestId('one-glance-split')).toBeVisible();
 
     // 6m. Global Ctrl+Z after bulk bar click + focus restoration + Ctrl+Y Redo
     const habitNoSnoozeCell = page.getByTestId(

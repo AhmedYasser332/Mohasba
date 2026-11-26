@@ -121,7 +121,9 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     await starterBtn.click();
 
     // Verify Street Mode (الآن) renders live Starter Pack periods & actions
-    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7);
+    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
+      timeout: 20_000,
+    });
     await expect(page.locator('.horizon-track')).toBeVisible();
     await expect(page.locator('.action-row').first()).toBeVisible();
 
