@@ -1,6 +1,10 @@
 'use client';
 
 import React, { useEffect, useId, useLayoutEffect, useRef } from 'react';
+import {
+  useCrosshairPrefs,
+  type CrosshairPreferences,
+} from '../../utils/crosshair-prefs';
 
 export interface CrosshairFocusTarget {
   rowIndex: number;
@@ -102,7 +106,10 @@ const EMPTY_GEOMETRY: TableGeometry = {
 /** Max pixel gap treated as a cell seam or One-Glance period spacer (held smoothly without flicker). */
 const MAX_SPACER_GAP_PX = 7;
 
-function measureStageGeometry(stage: HTMLElement): TableGeometry {
+function measureStageGeometry(
+  stage: HTMLElement,
+  coverPeriodColumn: boolean,
+): TableGeometry {
   const table = stage.querySelector<HTMLTableElement>('table.ledger-table');
   if (!table) return EMPTY_GEOMETRY;
 
@@ -154,20 +161,29 @@ function measureStageGeometry(stage: HTMLElement): TableGeometry {
     if (rect.height <= 0) continue;
 
     if (!measuredRowSpan) {
-      let minLeft = Infinity;
-      let maxRight = -Infinity;
-      for (const cell of Array.from(tr.cells)) {
-        if (cell.classList.contains('cell-period')) continue;
-        const cRect = cell.getBoundingClientRect();
-        if (cRect.width <= 0) continue;
-        const l = cRect.left - stageRect.left;
-        const r = cRect.right - stageRect.left;
-        if (l < minLeft) minLeft = l;
-        if (r > maxRight) maxRight = r;
-      }
-      if (Number.isFinite(minLeft) && Number.isFinite(maxRight) && maxRight > minLeft) {
-        rowLeft = minLeft;
-        rowWidth = maxRight - minLeft;
+      if (coverPeriodColumn) {
+        rowLeft = 0;
+        rowWidth = stageRect.width;
+      } else {
+        let minLeft = Infinity;
+        let maxRight = -Infinity;
+        for (const cell of Array.from(tr.cells)) {
+          if (cell.classList.contains('cell-period')) continue;
+          const cRect = cell.getBoundingClientRect();
+          if (cRect.width <= 0) continue;
+          const l = cRect.left - stageRect.left;
+          const r = cRect.right - stageRect.left;
+          if (l < minLeft) minLeft = l;
+          if (r > maxRight) maxRight = r;
+        }
+        if (
+          Number.isFinite(minLeft) &&
+          Number.isFinite(maxRight) &&
+          maxRight > minLeft
+        ) {
+          rowLeft = minLeft;
+          rowWidth = maxRight - minLeft;
+        }
       }
       measuredRowSpan = true;
     }
@@ -268,6 +284,8 @@ export function TableCrosshairStage({
   children,
 }: TableCrosshairStageProps) {
   const tableId = useId();
+  const prefs = useCrosshairPrefs();
+  const prefsRef = useRef<CrosshairPreferences>(prefs);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const rowBarRef = useRef<HTMLDivElement | null>(null);
   const colBarRef = useRef<HTMLDivElement | null>(null);
@@ -287,6 +305,11 @@ export function TableCrosshairStage({
     rowIndex: number | null;
     colIndex: number | null;
     mode: 'idle' | 'hover' | 'focus';
+    rowW: number;
+    rowH: number;
+    colW: number;
+    colH: number;
+    headH: number;
     rowTransform: string;
     colTransform: string;
     headTransform: string;
@@ -297,6 +320,11 @@ export function TableCrosshairStage({
     rowIndex: null,
     colIndex: null,
     mode: 'idle',
+    rowW: -1,
+    rowH: -1,
+    colW: -1,
+    colH: -1,
+    headH: -1,
     rowTransform: '',
     colTransform: '',
     headTransform: '',
@@ -319,25 +347,42 @@ export function TableCrosshairStage({
 
       const geo = geoRef.current;
       const prev = visualStateRef.current;
+      const curPrefs = prefsRef.current;
+      const effectiveGlide = allowGlide && curPrefs.motion === 'smooth';
+      const showRow =
+        curPrefs.mode === 'both' || curPrefs.mode === 'row';
+      const showCol =
+        curPrefs.mode === 'both' || curPrefs.mode === 'col';
+      const effectiveMode = curPrefs.mode === 'off' ? 'idle' : mode;
+      const effectiveRow = showRow ? row : null;
+      const effectiveCol = showCol ? col : null;
 
-      if (prev.mode !== mode) {
-        stage.dataset.crosshairMode = mode;
-        prev.mode = mode;
+      if (prev.mode !== effectiveMode) {
+        stage.dataset.crosshairMode = effectiveMode;
+        prev.mode = effectiveMode;
       }
 
-      if (row && geo.rowWidth > 0 && row.height > 0) {
-        const nextTransform = `translate3d(${geo.rowLeft}px, ${row.top}px, 0) scale3d(${geo.rowWidth}, ${row.height}, 1)`;
+      if (effectiveRow && geo.rowWidth > 0 && effectiveRow.height > 0) {
+        const nextTransform = `translate3d(${geo.rowLeft}px, ${effectiveRow.top}px, 0)`;
+        if (prev.rowW !== geo.rowWidth) {
+          rowBar.style.width = `${geo.rowWidth}px`;
+          prev.rowW = geo.rowWidth;
+        }
+        if (prev.rowH !== effectiveRow.height) {
+          rowBar.style.height = `${effectiveRow.height}px`;
+          prev.rowH = effectiveRow.height;
+        }
         if (
           !prev.rowActive ||
-          prev.rowIndex !== row.rowIndex ||
+          prev.rowIndex !== effectiveRow.rowIndex ||
           prev.rowTransform !== nextTransform
         ) {
-          rowBar.dataset.glide = allowGlide && prev.rowActive ? 'true' : 'false';
+          rowBar.dataset.glide = effectiveGlide && prev.rowActive ? 'true' : 'false';
           rowBar.style.transform = nextTransform;
           rowBar.dataset.active = 'true';
-          rowBar.dataset.rowIndex = String(row.rowIndex);
+          rowBar.dataset.rowIndex = String(effectiveRow.rowIndex);
           prev.rowActive = true;
-          prev.rowIndex = row.rowIndex;
+          prev.rowIndex = effectiveRow.rowIndex;
           prev.rowTransform = nextTransform;
         }
       } else if (prev.rowActive) {
@@ -347,35 +392,60 @@ export function TableCrosshairStage({
         prev.rowIndex = null;
       }
 
-      if (col && col.width > 0) {
-        const nextColTransform = `translate3d(${col.left}px, ${geo.bodyTop}px, 0) scale3d(${col.width}, ${geo.bodyHeight}, 1)`;
-        const nextHeadTransform = `translate3d(${col.left}px, 0px, 0) scale3d(${col.width}, ${geo.headHeight}, 1)`;
+      if (effectiveCol && effectiveCol.width > 0) {
+        const nextColTransform = `translate3d(${effectiveCol.left}px, ${geo.bodyTop}px, 0)`;
+        const nextHeadTransform = `translate3d(${effectiveCol.left}px, 0px, 0)`;
         const lineY = Math.max(0, geo.headHeight - 2);
-        const nextHeadLineTransform = `translate3d(${col.left}px, ${lineY}px, 0) scale3d(${col.width}, 1, 1)`;
+        const nextHeadLineTransform = `translate3d(${effectiveCol.left}px, ${lineY}px, 0)`;
 
+        if (prev.colW !== effectiveCol.width) {
+          const wPx = `${effectiveCol.width}px`;
+          colBar.style.width = wPx;
+          headBar.style.width = wPx;
+          headLine.style.width = wPx;
+          prev.colW = effectiveCol.width;
+        }
+        if (prev.colH !== geo.bodyHeight) {
+          colBar.style.height = `${geo.bodyHeight}px`;
+          prev.colH = geo.bodyHeight;
+        }
+        if (prev.headH !== geo.headHeight) {
+          headBar.style.height = `${geo.headHeight}px`;
+          prev.headH = geo.headHeight;
+        }
+
+        const headerOn = curPrefs.showHeaderIndicator;
         if (
           !prev.colActive ||
-          prev.colIndex !== col.colIndex ||
+          prev.colIndex !== effectiveCol.colIndex ||
           prev.colTransform !== nextColTransform ||
-          prev.headTransform !== nextHeadTransform
+          prev.headTransform !== nextHeadTransform ||
+          prev.headLineTransform !== nextHeadLineTransform ||
+          (headBar.dataset.active === 'true') !== headerOn
         ) {
-          const glideFlag = allowGlide && prev.colActive ? 'true' : 'false';
+          const glideFlag = effectiveGlide && prev.colActive ? 'true' : 'false';
           colBar.dataset.glide = glideFlag;
           colBar.style.transform = nextColTransform;
           colBar.dataset.active = 'true';
-          colBar.dataset.colIndex = String(col.colIndex);
+          colBar.dataset.colIndex = String(effectiveCol.colIndex);
 
-          headBar.dataset.glide = glideFlag;
-          headBar.style.transform = nextHeadTransform;
-          headBar.dataset.active = 'true';
-          headBar.dataset.colIndex = String(col.colIndex);
+          if (headerOn) {
+            headBar.dataset.glide = glideFlag;
+            headBar.style.transform = nextHeadTransform;
+            headBar.dataset.active = 'true';
+            headBar.dataset.colIndex = String(effectiveCol.colIndex);
 
-          headLine.dataset.glide = glideFlag;
-          headLine.style.transform = nextHeadLineTransform;
-          headLine.dataset.active = 'true';
+            headLine.dataset.glide = glideFlag;
+            headLine.style.transform = nextHeadLineTransform;
+            headLine.dataset.active = 'true';
+          } else {
+            headBar.dataset.active = 'false';
+            delete headBar.dataset.colIndex;
+            headLine.dataset.active = 'false';
+          }
 
           prev.colActive = true;
-          prev.colIndex = col.colIndex;
+          prev.colIndex = effectiveCol.colIndex;
           prev.colTransform = nextColTransform;
           prev.headTransform = nextHeadTransform;
           prev.headLineTransform = nextHeadLineTransform;
@@ -394,13 +464,21 @@ export function TableCrosshairStage({
 
   const syncIdleOrFocus = useRef((allowGlide: boolean) => {
     if (isHoveringRef.current) return;
-    if (suppressedRef.current || !focusTargetRef.current) {
+    if (
+      suppressedRef.current ||
+      !focusTargetRef.current ||
+      prefsRef.current.mode === 'off' ||
+      !prefsRef.current.showFocusFallback
+    ) {
       applyBars.current(null, null, 'idle', false);
       return;
     }
     const stage = stageRef.current;
     if (stage && geoRef.current.rows.length === 0) {
-      geoRef.current = measureStageGeometry(stage);
+      geoRef.current = measureStageGeometry(
+        stage,
+        prefsRef.current.coverPeriodColumn,
+      );
     }
     const geo = geoRef.current;
     const target = focusTargetRef.current;
@@ -417,9 +495,16 @@ export function TableCrosshairStage({
     const stage = stageRef.current;
     const pointer = lastPointerRef.current;
     if (!stage || !pointer || !isHoveringRef.current) return;
+    if (prefsRef.current.mode === 'off') {
+      applyBars.current(null, null, 'idle', false);
+      return;
+    }
 
     if (geoRef.current.rows.length === 0 && geoRef.current.cols.length === 0) {
-      geoRef.current = measureStageGeometry(stage);
+      geoRef.current = measureStageGeometry(
+        stage,
+        prefsRef.current.coverPeriodColumn,
+      );
     }
     const geo = geoRef.current;
     const stageRect = stage.getBoundingClientRect();
@@ -538,26 +623,31 @@ export function TableCrosshairStage({
     stage.addEventListener('pointermove', handlePointerMove, { passive: true });
     stage.addEventListener('pointerleave', handleLeave);
 
-    // Keep cached geometry fresh on resize / layout shifts
+    // Keep cached geometry fresh on resize, zoom, or sidebar transition
     let resizeRaf: number | null = null;
+    const scheduleMeasure = () => {
+      if (resizeRaf !== null) return;
+      resizeRaf = window.requestAnimationFrame(() => {
+        resizeRaf = null;
+        geoRef.current = measureStageGeometry(
+          stage,
+          prefsRef.current.coverPeriodColumn,
+        );
+        if (isHoveringRef.current) {
+          syncFromPointer.current(false);
+        } else {
+          syncIdleOrFocus.current(false);
+        }
+      });
+    };
     const ro =
       typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(() => {
-            if (resizeRaf !== null) return;
-            resizeRaf = window.requestAnimationFrame(() => {
-              resizeRaf = null;
-              geoRef.current = measureStageGeometry(stage);
-              if (isHoveringRef.current) {
-                syncFromPointer.current(false);
-              } else {
-                syncIdleOrFocus.current(false);
-              }
-            });
-          })
+        ? new ResizeObserver(scheduleMeasure)
         : null;
     ro?.observe(stage);
     const tableEl = stage.querySelector('table.ledger-table');
     if (tableEl) ro?.observe(tableEl);
+    window.addEventListener('resize', scheduleMeasure, { passive: true });
 
     return () => {
       if (rafIdRef.current !== null) {
@@ -570,21 +660,23 @@ export function TableCrosshairStage({
       detachScroll();
       stage.removeEventListener('pointermove', handlePointerMove);
       stage.removeEventListener('pointerleave', handleLeave);
+      window.removeEventListener('resize', scheduleMeasure);
       ro?.disconnect();
     };
   }, [coordinator, tableId]);
 
-  // Re-measure when table rows/groups/mode change
+  // Re-measure when table rows/groups/mode/preferences change
   useLayoutEffect(() => {
+    prefsRef.current = prefs;
     const stage = stageRef.current;
     if (!stage) return;
-    geoRef.current = measureStageGeometry(stage);
+    geoRef.current = measureStageGeometry(stage, prefs.coverPeriodColumn);
     if (isHoveringRef.current) {
       syncFromPointer.current(false);
     } else {
       syncIdleOrFocus.current(false);
     }
-  }, [layoutKey]);
+  }, [layoutKey, prefs]);
 
   // Update keyboard focus fallback target (glides smoothly on arrow-key navigation)
   useLayoutEffect(() => {
@@ -594,12 +686,17 @@ export function TableCrosshairStage({
     }
   }, [focusTarget]);
 
+  const stageStyle = {
+    '--crosshair-strength': String(prefs.opacity / 100),
+  } as React.CSSProperties;
+
   return (
     <div className="ledger-table-wrap">
       <div
         ref={stageRef}
         className="ledger-table-stage"
         data-crosshair-mode="idle"
+        style={stageStyle}
       >
         <div className="crosshair-sticky-track" aria-hidden="true">
           <div

@@ -211,6 +211,209 @@
   min-width: 0;
 }
 
+/* Desktop Crosshair Preferences Card + Live Mini Preview */
+.crosshair-prefs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-canvas);
+}
+
+.crosshair-prefs-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.crosshair-prefs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .crosshair-prefs-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.crosshair-prefs-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.crosshair-slider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.crosshair-range-input {
+  width: 100%;
+  height: 24px;
+  accent-color: var(--accent-live);
+  cursor: pointer;
+}
+
+.crosshair-range-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+}
+
+.crosshair-toggles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block-start: 2px;
+}
+
+.crosshair-mini-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 0.78rem;
+  color: var(--ink-primary);
+  cursor: pointer;
+}
+
+.crosshair-mini-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-live);
+  flex-shrink: 0;
+}
+
+.crosshair-preview-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-surface);
+}
+
+.crosshair-preview-caption {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+.crosshair-preview-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-cell);
+  overflow: hidden;
+  font-size: 0.68rem;
+}
+
+.crosshair-preview-row {
+  display: grid;
+  grid-template-columns: 38px 54px repeat(3, minmax(0, 1fr));
+  border-block-end: 1px solid var(--border-hairline);
+}
+
+.crosshair-preview-row:last-child {
+  border-block-end: none;
+}
+
+.crosshair-preview-row.is-head {
+  background: var(--bg-subtle);
+  color: var(--ink-secondary);
+  font-weight: 600;
+}
+
+.cp-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 2px 3px;
+  overflow: hidden;
+}
+
+.cp-period {
+  background: var(--bg-subtle);
+  border-inline-end: 1px solid var(--border-hairline);
+  color: var(--ink-secondary);
+  font-weight: 600;
+}
+
+.cp-title {
+  justify-content: flex-start;
+  color: var(--ink-primary);
+  white-space: nowrap;
+}
+
+.cp-cell.is-head-lit {
+  background: color-mix(
+    in srgb,
+    var(--accent-live) calc(var(--crosshair-head-base, 12%) * var(--crosshair-strength, 1)),
+    transparent
+  );
+  box-shadow: inset 0 -2px 0 var(--accent-live);
+  color: var(--ink-primary);
+}
+
+.cp-cell.is-row-lit::before,
+.cp-cell.is-col-lit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cp-cell.is-row-lit::before {
+  background: color-mix(
+    in srgb,
+    var(--accent-live) calc(var(--crosshair-row-base, 8%) * var(--crosshair-strength, 1)),
+    transparent
+  );
+}
+
+.cp-cell.is-col-lit::after {
+  background: color-mix(
+    in srgb,
+    var(--accent-live) calc(var(--crosshair-col-base, 9%) * var(--crosshair-strength, 1)),
+    transparent
+  );
+}
+
+.cp-box {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 16px;
+  border-radius: 2px;
+  border: 1px dashed var(--pending-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+}
+
+.cp-box.is-done {
+  background: var(--done-fill);
+  border: 1px solid var(--done-border);
+  color: var(--done-ink);
+  font-weight: 700;
+}
+
 /* Keyboard Shortcuts Editor */
 .shortcut-row {
   display: flex;

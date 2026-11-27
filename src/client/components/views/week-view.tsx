@@ -1912,6 +1912,33 @@ export function WeekView({
     }
 
     if (entries.length === 0) return;
+
+    // Detect no-op Fill Down (e.g. top row is empty & rows below are empty, or all rows already match)
+    const hasAnyVisualChange = entries.some(({ coord, snapshot }) => {
+      const targetRowMeta = visibleGridRows[coord.row];
+      const targetDate = weekDates[coord.col];
+      if (!targetRowMeta || !targetDate) return false;
+      const cur = snapshotCellFromDisplay(
+        resolveDisplay(targetRowMeta.action, targetDate),
+      );
+      return (
+        cur.kind !== snapshot.kind || cur.percentValue !== snapshot.percentValue
+      );
+    });
+
+    if (!hasAnyVisualChange) {
+      const allSourceEmpty = entries.every((e) => e.snapshot.kind === 'EMPTY');
+      onActionFeedback(
+        allSourceEmpty
+          ? 'تعبئة لأسفل تنسخ الصف العلوي في التحديد — اجعل الصف الأول مسجلاً (مثل تم) ثم حدده مع الصفوف الفارغة تحته'
+          : 'جميع الصفوف المحددة مطابقة بالفعل للصف العلوي',
+      );
+      if (options?.restoreFocus) {
+        restoreFocusToGrid();
+      }
+      return;
+    }
+
     await applySnapshotEntries(entries, {
       showToast: true,
       actionNameAr: 'تم التعبئة للأسفل',
@@ -4528,6 +4555,7 @@ export function WeekView({
                 type="button"
                 role="menuitem"
                 className="week-context-menu-item"
+                title="ينسخ حالة الصف الأول المحدد ويكررها على الصفوف التي تحته"
                 onClick={() => {
                   setContextMenu(null);
                   void handleFillDownShortcut({ restoreFocus: true });
@@ -4535,7 +4563,7 @@ export function WeekView({
               >
                 <span className="week-context-menu-item-label">
                   <IconArrowDown size="sm" />
-                  <span>تعبئة لأسفل</span>
+                  <span>تعبئة لأسفل (من الصف الأول)</span>
                 </span>
                 <kbd className="week-context-menu-kbd" dir="ltr">
                   Ctrl+D

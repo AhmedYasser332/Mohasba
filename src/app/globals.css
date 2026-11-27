@@ -20,9 +20,9 @@
   --ink-inverse: #FFFFFF;
   --accent-live: #0F5257;
   --accent-live-soft: #E3F0F1;
-  --crosshair-row-bg: rgba(15, 82, 87, 0.075);
-  --crosshair-col-bg: rgba(15, 82, 87, 0.085);
-  --crosshair-head-bg: rgba(15, 82, 87, 0.11);
+  --crosshair-row-base: 8%;
+  --crosshair-col-base: 9%;
+  --crosshair-head-base: 12%;
   --live-btn-bg: #0F5257;
   --live-btn-ink: #FFFFFF;
 
@@ -82,9 +82,9 @@
   --ink-inverse: #14171B;
   --accent-live: #58A4AA;
   --accent-live-soft: rgba(88, 164, 170, 0.13);
-  --crosshair-row-bg: rgba(88, 164, 170, 0.1);
-  --crosshair-col-bg: rgba(88, 164, 170, 0.115);
-  --crosshair-head-bg: rgba(88, 164, 170, 0.16);
+  --crosshair-row-base: 10%;
+  --crosshair-col-base: 11.5%;
+  --crosshair-head-base: 16%;
   --live-btn-bg: #1E5B60;
   --live-btn-ink: #EDF4F5;
 

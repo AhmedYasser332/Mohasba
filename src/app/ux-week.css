@@ -178,9 +178,6 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 1px;
-  height: 1px;
-  transform-origin: 0 0;
   pointer-events: none;
   opacity: 0;
   will-change: transform, opacity;
@@ -193,15 +190,27 @@
 }
 
 .crosshair-row-bar {
-  background: var(--crosshair-row-bg);
+  background: color-mix(
+    in srgb,
+    var(--accent-live) calc(var(--crosshair-row-base, 8%) * var(--crosshair-strength, 1)),
+    transparent
+  );
 }
 
 .crosshair-col-bar {
-  background: var(--crosshair-col-bg);
+  background: color-mix(
+    in srgb,
+    var(--accent-live) calc(var(--crosshair-col-base, 9%) * var(--crosshair-strength, 1)),
+    transparent
+  );
 }
 
 .crosshair-head-bar {
-  background: var(--crosshair-head-bg);
+  background: color-mix(
+    in srgb,
+    var(--accent-live) calc(var(--crosshair-head-base, 12%) * var(--crosshair-strength, 1)),
+    transparent
+  );
 }
 
 .crosshair-head-line {
