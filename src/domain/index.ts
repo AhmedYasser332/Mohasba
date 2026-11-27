@@ -7,4 +7,5 @@ export * from './qadaa';
 export * from './conflict';
 export * from './analytics';
 export * from './starter-pack';
+export * from './templates';
 export * from './i18n/ar';

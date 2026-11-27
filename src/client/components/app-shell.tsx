@@ -16,7 +16,10 @@ import {
   resolveEffectiveShortcuts,
   type ExportSnapshot,
 } from '@/domain';
-import { useMohasba } from '../store/mohasba-provider';
+import {
+  useMohasba,
+  type InitOnboardingPayload,
+} from '../store/mohasba-provider';
 import {
   CellEditorDialog,
   type CellEditorTarget,
@@ -25,7 +28,6 @@ import {
   IconAnalytics,
   IconCross,
   IconDownload,
-  IconExpiredAlert,
   IconEye,
   IconEyeOff,
   IconKeyboard,
@@ -39,9 +41,9 @@ import {
   IconSettings,
   IconSidebar,
   IconSun,
-  IconUpload,
   IconX,
 } from './icons';
+import { OnboardingWizard } from './onboarding/onboarding-wizard';
 import { Tooltip } from './tooltip';
 import { AnalyticsView } from './views/analytics-view';
 import { NowView } from './views/now-view';
@@ -264,7 +266,6 @@ export function MohasbaAppShell() {
 
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const [cellEditorTarget, setCellEditorTarget] =
     useState<CellEditorTarget | null>(null);
@@ -628,12 +629,12 @@ export function MohasbaAppShell() {
     }
   };
 
-  const handleOnboardingInit = async (mode: 'starter_pack' | 'blank') => {
+  const handleOnboardingInit = async (payload: InitOnboardingPayload) => {
     if (onboardingBusy) return;
     setOnboardingBusy(true);
     setOnboardingError(null);
     try {
-      const res = await initOnboarding(mode);
+      const res = await initOnboarding(payload);
       if (!res.ok) {
         setOnboardingError(res.errorMessage ?? AR_STRINGS.errors.genericError);
       }
@@ -696,9 +697,7 @@ export function MohasbaAppShell() {
       setOnboardingError('تعذر قراءة ملف JSON.');
     } finally {
       setOnboardingBusy(false);
-      if (importInputRef.current) {
-        importInputRef.current.value = '';
-      }
+      e.target.value = '';
     }
   };
 
@@ -1152,73 +1151,14 @@ export function MohasbaAppShell() {
             </section>
           )}
 
-          {/* First-Run Onboarding */}
+          {/* First-Run Onboarding (2-Step 3-Level Wizard) */}
           {showOnboarding && (
-            <section className="panel auth-gate-wrap">
-              <div className="panel-header">
-                <h3 className="panel-title">
-                  {AR_STRINGS.authAndOnboarding.onboardingTitle}
-                </h3>
-              </div>
-              <div className="p-4 flex flex-col gap-3">
-                <p className="m-0 panel-meta">
-                  اختر طريقة إعداد جدولك للمرة الأولى:
-                </p>
-
-                {onboardingError && (
-                  <div className="confirm-banner" role="alert">
-                    <IconExpiredAlert size="sm" />
-                    <span>{onboardingError}</span>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  className="btn btn-live"
-                  data-testid="onboarding-starter-pack"
-                  disabled={onboardingBusy}
-                  onClick={() => {
-                    void handleOnboardingInit('starter_pack');
-                  }}
-                >
-                  <span>
-                    {AR_STRINGS.authAndOnboarding.onboardingStarterPack}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={onboardingBusy}
-                  onClick={() => importInputRef.current?.click()}
-                >
-                  <IconUpload size="sm" />
-                  <span>
-                    {AR_STRINGS.authAndOnboarding.onboardingImportJson}
-                  </span>
-                </button>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  className="hidden"
-                  onChange={(e) => {
-                    void handleOnboardingImportFile(e);
-                  }}
-                />
-
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={onboardingBusy}
-                  onClick={() => {
-                    void handleOnboardingInit('blank');
-                  }}
-                >
-                  <span>{AR_STRINGS.authAndOnboarding.onboardingBlank}</span>
-                </button>
-              </div>
-            </section>
+            <OnboardingWizard
+              busy={onboardingBusy}
+              error={onboardingError}
+              onComplete={handleOnboardingInit}
+              onImportFile={handleOnboardingImportFile}
+            />
           )}
 
           {/* Hydrating / Offline Empty State */}

@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
 import { STARTER_PACK_ACTION_IDS } from '../../src/domain/starter-pack';
 import { loadTestEnv } from '../helpers/load-env';
 import { resetTestDb } from '../helpers/reset-test-db';
+import { seedStarterPackViaBrowser } from '../helpers/seed-starter-e2e';
 
 loadTestEnv();
 
@@ -116,14 +117,7 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     }
 
     // Complete First-Run Starter Pack onboarding
-    const starterBtn = page.getByTestId('onboarding-starter-pack');
-    await expect(starterBtn).toBeVisible({ timeout: 10_000 });
-    await starterBtn.click();
-
-    // Verify Street Mode (الآن) renders live Starter Pack periods & actions
-    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
-      timeout: 20_000,
-    });
+    await seedStarterPackViaBrowser(page);
     await expect(page.locator('.horizon-track')).toBeVisible();
     await expect(page.locator('.action-row').first()).toBeVisible();
 

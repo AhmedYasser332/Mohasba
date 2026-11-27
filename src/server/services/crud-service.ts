@@ -912,6 +912,169 @@ export async function deleteTargetVersion(params: {
   return { ok: true, id };
 }
 
+export async function deleteAction(params: {
+  supabase: SupabaseClient;
+  id: string;
+  force?: boolean;
+  requestId: string;
+}): Promise<{ ok: true; id: string; deleted_logs_count: number }> {
+  const { supabase, id, force = false, requestId } = params;
+
+  const { data: rpcRaw, error: rpcErr } = await supabase.rpc(
+    'delete_action_atomic',
+    {
+      p_action_id: id,
+      p_force: force,
+    },
+  );
+
+  if (rpcErr || !rpcRaw || typeof rpcRaw !== 'object') {
+    throw new Error(
+      `Failed atomic action deletion: ${rpcErr?.message ?? 'empty RPC payload'}`,
+    );
+  }
+
+  const rpc = rpcRaw as {
+    outcome?: string;
+    log_count?: number;
+    deleted_logs_count?: number;
+    title?: string;
+    period_id?: string;
+  };
+
+  if (rpc.outcome === 'not_found') {
+    throw new ServiceError(404, 'NOT_FOUND', `Action ${id} not found.`);
+  }
+
+  if (rpc.outcome === 'has_history') {
+    const logCount = Number(rpc.log_count ?? 0);
+    throw new ServiceError(
+      409,
+      'HAS_HISTORY',
+      `Action has ${logCount} logged entries. Archive it to keep history or confirm permanent deletion.`,
+      {
+        entity_type: 'action',
+        action_id: id,
+        log_count: logCount,
+      },
+    );
+  }
+
+  const deletedLogsCount = Number(rpc.deleted_logs_count ?? 0);
+
+  await writeAuditLog(supabase, {
+    level: 'INFO',
+    category: 'CRUD',
+    event_name: 'action_deleted',
+    request_id: requestId,
+    entity_type: 'action',
+    entity_id: id,
+    summary: `Permanently deleted action "${String(rpc.title ?? id)}" (${deletedLogsCount} logs removed).`,
+    context: {
+      forced: force,
+      deleted_logs_count: deletedLogsCount,
+      period_id: rpc.period_id ?? null,
+    },
+  });
+
+  return { ok: true, id, deleted_logs_count: deletedLogsCount };
+}
+
+export async function deletePeriod(params: {
+  supabase: SupabaseClient;
+  id: string;
+  force?: boolean;
+  requestId: string;
+}): Promise<{
+  ok: true;
+  id: string;
+  deleted_actions_count: number;
+  deleted_logs_count: number;
+  unbound_actions_count: number;
+}> {
+  const { supabase, id, force = false, requestId } = params;
+
+  const { data: rpcRaw, error: rpcErr } = await supabase.rpc(
+    'delete_period_atomic',
+    {
+      p_period_id: id,
+      p_force: force,
+    },
+  );
+
+  if (rpcErr || !rpcRaw || typeof rpcRaw !== 'object') {
+    throw new Error(
+      `Failed atomic period deletion: ${rpcErr?.message ?? 'empty RPC payload'}`,
+    );
+  }
+
+  const rpc = rpcRaw as {
+    outcome?: string;
+    action_count?: number;
+    log_count?: number;
+    bound_action_count?: number;
+    deleted_actions_count?: number;
+    deleted_logs_count?: number;
+    unbound_actions_count?: number;
+    title?: string;
+    side?: string;
+  };
+
+  if (rpc.outcome === 'not_found') {
+    throw new ServiceError(404, 'NOT_FOUND', `Period ${id} not found.`);
+  }
+
+  if (rpc.outcome === 'has_history' || rpc.outcome === 'has_children') {
+    const actionCount = Number(rpc.action_count ?? 0);
+    const logCount = Number(rpc.log_count ?? 0);
+    const boundActionCount = Number(rpc.bound_action_count ?? 0);
+    const code = logCount > 0 ? 'HAS_HISTORY' : 'HAS_CHILDREN';
+    throw new ServiceError(
+      409,
+      code,
+      logCount > 0
+        ? `Period has ${actionCount} actions and ${logCount} logged entries. Archive it to keep history or confirm permanent deletion.`
+        : `Period has ${actionCount} actions and ${boundActionCount} linked habits. Confirm permanent deletion to continue.`,
+      {
+        entity_type: 'period',
+        period_id: id,
+        action_count: actionCount,
+        log_count: logCount,
+        bound_action_count: boundActionCount,
+      },
+    );
+  }
+
+  const deletedActionsCount = Number(rpc.deleted_actions_count ?? 0);
+  const deletedLogsCount = Number(rpc.deleted_logs_count ?? 0);
+  const unboundActionsCount = Number(rpc.unbound_actions_count ?? 0);
+
+  await writeAuditLog(supabase, {
+    level: 'INFO',
+    category: 'CRUD',
+    event_name: 'period_deleted',
+    request_id: requestId,
+    entity_type: 'period',
+    entity_id: id,
+    summary: `Permanently deleted period "${String(rpc.title ?? id)}" (${deletedActionsCount} actions, ${deletedLogsCount} logs removed, ${unboundActionsCount} habits unbound).`,
+    context: {
+      forced: force,
+      side: rpc.side ?? null,
+      deleted_actions_count: deletedActionsCount,
+      deleted_logs_count: deletedLogsCount,
+      unbound_actions_count: unboundActionsCount,
+    },
+  });
+
+  return {
+    ok: true,
+    id,
+    deleted_actions_count: deletedActionsCount,
+    deleted_logs_count: deletedLogsCount,
+    unbound_actions_count: unboundActionsCount,
+  };
+}
+
 export const ReorderSchemaInputSchema = z.object({
   target: z.enum(['periods', 'actions']),
   items: z
@@ -923,7 +1086,7 @@ export const ReorderSchemaInputSchema = z.object({
       }),
     )
     .min(1)
-    .max(100)
+    .max(300)
     .refine(
       (items) => new Set(items.map((item) => item.id)).size === items.length,
       { message: 'Duplicate item ids are not allowed.' },

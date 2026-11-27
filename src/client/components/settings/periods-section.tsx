@@ -20,8 +20,13 @@ import {
   IconGripVertical,
   IconPlus,
   IconRefresh,
+  IconTrash,
 } from '../icons';
 import { Tooltip } from '../tooltip';
+import {
+  DeleteConfirmDialog,
+  type DeleteConfirmState,
+} from './delete-confirm-dialog';
 
 const ANCHOR_LABELS: ReadonlyArray<{ value: PrayerAnchor; label: string }> = [
   { value: 'FAJR', label: 'الفجر' },
@@ -89,6 +94,7 @@ export function PeriodsSection() {
     todayIslamicDate,
     createPeriod,
     updatePeriod,
+    deletePeriod,
     reorderSchema,
   } = useMohasba();
 
@@ -98,6 +104,10 @@ export function PeriodsSection() {
     text: string;
     isError: boolean;
   } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(
+    null,
+  );
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<PeriodFormState>(DEFAULT_FORM);
@@ -298,6 +308,78 @@ export function PeriodsSection() {
     }
   };
 
+  const handleRequestDelete = async (period: Period) => {
+    if (!isOnline || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await deletePeriod(period.id, { force: false });
+      if (res.ok) {
+        setFeedback({
+          text: `تم حذف الفترة نهائياً: ${period.title}`,
+          isError: false,
+        });
+        return;
+      }
+      if (res.errorCode === 'HAS_HISTORY' || res.errorCode === 'HAS_CHILDREN') {
+        const actionCount = Number(res.errorDetails?.action_count ?? 0);
+        const logCount = Number(res.errorDetails?.log_count ?? 0);
+        const boundActionCount = Number(
+          res.errorDetails?.bound_action_count ?? 0,
+        );
+        setDeleteError(null);
+        setDeleteConfirm({
+          entityType: 'period',
+          id: period.id,
+          title: period.title,
+          isArchived: period.archived_at !== null,
+          actionCount,
+          logCount,
+          boundActionCount,
+        });
+        return;
+      }
+      setFeedback({
+        text: res.errorMessage ?? 'تعذر حذف الفترة.',
+        isError: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmForceDelete = async () => {
+    if (!deleteConfirm || !isOnline || busy) return;
+    setBusy(true);
+    setDeleteError(null);
+    setFeedback(null);
+    try {
+      const res = await deletePeriod(deleteConfirm.id, { force: true });
+      if (res.ok) {
+        const deletedTitle = deleteConfirm.title;
+        setDeleteConfirm(null);
+        setDeleteError(null);
+        setFeedback({
+          text: `تم حذف الفترة نهائياً: ${deletedTitle}`,
+          isError: false,
+        });
+      } else {
+        setDeleteError(res.errorMessage ?? 'تعذر حذف الفترة.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleArchiveFromDeleteDialog = async () => {
+    if (!deleteConfirm) return;
+    const period = periods.find((p) => p.id === deleteConfirm.id);
+    setDeleteConfirm(null);
+    if (period && period.archived_at === null) {
+      await handleToggleArchive(period);
+    }
+  };
+
   return (
     <div>
       <div className="settings-section-bar">
@@ -444,6 +526,23 @@ export function PeriodsSection() {
                               <span>أرشفة</span>
                             </>
                           )}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          data-testid={`period-delete-${period.id}`}
+                          title={
+                            isOnline
+                              ? `حذف فترة ${period.title}`
+                              : 'الحذف متاح عند الاتصال بالإنترنت فقط'
+                          }
+                          disabled={!isOnline || busy}
+                          onClick={() => {
+                            void handleRequestDelete(period);
+                          }}
+                        >
+                          <IconTrash size="sm" />
+                          <span>حذف</span>
                         </button>
                       </div>
                     </div>
@@ -717,6 +816,22 @@ export function PeriodsSection() {
           </form>
         )}
       </dialog>
+
+      <DeleteConfirmDialog
+        target={deleteConfirm}
+        busy={busy}
+        error={deleteError}
+        onClose={() => {
+          setDeleteConfirm(null);
+          setDeleteError(null);
+        }}
+        onArchiveInstead={() => {
+          void handleArchiveFromDeleteDialog();
+        }}
+        onConfirmForceDelete={() => {
+          void handleConfirmForceDelete();
+        }}
+      />
     </div>
   );
 }

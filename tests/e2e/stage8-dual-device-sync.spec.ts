@@ -9,6 +9,7 @@ import {
 } from '../../src/domain/starter-pack';
 import { loadTestEnv } from '../helpers/load-env';
 import { createTestAdminClient, resetTestDb } from '../helpers/reset-test-db';
+import { seedStarterPackViaBrowser } from '../helpers/seed-starter-e2e';
 
 loadTestEnv();
 
@@ -205,12 +206,7 @@ test.describe('Stage 8: Real Dual-Browser Airplane-Mode Phone vs Online PC Sync 
       await unlockIfNeeded(phonePage, passcode);
 
       // Onboard Starter Pack on PC, then reload Phone so both share identical state
-      const starterBtn = pcPage.getByTestId('onboarding-starter-pack');
-      await expect(starterBtn).toBeVisible({ timeout: 10_000 });
-      await starterBtn.click();
-      await expect(pcPage.locator('.day-strip .day-tile')).toHaveCount(7, {
-        timeout: 15_000,
-      });
+      await seedStarterPackViaBrowser(pcPage);
 
       await phonePage.reload({ waitUntil: 'networkidle' });
       await expect(phonePage.locator('.day-strip .day-tile')).toHaveCount(7, {

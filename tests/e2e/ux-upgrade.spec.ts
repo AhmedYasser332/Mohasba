@@ -9,6 +9,7 @@ import {
 } from '../../src/domain/starter-pack';
 import { loadTestEnv } from '../helpers/load-env';
 import { resetTestDb } from '../helpers/reset-test-db';
+import { seedStarterPackViaBrowser } from '../helpers/seed-starter-e2e';
 
 loadTestEnv();
 
@@ -173,12 +174,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       await expect(unlockInput).toBeHidden({ timeout: 10_000 });
     }
 
-    const starterBtn = page.getByTestId('onboarding-starter-pack');
-    await expect(starterBtn).toBeVisible({ timeout: 10_000 });
-    await starterBtn.click();
-    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
-      timeout: 20_000,
-    });
+    await seedStarterPackViaBrowser(page);
 
     // Backdate active_from to D-2 via /api/export + /api/import so yesterday populates 48h catchup while Sat (< D-2) stays pre-active_from
     await page.evaluate(async (activeFrom) => {
@@ -788,7 +784,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await cycleCell(page, pastCell);
     await expect(pastCell).toHaveClass(/st-done/);
     if (satDate >= twoDaysAgo) {
-      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+      await page.getByRole('button', { name: 'اليوم', exact: true }).click();
     }
 
     if (friDate <= todayIslamic) {
@@ -800,7 +796,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await cycleCell(page, futureCell);
     await expect(futureCell).toHaveClass(/st-done/);
     if (friDate <= todayIslamic) {
-      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+      await page.getByRole('button', { name: 'اليوم', exact: true }).click();
     }
 
     // 6l. Aggressive rapid pointer-sweep crosshair check across One-Glance Split Mode & Standard Mode (zero stuck cells, zero mismatches)
@@ -1205,7 +1201,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       ),
     ).toHaveClass(/st-done/);
     if (satDate >= twoDaysAgo) {
-      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+      await page.getByRole('button', { name: 'اليوم', exact: true }).click();
     }
 
     if (friDate <= todayIslamic) {
@@ -1217,7 +1213,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       ),
     ).toHaveClass(/st-done/);
     if (friDate <= todayIslamic) {
-      await page.getByRole('button', { name: 'الأسبوع الحالي' }).click();
+      await page.getByRole('button', { name: 'اليوم', exact: true }).click();
     }
 
     // 7. Settings: Accordions, 6-Dot DnD (zero arrow buttons), In-App ntfy, Keyboard Shortcuts, General Preferences

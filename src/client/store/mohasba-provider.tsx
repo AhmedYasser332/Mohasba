@@ -30,6 +30,7 @@ import {
   type Period,
   type QadaaQueueItem,
   type TargetVersion,
+  type TemplateLevelId,
   makeCellKey,
 } from '@/domain';
 import {
@@ -79,7 +80,19 @@ export interface CrudResponse<T = unknown> {
   data?: T;
   errorCode?: string;
   errorMessage?: string;
+  errorDetails?: Record<string, unknown>;
   drainResult?: DrainBeforeCrudResult;
+}
+
+export interface InitOnboardingPayload {
+  mode: 'starter_pack' | 'blank' | 'template';
+  level?: TemplateLevelId;
+  active_from?: string;
+  excluded_period_ids?: string[];
+  excluded_action_ids?: string[];
+  custom_actions?: Array<{ id?: string; period_id: string; title: string }>;
+  ntfy_all_periods_enabled?: boolean;
+  settings_patch?: Record<string, unknown>;
 }
 
 export interface MohasbaContextValue {
@@ -138,15 +151,27 @@ export interface MohasbaContextValue {
   drainBeforeCrud: () => Promise<DrainBeforeCrudResult>;
   unlockWithPasscode: (passcode: string) => Promise<CrudResponse>;
   initOnboarding: (
-    mode: 'starter_pack' | 'blank',
+    modeOrPayload: 'starter_pack' | 'blank' | InitOnboardingPayload,
     activeFrom?: string,
   ) => Promise<CrudResponse>;
   updateSettings: (patch: Record<string, unknown>) => Promise<CrudResponse>;
   testNtfy: () => Promise<CrudResponse>;
   createPeriod: (input: Record<string, unknown>) => Promise<CrudResponse>;
-  updatePeriod: (id: string, patch: Record<string, unknown>) => Promise<CrudResponse>;
+  updatePeriod: (
+    id: string,
+    patch: Record<string, unknown>,
+    options?: { skipRefresh?: boolean },
+  ) => Promise<CrudResponse>;
+  deletePeriod: (
+    id: string,
+    options?: { force?: boolean },
+  ) => Promise<CrudResponse>;
   createAction: (input: Record<string, unknown>) => Promise<CrudResponse>;
   updateAction: (id: string, patch: Record<string, unknown>) => Promise<CrudResponse>;
+  deleteAction: (
+    id: string,
+    options?: { force?: boolean },
+  ) => Promise<CrudResponse>;
   createTargetVersion: (input: Record<string, unknown>) => Promise<CrudResponse>;
   updateTargetVersion: (
     id: string,
@@ -165,18 +190,24 @@ interface ApiErrorPayload {
   error?: {
     code?: string;
     message?: string;
+    details?: Record<string, unknown>;
   };
 }
 
 async function parseApiError(res: Response): Promise<{
   code: string;
   message: string;
+  details?: Record<string, unknown>;
 }> {
   try {
     const json = (await res.json()) as ApiErrorPayload;
     return {
       code: json.error?.code ?? `HTTP_${res.status}`,
       message: json.error?.message ?? `Request failed (${res.status})`,
+      details:
+        json.error?.details && typeof json.error.details === 'object'
+          ? json.error.details
+          : undefined,
     };
   } catch {
     return {
@@ -726,6 +757,7 @@ export function MohasbaProvider({
   const drainBeforeCrud = useCallback(async () => {
     const res = await engine.drainBeforeCrud();
     await syncStateFromIdb();
+    setActiveUndoToast(null);
     if (res.reason === 'auth_required') {
       setAuthStatus('locked');
     }
@@ -737,7 +769,7 @@ export function MohasbaProvider({
       url: string,
       method: 'POST' | 'PATCH' | 'DELETE',
       body?: Record<string, unknown>,
-      options: { skipDrain?: boolean } = {},
+      options: { skipDrain?: boolean; skipRefresh?: boolean } = {},
     ): Promise<CrudResponse<T>> => {
       if (!options.skipDrain) {
         const drainResult = await drainBeforeCrud();
@@ -760,26 +792,44 @@ export function MohasbaProvider({
       }
 
       try {
+        const headers: Record<string, string> = {
+          'X-Requested-With': 'fetch',
+        };
+        if (body !== undefined) {
+          headers['Content-Type'] = 'application/json';
+        }
         const res = await fetch(url, {
           method,
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           credentials: 'same-origin',
-          body: body ? JSON.stringify(body) : undefined,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
         });
 
         if (res.status === 401) {
           setAuthStatus('locked');
           const err = await parseApiError(res);
-          return { ok: false, errorCode: err.code, errorMessage: err.message };
+          return {
+            ok: false,
+            errorCode: err.code,
+            errorMessage: err.message,
+            errorDetails: err.details,
+          };
         }
 
         if (!res.ok) {
           const err = await parseApiError(res);
-          return { ok: false, errorCode: err.code, errorMessage: err.message };
+          return {
+            ok: false,
+            errorCode: err.code,
+            errorMessage: err.message,
+            errorDetails: err.details,
+          };
         }
 
         const data = (await res.json()) as T;
-        await refreshBootstrap({ full: true });
+        if (!options.skipRefresh) {
+          await refreshBootstrap({ full: true });
+        }
         return { ok: true, data };
       } catch {
         return {
@@ -822,11 +872,23 @@ export function MohasbaProvider({
   );
 
   const initOnboarding = useCallback(
-    (mode: 'starter_pack' | 'blank', activeFrom?: string) =>
-      executeOnlineCrud('/api/bootstrap/init', 'POST', {
-        mode,
-        ...(activeFrom ? { active_from: activeFrom } : {}),
-      }),
+    (
+      modeOrPayload: 'starter_pack' | 'blank' | InitOnboardingPayload,
+      activeFrom?: string,
+    ) => {
+      const payload =
+        typeof modeOrPayload === 'string'
+          ? {
+              mode: modeOrPayload,
+              ...(activeFrom ? { active_from: activeFrom } : {}),
+            }
+          : modeOrPayload;
+      return executeOnlineCrud(
+        '/api/bootstrap/init',
+        'POST',
+        payload as unknown as Record<string, unknown>,
+      );
+    },
     [executeOnlineCrud],
   );
 
@@ -848,8 +910,27 @@ export function MohasbaProvider({
   );
 
   const updatePeriod = useCallback(
-    (id: string, patch: Record<string, unknown>) =>
-      executeOnlineCrud(`/api/periods/${encodeURIComponent(id)}`, 'PATCH', patch),
+    (
+      id: string,
+      patch: Record<string, unknown>,
+      options?: { skipRefresh?: boolean },
+    ) =>
+      executeOnlineCrud(
+        `/api/periods/${encodeURIComponent(id)}`,
+        'PATCH',
+        patch,
+        options,
+      ),
+    [executeOnlineCrud],
+  );
+
+  const deletePeriod = useCallback(
+    (id: string, options?: { force?: boolean }) =>
+      executeOnlineCrud(
+        `/api/periods/${encodeURIComponent(id)}${options?.force ? '?force=true' : ''}`,
+        'DELETE',
+        options?.force ? { force: true } : undefined,
+      ),
     [executeOnlineCrud],
   );
 
@@ -862,6 +943,16 @@ export function MohasbaProvider({
   const updateAction = useCallback(
     (id: string, patch: Record<string, unknown>) =>
       executeOnlineCrud(`/api/actions/${encodeURIComponent(id)}`, 'PATCH', patch),
+    [executeOnlineCrud],
+  );
+
+  const deleteAction = useCallback(
+    (id: string, options?: { force?: boolean }) =>
+      executeOnlineCrud(
+        `/api/actions/${encodeURIComponent(id)}${options?.force ? '?force=true' : ''}`,
+        'DELETE',
+        options?.force ? { force: true } : undefined,
+      ),
     [executeOnlineCrud],
   );
 
@@ -1099,8 +1190,10 @@ export function MohasbaProvider({
       testNtfy,
       createPeriod,
       updatePeriod,
+      deletePeriod,
       createAction,
       updateAction,
+      deleteAction,
       createTargetVersion,
       updateTargetVersion,
       deleteTargetVersion,
@@ -1122,6 +1215,8 @@ export function MohasbaProvider({
       createAction,
       createPeriod,
       createTargetVersion,
+      deleteAction,
+      deletePeriod,
       deleteTargetVersion,
       discardAttentionItem,
       dismissUndoToast,

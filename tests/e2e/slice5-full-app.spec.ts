@@ -9,6 +9,7 @@ import {
 } from '../../src/domain/starter-pack';
 import { loadTestEnv } from '../helpers/load-env';
 import { resetTestDb } from '../helpers/reset-test-db';
+import { seedStarterPackViaBrowser } from '../helpers/seed-starter-e2e';
 
 loadTestEnv();
 
@@ -131,10 +132,7 @@ test.describe('Slice 5: Full 5-View E2E (Qadaa, Analytics, Settings, Target Evol
       await expect(unlockInput).toBeHidden({ timeout: 10_000 });
     }
 
-    const starterBtn = page.getByTestId('onboarding-starter-pack');
-    await expect(starterBtn).toBeVisible({ timeout: 10_000 });
-    await starterBtn.click();
-    await expect(page.locator('.day-strip .day-tile')).toHaveCount(7);
+    await seedStarterPackViaBrowser(page);
 
     // 2. Mark Quran Wird MISSED today (10 صفحات) & Fajr Jamaah MISSED today (non-recoverable core)
     await page.getByRole('tab', { name: 'ورد القرآن' }).click();

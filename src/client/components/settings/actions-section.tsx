@@ -24,8 +24,13 @@ import {
   IconPlus,
   IconRefresh,
   IconTarget,
+  IconTrash,
 } from '../icons';
 import { Tooltip } from '../tooltip';
+import {
+  DeleteConfirmDialog,
+  type DeleteConfirmState,
+} from './delete-confirm-dialog';
 import { TargetEvolutionDialog } from './target-evolution-dialog';
 
 interface ActionFormState {
@@ -69,6 +74,7 @@ export function ActionsSection() {
     todayIslamicDate,
     createAction,
     updateAction,
+    deleteAction,
     reorderSchema,
   } = useMohasba();
 
@@ -78,6 +84,10 @@ export function ActionsSection() {
     text: string;
     isError: boolean;
   } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(
+    null,
+  );
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [expandedPeriodIds, setExpandedPeriodIds] = useState<Set<string>>(
     () => new Set(),
@@ -492,6 +502,73 @@ export function ActionsSection() {
     }
   };
 
+  const handleRequestDeleteAction = async (action: Action) => {
+    if (!isOnline || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await deleteAction(action.id, { force: false });
+      if (res.ok) {
+        setFeedback({
+          text: `تم حذف العمل نهائياً: ${action.title}`,
+          isError: false,
+        });
+        return;
+      }
+      if (res.errorCode === 'HAS_HISTORY') {
+        const logCount = Number(res.errorDetails?.log_count ?? 0);
+        setDeleteError(null);
+        setDeleteConfirm({
+          entityType: 'action',
+          id: action.id,
+          title: action.title,
+          isArchived: action.archived_at !== null,
+          actionCount: 0,
+          logCount,
+        });
+        return;
+      }
+      setFeedback({
+        text: res.errorMessage ?? 'تعذر حذف العمل.',
+        isError: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmForceDeleteAction = async () => {
+    if (!deleteConfirm || !isOnline || busy) return;
+    setBusy(true);
+    setDeleteError(null);
+    setFeedback(null);
+    try {
+      const res = await deleteAction(deleteConfirm.id, { force: true });
+      if (res.ok) {
+        const deletedTitle = deleteConfirm.title;
+        setDeleteConfirm(null);
+        setDeleteError(null);
+        setFeedback({
+          text: `تم حذف العمل نهائياً: ${deletedTitle}`,
+          isError: false,
+        });
+      } else {
+        setDeleteError(res.errorMessage ?? 'تعذر حذف العمل.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleArchiveFromDeleteDialog = async () => {
+    if (!deleteConfirm) return;
+    const action = actions.find((a) => a.id === deleteConfirm.id);
+    setDeleteConfirm(null);
+    if (action && action.archived_at === null) {
+      await handleToggleArchive(action);
+    }
+  };
+
   const selectedFormPeriod = form
     ? periods.find((p) => p.id === form.period_id)
     : null;
@@ -749,6 +826,23 @@ export function ActionsSection() {
                                     </span>
                                   </>
                                 )}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger"
+                                data-testid={`action-delete-${action.id}`}
+                                title={
+                                  isOnline
+                                    ? `حذف عمل ${action.title}`
+                                    : 'الحذف متاح عند الاتصال بالإنترنت فقط'
+                                }
+                                disabled={!isOnline || busy}
+                                onClick={() => {
+                                  void handleRequestDeleteAction(action);
+                                }}
+                              >
+                                <IconTrash size="sm" />
+                                <span>حذف</span>
                               </button>
                             </div>
                           </div>
@@ -1111,6 +1205,22 @@ export function ActionsSection() {
         action={evolveAction}
         onClose={() => setEvolveAction(null)}
         onChanged={(msg) => setFeedback({ text: msg, isError: false })}
+      />
+
+      <DeleteConfirmDialog
+        target={deleteConfirm}
+        busy={busy}
+        error={deleteError}
+        onClose={() => {
+          setDeleteConfirm(null);
+          setDeleteError(null);
+        }}
+        onArchiveInstead={() => {
+          void handleArchiveFromDeleteDialog();
+        }}
+        onConfirmForceDelete={() => {
+          void handleConfirmForceDeleteAction();
+        }}
       />
     </div>
   );

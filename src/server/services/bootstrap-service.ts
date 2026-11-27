@@ -1,6 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { addDaysIso, resolveIslamicDate } from '@/domain/prayer-engine';
+import {
+  addDaysIso,
+  parseIsoDateParts,
+  resolveIslamicDate,
+} from '@/domain/prayer-engine';
 import { buildStarterPack } from '@/domain/starter-pack';
+import {
+  buildTemplateBundle,
+  customizeTemplateBundle,
+  type TemplateLevelId,
+} from '@/domain/templates';
 import {
   makeCellKey,
   type Action,
@@ -10,6 +19,7 @@ import {
   type Period,
   type TargetVersion,
 } from '@/domain/types';
+import type { z } from 'zod';
 import type { RuntimeConfig } from '../config';
 import {
   buildNtfyStatusMeta,
@@ -23,6 +33,7 @@ import {
 import { fetchAllDailyLogsKeyset } from '../db/pagination';
 import { ServiceError } from '../errors';
 import { writeAuditLog } from '../observability/logger';
+import { updateSettings, type SettingsPatchSchema } from './crud-service';
 
 export interface BootstrapResponse {
   server_now: string;
@@ -156,20 +167,53 @@ export async function getBootstrap(params: {
   };
 }
 
+async function deriveDeterministicCustomUuid(seed: string): Promise<string> {
+  const bytes = new TextEncoder().encode(seed);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+  const h = new Uint8Array(hashBuffer).slice(0, 16);
+  // Stamp RFC-4122 v4 version (4) and variant (10xx) bits
+  h[6] = ((h[6] ?? 0) & 0x0f) | 0x40;
+  h[8] = ((h[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(h, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+export type BootstrapInitMode = 'starter_pack' | 'blank' | 'template';
+
 export async function initStarterPack(params: {
   supabase: SupabaseClient;
-  mode: 'starter_pack' | 'blank';
+  config?: RuntimeConfig;
+  mode: BootstrapInitMode;
+  level?: TemplateLevelId;
+  excludedPeriodIds?: readonly string[];
+  excludedActionIds?: readonly string[];
+  customActions?: ReadonlyArray<{ id?: string; period_id: string; title: string }>;
+  ntfyAllPeriodsEnabled?: boolean;
+  settingsPatch?: z.infer<typeof SettingsPatchSchema>;
   requestId: string;
   activeFromIso?: string;
 }): Promise<{
   ok: true;
   already_completed: boolean;
   onboarding_completed: true;
-  mode: 'starter_pack' | 'blank';
+  mode: BootstrapInitMode;
+  level?: TemplateLevelId;
   settings: AppSettings;
 }> {
-  const { supabase, mode, requestId, activeFromIso } = params;
-  const settings = await fetchAppSettings(supabase);
+  const {
+    supabase,
+    config,
+    mode,
+    level,
+    excludedPeriodIds,
+    excludedActionIds,
+    customActions,
+    ntfyAllPeriodsEnabled,
+    settingsPatch,
+    requestId,
+    activeFromIso,
+  } = params;
+  let settings = await fetchAppSettings(supabase);
 
   if (settings.onboarding_completed) {
     return {
@@ -177,39 +221,152 @@ export async function initStarterPack(params: {
       already_completed: true,
       onboarding_completed: true,
       mode,
+      ...(level ? { level } : {}),
       settings,
     };
   }
 
-  if (mode === 'starter_pack') {
-    const effectiveActiveFrom =
-      activeFromIso ?? resolveIslamicDate(Date.now(), settings);
-    const bundle = buildStarterPack(effectiveActiveFrom);
-
-    const { error: pErr } = await supabase
-      .from('periods')
-      .upsert(bundle.periods, { onConflict: 'id', ignoreDuplicates: true });
-    if (pErr) {
-      throw new Error(`Starter pack periods seed failed: ${pErr.message}`);
-    }
-
-    const { error: aErr } = await supabase
-      .from('actions')
-      .upsert(bundle.actions, { onConflict: 'id', ignoreDuplicates: true });
-    if (aErr) {
-      throw new Error(`Starter pack actions seed failed: ${aErr.message}`);
-    }
-
-    const { error: tErr } = await supabase
-      .from('target_versions')
-      .upsert(bundle.targetVersions, {
-        onConflict: 'id',
-        ignoreDuplicates: true,
-      });
-    if (tErr) {
-      throw new Error(
-        `Starter pack target_versions seed failed: ${tErr.message}`,
+  // Validate active_from calendar date & template bundle BEFORE any DB mutation
+  if (activeFromIso !== undefined) {
+    try {
+      parseIsoDateParts(activeFromIso);
+    } catch {
+      throw new ServiceError(
+        400,
+        'VALIDATION_ERROR',
+        `Invalid calendar date for active_from: ${activeFromIso}`,
       );
+    }
+  }
+
+  const resolvedLevel: TemplateLevelId = level ?? 'level_1';
+  const effectiveActiveFrom =
+    activeFromIso ??
+    resolveIslamicDate(Date.now(), {
+      ...settings,
+      ...(settingsPatch?.iana_timezone
+        ? { iana_timezone: settingsPatch.iana_timezone }
+        : {}),
+      ...(settingsPatch?.latitude !== undefined
+        ? { latitude: settingsPatch.latitude }
+        : {}),
+      ...(settingsPatch?.longitude !== undefined
+        ? { longitude: settingsPatch.longitude }
+        : {}),
+      ...(settingsPatch?.calc_method
+        ? { calc_method: settingsPatch.calc_method }
+        : {}),
+      ...(settingsPatch?.rollover_mode
+        ? { rollover_mode: settingsPatch.rollover_mode }
+        : {}),
+    });
+
+  let preparedBundle: ReturnType<typeof buildStarterPack> | null = null;
+
+  if (mode === 'template') {
+    const baseTemplate = buildTemplateBundle(resolvedLevel, effectiveActiveFrom);
+    const excludedPeriods = new Set(excludedPeriodIds ?? []);
+    const keptTemplatePeriodIds = new Set(
+      baseTemplate.periods
+        .filter((p) => !excludedPeriods.has(p.id))
+        .map((p) => p.id),
+    );
+
+    const resolvedCustomActions: Array<{
+      id: string;
+      period_id: string;
+      title: string;
+    }> = [];
+
+    for (let idx = 0; idx < (customActions ?? []).length; idx += 1) {
+      const item = customActions![idx]!;
+      if (!keptTemplatePeriodIds.has(item.period_id)) {
+        throw new ServiceError(
+          400,
+          'VALIDATION_ERROR',
+          `custom_actions[${idx}].period_id (${item.period_id}) is not an active period in template "${resolvedLevel}".`,
+        );
+      }
+      const id =
+        item.id ??
+        (await deriveDeterministicCustomUuid(
+          `mohasba:custom:${resolvedLevel}:${item.period_id}:${idx}:${item.title.trim()}`,
+        ));
+      resolvedCustomActions.push({
+        id,
+        period_id: item.period_id,
+        title: item.title.trim(),
+      });
+    }
+
+    preparedBundle = customizeTemplateBundle({
+      level: resolvedLevel,
+      activeFromIso: effectiveActiveFrom,
+      excludedPeriodIds,
+      excludedActionIds,
+      customActions: resolvedCustomActions,
+      ntfyAllPeriodsEnabled,
+    });
+
+    if (preparedBundle.periods.length === 0 || preparedBundle.actions.length === 0) {
+      throw new ServiceError(
+        400,
+        'VALIDATION_ERROR',
+        'Template selection must retain at least 1 period and 1 action. Use mode "blank" to start empty.',
+      );
+    }
+  } else if (mode === 'starter_pack') {
+    preparedBundle = buildStarterPack(effectiveActiveFrom);
+  }
+
+  // Apply and validate any optional Step 2 settings patch BEFORE seeding schema rows
+  if (settingsPatch && Object.keys(settingsPatch).length > 0) {
+    const updatedSettingsRes = await updateSettings({
+      supabase,
+      config,
+      patch: settingsPatch,
+      requestId,
+    });
+    settings = updatedSettingsRes.settings;
+  }
+
+  let seededPeriodsCount = 0;
+  let seededActionsCount = 0;
+
+  if (preparedBundle) {
+    seededPeriodsCount = preparedBundle.periods.length;
+    seededActionsCount = preparedBundle.actions.length;
+
+    if (preparedBundle.periods.length > 0) {
+      const { error: pErr } = await supabase
+        .from('periods')
+        .upsert(preparedBundle.periods, { onConflict: 'id', ignoreDuplicates: true });
+      if (pErr) {
+        throw new Error(`Template periods seed failed: ${pErr.message}`);
+      }
+    }
+
+    if (preparedBundle.actions.length > 0) {
+      const { error: aErr } = await supabase
+        .from('actions')
+        .upsert(preparedBundle.actions, { onConflict: 'id', ignoreDuplicates: true });
+      if (aErr) {
+        throw new Error(`Template actions seed failed: ${aErr.message}`);
+      }
+    }
+
+    if (preparedBundle.targetVersions.length > 0) {
+      const { error: tErr } = await supabase
+        .from('target_versions')
+        .upsert(preparedBundle.targetVersions, {
+          onConflict: 'id',
+          ignoreDuplicates: true,
+        });
+      if (tErr) {
+        throw new Error(
+          `Template target_versions seed failed: ${tErr.message}`,
+        );
+      }
     }
   }
 
@@ -236,8 +393,17 @@ export async function initStarterPack(params: {
     request_id: requestId,
     entity_type: 'app_settings',
     entity_id: '1',
-    summary: `Initialized onboarding in ${mode} mode.`,
-    context: { mode },
+    summary:
+      mode === 'template'
+        ? `Initialized onboarding with template ${level ?? 'level_1'} (${seededPeriodsCount} periods, ${seededActionsCount} actions).`
+        : `Initialized onboarding in ${mode} mode.`,
+    context: {
+      mode,
+      level: level ?? null,
+      periods_count: seededPeriodsCount,
+      actions_count: seededActionsCount,
+      custom_actions_count: customActions?.length ?? 0,
+    },
   });
 
   return {
@@ -245,6 +411,7 @@ export async function initStarterPack(params: {
     already_completed: false,
     onboarding_completed: true,
     mode,
+    ...(level ? { level } : {}),
     settings: normalizeAppSettingsRow(updatedRow as Record<string, unknown>),
   };
 }

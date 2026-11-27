@@ -1110,8 +1110,32 @@ export class OutboxEngine {
           }),
         ]);
 
+        const validActionIds = new Set(payload.actions.map((a) => a.id));
         const outboxItems = await outboxStore.getAll();
-        const dirtyCellKeys = new Set(outboxItems.map((i) => i.cell_key));
+        const dirtyCellKeys = new Set<string>();
+
+        // Prune attention_needed outbox items whose parent action was permanently deleted
+        for (const item of outboxItems) {
+          if (
+            item.state === 'attention_needed' &&
+            !validActionIds.has(item.action_id)
+          ) {
+            await outboxStore.delete(item.mutation_id);
+            continue;
+          }
+          dirtyCellKeys.add(item.cell_key);
+        }
+
+        // Prune cached local logs belonging to permanently deleted actions
+        const existingLocalLogs = await logsStore.getAll();
+        for (const localLog of existingLocalLogs) {
+          if (
+            !validActionIds.has(localLog.action_id) &&
+            !dirtyCellKeys.has(localLog.cell_key)
+          ) {
+            await logsStore.delete(localLog.cell_key);
+          }
+        }
 
         const skippedDirtyCells: string[] = [];
         let mergedLogCount = 0;

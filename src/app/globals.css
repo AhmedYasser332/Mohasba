@@ -2006,8 +2006,14 @@ dialog.app-dialog {
   margin: auto;
 }
 
+dialog.app-dialog:modal {
+  overscroll-behavior: contain;
+}
+
 dialog.app-dialog::backdrop {
   background: rgba(17, 22, 26, 0.45);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 .dialog-head {

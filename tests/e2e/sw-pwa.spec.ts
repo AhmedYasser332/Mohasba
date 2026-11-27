@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { expect, test } from '@playwright/test';
+import { seedStarterPackViaBrowser } from '../helpers/seed-starter-e2e';
 
 dotenv.config({
   path: path.resolve(process.cwd(), '.env.local'),
@@ -165,14 +166,11 @@ test.describe('Slice 3+4: Service Worker, Precache Manifest, Offline Reload & Si
     }
 
     // Complete onboarding if first-run so workspace chrome (.desktop-rail) renders cleanly
-    const starterBtn = page.getByTestId('onboarding-starter-pack');
+    const wizard = page.getByTestId('onboarding-wizard');
     const desktopRail = page.locator('.desktop-rail');
-    await expect(starterBtn.or(desktopRail)).toBeVisible({ timeout: 10_000 });
-    if (await starterBtn.isVisible()) {
-      await starterBtn.click();
-      await expect(page.locator('.day-strip .day-tile')).toHaveCount(7, {
-        timeout: 15_000,
-      });
+    await expect(wizard.or(desktopRail)).toBeVisible({ timeout: 10_000 });
+    if (await wizard.isVisible()) {
+      await seedStarterPackViaBrowser(page);
     }
 
     // Wait for IDB snapshot & meta to be populated

@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { AR_STRINGS, type NtfyMode, type NtfySource, type Period } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
+import { generateSecureNtfyTopicUrl } from '../../utils/presets';
 import { IconBell, IconCheck, IconCopy, IconRefresh, IconTrash } from '../icons';
 
 const NTFY_SOURCE_LABELS: Record<NtfySource, string> = {
@@ -21,13 +22,6 @@ interface NtfyFormDraft {
   backupReminderEnabled?: boolean;
 }
 
-function generateSecureNtfyTopicUrl(): string {
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `https://ntfy.sh/mohasba-${hex}`;
-}
-
 export function NtfySection() {
   const {
     settings,
@@ -39,6 +33,7 @@ export function NtfySection() {
     isOnline,
     updateSettings,
     updatePeriod,
+    refreshBootstrap,
     testNtfy,
   } = useMohasba();
 
@@ -302,6 +297,44 @@ export function NtfySection() {
     });
     if (clamped !== period.ntfy_offset_min) {
       void handlePeriodNtfyPatch(period, { ntfy_offset_min: clamped });
+    }
+  };
+
+  const handleToggleAllPeriodsNtfy = async (enabled: boolean) => {
+    if (!isOnline || busy) return;
+    const targets = timeBoundPeriods.filter((p) => p.ntfy_enabled !== enabled);
+    if (targets.length === 0) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((period) =>
+          updatePeriod(period.id, { ntfy_enabled: enabled }, { skipRefresh: true }),
+        ),
+      );
+      await refreshBootstrap({ full: true });
+      const failedCount = results.filter(
+        (r) => r.status === 'rejected' || !r.value.ok,
+      ).length;
+      if (failedCount > 0) {
+        const succeeded = targets.length - failedCount;
+        setFeedback({
+          text:
+            succeeded > 0
+              ? `تم تحديث ${succeeded} من ${targets.length} فترات وتعذر تحديث ${failedCount}.`
+              : 'تعذر تحديث تنبيهات الفترات.',
+          isError: true,
+        });
+        return;
+      }
+      setFeedback({
+        text: enabled
+          ? 'تم تفعيل التنبيهات لجميع الفترات الموقوتة.'
+          : 'تم إيقاف التنبيهات لجميع الفترات الموقوتة.',
+        isError: false,
+      });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -641,10 +674,44 @@ export function NtfySection() {
       {timeBoundPeriods.length > 0 && (
         <div className="settings-subpanel">
           <div className="settings-subpanel-head">
-            <strong>تخصيص تنبيه كل فترة</strong>
-            <span className="panel-meta">
-              يحفظ التغيير عند الخروج من الحقل أو الضغط على Enter
-            </span>
+            <div className="flex flex-col gap-0.5">
+              <strong>تخصيص تنبيه كل فترة</strong>
+              <span className="panel-meta">
+                يحفظ التغيير عند الخروج من الحقل أو الضغط على Enter
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="btn"
+                data-testid="ntfy-enable-all-periods"
+                disabled={
+                  !isOnline ||
+                  busy ||
+                  timeBoundPeriods.every((p) => p.ntfy_enabled)
+                }
+                onClick={() => {
+                  void handleToggleAllPeriodsNtfy(true);
+                }}
+              >
+                تفعيل الكل
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-testid="ntfy-disable-all-periods"
+                disabled={
+                  !isOnline ||
+                  busy ||
+                  timeBoundPeriods.every((p) => !p.ntfy_enabled)
+                }
+                onClick={() => {
+                  void handleToggleAllPeriodsNtfy(false);
+                }}
+              >
+                إيقاف الكل
+              </button>
+            </div>
           </div>
           <div>
             {timeBoundPeriods.map((period) => (

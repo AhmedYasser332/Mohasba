@@ -28,6 +28,27 @@ export const ARABIC_NOUN_FORMS = {
     few: 'أعمال',
     many: 'عملاً',
   },
+  section: {
+    zero: '0 أقسام',
+    one: 'قسم واحد',
+    two: 'قسمان',
+    few: 'أقسام',
+    many: 'قسماً',
+  },
+  logRecord: {
+    zero: '0 سجلات تاريخية',
+    one: 'سجل تاريخي واحد',
+    two: 'سجلان تاريخيان',
+    few: 'سجلات تاريخية',
+    many: 'سجلاً تاريخياً',
+  },
+  habit: {
+    zero: '0 عادات يومية',
+    one: 'عادة يومية واحدة',
+    two: 'عادتان يوميتان',
+    few: 'عادات يومية',
+    many: 'عادة يومية',
+  },
 } as const satisfies Record<string, ArabicCountForms>;
 
 /**

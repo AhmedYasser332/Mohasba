@@ -89,6 +89,26 @@ describe('Slice 0: mohasba-test schema & PostgREST security lockdown', () => {
         expect(body.code).toBe('42501');
       }
     });
+
+    it('rejects anon POST /rest/v1/rpc/delete_action_atomic and delete_period_atomic', async () => {
+      for (const fn of ['delete_action_atomic', 'delete_period_atomic']) {
+        const res = await fetch(`${supabaseUrl}/rest/v1/rpc/${fn}`, {
+          method: 'POST',
+          headers: anonHeaders(),
+          body: JSON.stringify({
+            [fn === 'delete_action_atomic' ? 'p_action_id' : 'p_period_id']:
+              '00000000-0000-4000-8000-000000000001',
+            p_force: false,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as { code?: string };
+        expect(res.ok).toBe(false);
+        expect([401, 403]).toContain(res.status);
+        if (body.code) {
+          expect(body.code).toBe('42501');
+        }
+      }
+    });
   });
 
   describe('SQL 3-valued-logic CHECKs, composite FK & ON DELETE RESTRICT', () => {
