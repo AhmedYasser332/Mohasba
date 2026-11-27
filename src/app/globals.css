@@ -20,6 +20,9 @@
   --ink-inverse: #FFFFFF;
   --accent-live: #0F5257;
   --accent-live-soft: #E3F0F1;
+  --crosshair-row-bg: rgba(15, 82, 87, 0.075);
+  --crosshair-col-bg: rgba(15, 82, 87, 0.085);
+  --crosshair-head-bg: rgba(15, 82, 87, 0.11);
   --live-btn-bg: #0F5257;
   --live-btn-ink: #FFFFFF;
 
@@ -79,6 +82,9 @@
   --ink-inverse: #14171B;
   --accent-live: #58A4AA;
   --accent-live-soft: rgba(88, 164, 170, 0.13);
+  --crosshair-row-bg: rgba(88, 164, 170, 0.1);
+  --crosshair-col-bg: rgba(88, 164, 170, 0.115);
+  --crosshair-head-bg: rgba(88, 164, 170, 0.16);
   --live-btn-bg: #1E5B60;
   --live-btn-ink: #EDF4F5;
 
@@ -1559,10 +1565,6 @@ table.ledger-table {
 .ledger-table tbody tr.data-row {
   height: 36px;
   border-block-end: 1px solid var(--border-hairline);
-}
-
-.ledger-table tbody tr.data-row:hover:not(:has(> td.cell-status:hover)) {
-  background: var(--bg-canvas);
 }
 
 .ledger-table td.cell-title {

@@ -65,6 +65,11 @@ import {
   IconQadaa,
   IconX,
 } from '../icons';
+import {
+  TableCrosshairStage,
+  createCrosshairCoordinator,
+  type CrosshairFocusTarget,
+} from './table-crosshair-stage';
 
 /** Max gap between clicks/taps on the same cell to count as a repeat (cycle) click. */
 const MULTI_TAP_WINDOW_MS = 450;
@@ -454,6 +459,7 @@ export function WeekView({
   const [dndSaving, setDndSaving] = useState(false);
 
   // Desktop spreadsheet grid focus, selection, copy marquee, fill drag, crosshair & clipboard
+  const [crosshairCoordinator] = useState(() => createCrosshairCoordinator());
   const [focusedCell, setFocusedCell] = useState<GridCoord | null>(null);
   // Select-first click model: 1st click selects, a repeat click on the same cell cycles.
   const lastCellTapRef = useRef<{
@@ -3440,6 +3446,7 @@ export function WeekView({
                   isRowCrosshair ? 'is-row-crosshair' : ''
                 }`}
                 role="row"
+                data-grid-row={rowIndex}
                 data-period-id={group.id}
                 data-period-side={group.side}
                 {...itemProps}
@@ -3609,8 +3616,18 @@ export function WeekView({
         ? Math.max(0, rightRowCount - 1)
         : visibleGridRows.length - 1;
 
+    const sideFocusTarget: CrosshairFocusTarget | null =
+      crosshairCoord !== null && crosshairCoord.side === side
+        ? { rowIndex: crosshairCoord.row, colIndex: crosshairCoord.col }
+        : null;
+    const sideLayoutKey = `og:${side}:${weekDates[0] ?? ''}:${sideStartRow}:${sideEndRow}:${populatedGroups.length}`;
+
     return (
-      <div className="ledger-table-wrap">
+      <TableCrosshairStage
+        coordinator={crosshairCoordinator}
+        focusTarget={sideFocusTarget}
+        layoutKey={sideLayoutKey}
+      >
         <table
           className={`ledger-table ${sideClass}`}
           role="grid"
@@ -3702,6 +3719,7 @@ export function WeekView({
                       <tr
                         key={action.id}
                         role="row"
+                        data-grid-row={rowIndex}
                         data-period-id={group.id}
                         data-period-side={side}
                         className={`data-row ${isLastInGroup ? 'period-end-row' : ''} ${
@@ -3832,7 +3850,7 @@ export function WeekView({
             })}
           </tbody>
         </table>
-      </div>
+      </TableCrosshairStage>
     );
   };
 
@@ -3995,7 +4013,18 @@ export function WeekView({
               {renderOneGlanceSideTable('DAILY_GROUP')}
             </div>
           ) : (
-            <div className="ledger-table-wrap">
+            <TableCrosshairStage
+              coordinator={crosshairCoordinator}
+              focusTarget={
+                crosshairCoord !== null
+                  ? { rowIndex: crosshairCoord.row, colIndex: crosshairCoord.col }
+                  : null
+              }
+              layoutKey={`std:${weekDates[0] ?? ''}:${visibleGridRows.length}:${Object.entries(collapsedGroups)
+                .filter(([, v]) => v)
+                .map(([k]) => k)
+                .join(',')}`}
+            >
               <table
                 className="ledger-table"
                 role="grid"
@@ -4064,7 +4093,7 @@ export function WeekView({
                   {activeGroups.left.map(renderStandardGroupRows)}
                 </tbody>
               </table>
-            </div>
+            </TableCrosshairStage>
           )}
         </div>
 

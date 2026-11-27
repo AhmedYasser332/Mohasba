@@ -148,59 +148,83 @@
   user-select: none;
 }
 
-/* Focus crosshair (React state) shows only while the pointer is not hovering any matrix cell;
-   pure CSS :has() hover crosshair takes over instantaneously with zero JS / zero React re-renders. */
-.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table thead th.col-day.is-col-crosshair,
-.ledger-table:has(td.cell-status[data-col-index="0"]:hover) thead th.col-day[data-col-index="0"],
-.ledger-table:has(td.cell-status[data-col-index="1"]:hover) thead th.col-day[data-col-index="1"],
-.ledger-table:has(td.cell-status[data-col-index="2"]:hover) thead th.col-day[data-col-index="2"],
-.ledger-table:has(td.cell-status[data-col-index="3"]:hover) thead th.col-day[data-col-index="3"],
-.ledger-table:has(td.cell-status[data-col-index="4"]:hover) thead th.col-day[data-col-index="4"],
-.ledger-table:has(td.cell-status[data-col-index="5"]:hover) thead th.col-day[data-col-index="5"],
-.ledger-table:has(td.cell-status[data-col-index="6"]:hover) thead th.col-day[data-col-index="6"] {
-  background: var(--bg-hover);
-  color: var(--ink-primary);
+/* GPU-Composited Gliding Crosshair Stage (120fps transform/opacity only — zero :has() table invalidation) */
+.ledger-table-stage {
+  position: relative;
+  width: 100%;
+  isolation: isolate;
 }
 
-.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table thead th.col-day.is-today.is-col-crosshair,
-.ledger-table:has(td.cell-status[data-col-index="0"]:hover) thead th.col-day.is-today[data-col-index="0"],
-.ledger-table:has(td.cell-status[data-col-index="1"]:hover) thead th.col-day.is-today[data-col-index="1"],
-.ledger-table:has(td.cell-status[data-col-index="2"]:hover) thead th.col-day.is-today[data-col-index="2"],
-.ledger-table:has(td.cell-status[data-col-index="3"]:hover) thead th.col-day.is-today[data-col-index="3"],
-.ledger-table:has(td.cell-status[data-col-index="4"]:hover) thead th.col-day.is-today[data-col-index="4"],
-.ledger-table:has(td.cell-status[data-col-index="5"]:hover) thead th.col-day.is-today[data-col-index="5"],
-.ledger-table:has(td.cell-status[data-col-index="6"]:hover) thead th.col-day.is-today[data-col-index="6"] {
-  background: color-mix(in srgb, var(--accent-live) 22%, transparent);
-  color: var(--accent-live);
-  box-shadow: inset 0 -2px 0 var(--accent-live);
+.crosshair-sticky-track {
+  position: sticky;
+  inset-block-start: 0;
+  height: 0;
+  z-index: 26;
+  pointer-events: none;
+  overflow: visible;
 }
 
-.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table td.cell-status.is-col-crosshair,
-.ledger-table:has(td.cell-status[data-col-index="0"]:hover) td.cell-status[data-col-index="0"],
-.ledger-table:has(td.cell-status[data-col-index="1"]:hover) td.cell-status[data-col-index="1"],
-.ledger-table:has(td.cell-status[data-col-index="2"]:hover) td.cell-status[data-col-index="2"],
-.ledger-table:has(td.cell-status[data-col-index="3"]:hover) td.cell-status[data-col-index="3"],
-.ledger-table:has(td.cell-status[data-col-index="4"]:hover) td.cell-status[data-col-index="4"],
-.ledger-table:has(td.cell-status[data-col-index="5"]:hover) td.cell-status[data-col-index="5"],
-.ledger-table:has(td.cell-status[data-col-index="6"]:hover) td.cell-status[data-col-index="6"] {
-  background: color-mix(in srgb, var(--accent-live) 10%, transparent);
+.crosshair-body-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
 }
 
-.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table tbody tr.data-row.is-row-crosshair,
-.ledger-table tbody tr.data-row:has(> td.cell-status:hover) {
-  background: color-mix(in srgb, var(--accent-live) 8%, transparent);
+.crosshair-row-bar,
+.crosshair-col-bar,
+.crosshair-head-bar,
+.crosshair-head-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+  transition: opacity 90ms ease-out;
 }
 
-.matrix-desktop-wrap:not(:has(td.cell-status:hover)) .ledger-table .row-title-btn.is-row-crosshair:not(.is-row-selected),
-.ledger-table tbody tr.data-row:has(> td.cell-status:hover) .row-title-btn:not(.is-row-selected) {
-  background: var(--bg-hover);
-  color: var(--ink-primary);
+.crosshair-row-bar,
+.crosshair-col-bar {
+  z-index: 1;
 }
 
-/* Crosshair row/column headers snap instantaneously (0ms) on both entry and exit */
-.matrix-desktop-wrap .row-title-btn,
-.matrix-desktop-wrap thead th.col-day {
-  transition: none;
+.crosshair-row-bar {
+  background: var(--crosshair-row-bg);
+}
+
+.crosshair-col-bar {
+  background: var(--crosshair-col-bg);
+}
+
+.crosshair-head-bar {
+  background: var(--crosshair-head-bg);
+}
+
+.crosshair-head-line {
+  height: 2px;
+  background: var(--accent-live);
+}
+
+.crosshair-row-bar[data-active="true"],
+.crosshair-col-bar[data-active="true"],
+.crosshair-head-bar[data-active="true"],
+.crosshair-head-line[data-active="true"] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .crosshair-row-bar[data-glide="true"],
+  .crosshair-col-bar[data-glide="true"],
+  .crosshair-head-bar[data-glide="true"],
+  .crosshair-head-line[data-glide="true"] {
+    transition:
+      transform 68ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 90ms ease-out;
+  }
 }
 
 .m-cell-wrap {

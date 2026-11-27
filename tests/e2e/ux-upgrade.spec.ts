@@ -415,18 +415,29 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       expect(panel.scrollWidth).toBeLessThanOrEqual(panel.clientWidth);
     }
 
-    // Pure CSS :has() hover crosshair paints real background on hovered row + column
+    // GPU-composited gliding crosshair activates cleanly on hovered row + column + sticky header
     await fajrCell.hover();
-    const initialHoverBg = await fajrCell.evaluate((el) => {
-      const tr = el.closest('tr')!;
-      const td = el.closest('td')!;
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const initialCrosshair = await fajrCell.evaluate((el) => {
+      const stage = el.closest<HTMLElement>('.ledger-table-stage')!;
+      const rowBar = stage.querySelector<HTMLElement>('.crosshair-row-bar')!;
+      const colBar = stage.querySelector<HTMLElement>('.crosshair-col-bar')!;
+      const headBar = stage.querySelector<HTMLElement>('.crosshair-head-bar')!;
       return {
-        rowBg: getComputedStyle(tr).backgroundColor,
-        cellBg: getComputedStyle(td).backgroundColor,
+        mode: stage.dataset.crosshairMode,
+        rowActive: rowBar.dataset.active,
+        colActive: colBar.dataset.active,
+        headActive: headBar.dataset.active,
+        rowTransform: rowBar.style.transform,
+        colTransform: colBar.style.transform,
       };
     });
-    expect(initialHoverBg.rowBg).not.toBe('rgba(0, 0, 0, 0)');
-    expect(initialHoverBg.cellBg).not.toBe('rgba(0, 0, 0, 0)');
+    expect(initialCrosshair.mode).toBe('hover');
+    expect(initialCrosshair.rowActive).toBe('true');
+    expect(initialCrosshair.colActive).toBe('true');
+    expect(initialCrosshair.headActive).toBe('true');
+    expect(initialCrosshair.rowTransform).toContain('translate3d');
+    expect(initialCrosshair.colTransform).toContain('translate3d');
     await page.waitForTimeout(MULTI_TAP_SETTLE_MS);
     await fajrCell.click();
     await expect(page.locator('dialog.app-dialog[open]')).toHaveCount(0);
@@ -799,7 +810,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       await page.getByRole('button', { name: 'اليوم', exact: true }).click();
     }
 
-    // 6l. Aggressive rapid pointer-sweep crosshair check across One-Glance Split Mode & Standard Mode (zero stuck cells, zero mismatches)
+    // 6l. Aggressive rapid pointer-sweep GPU crosshair check across One-Glance Split Mode & Standard Mode (zero stuck cells, zero leaks, exact geometry)
     const verifyCrosshairSweep = async (
       targets: Array<{
         tableSelector: string;
@@ -819,55 +830,72 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
           );
         }
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.evaluate(
+          () =>
+            new Promise((r) =>
+              requestAnimationFrame(() => requestAnimationFrame(r)),
+            ),
+        );
         const audit = await page.evaluate(
           ({ tableSelector, actionId, date, colIdx }) => {
-            const activeTable = document.querySelector<HTMLTableElement>(tableSelector);
+            const activeTable =
+              document.querySelector<HTMLTableElement>(tableSelector);
+            const activeStage = activeTable?.closest<HTMLElement>(
+              '.ledger-table-stage',
+            );
             const btn = document.querySelector<HTMLElement>(
               `[data-testid="week-cell-${actionId}-${date}"]`,
             );
-            const activeTr = btn?.closest('tr');
-            if (!activeTable || !activeTr) {
-              return { ok: false, reason: 'missing active table or row' };
+            const activeTr = btn?.closest<HTMLTableRowElement>('tr.data-row');
+            if (!activeTable || !activeStage || !activeTr) {
+              return { ok: false, reason: 'missing active stage or row' };
             }
-            const transparent = 'rgba(0, 0, 0, 0)';
-            const litRows = Array.from(
-              document.querySelectorAll<HTMLTableRowElement>(
-                'table.ledger-table tbody tr.data-row',
-              ),
-            ).filter((tr) => getComputedStyle(tr).backgroundColor !== transparent);
-            if (litRows.length !== 1 || litRows[0] !== activeTr) {
+            const expectedRowIdx = activeTr.dataset.gridRow;
+            const rowBar =
+              activeStage.querySelector<HTMLElement>('.crosshair-row-bar');
+            const colBar =
+              activeStage.querySelector<HTMLElement>('.crosshair-col-bar');
+            const headBar =
+              activeStage.querySelector<HTMLElement>('.crosshair-head-bar');
+            if (!rowBar || !colBar || !headBar) {
+              return { ok: false, reason: 'missing crosshair overlay bars' };
+            }
+            if (activeStage.dataset.crosshairMode !== 'hover') {
               return {
                 ok: false,
-                reason: `expected 1 lit row (activeTr), got ${litRows.length}`,
+                reason: `expected hover mode, got ${activeStage.dataset.crosshairMode}`,
               };
             }
-            const litColsInActive = new Set<number>();
-            for (const td of Array.from(
-              activeTable.querySelectorAll<HTMLTableCellElement>(
-                'td.cell-status[data-col-index]',
-              ),
-            )) {
-              if (getComputedStyle(td).backgroundColor !== transparent) {
-                litColsInActive.add(Number(td.dataset.colIndex));
-              }
-            }
             if (
-              litColsInActive.size !== 1 ||
-              !litColsInActive.has(colIdx)
+              rowBar.dataset.active !== 'true' ||
+              rowBar.dataset.rowIndex !== expectedRowIdx
             ) {
               return {
                 ok: false,
-                reason: `expected only col ${colIdx} lit, got [${Array.from(litColsInActive).join(',')}]`,
+                reason: `expected row bar ${expectedRowIdx}, got active=${rowBar.dataset.active} idx=${rowBar.dataset.rowIndex}`,
               };
             }
-            const otherTables = Array.from(
-              document.querySelectorAll<HTMLTableElement>('table.ledger-table'),
-            ).filter((t) => t !== activeTable);
-            for (const other of otherTables) {
-              const leakedTd = Array.from(
-                other.querySelectorAll<HTMLTableCellElement>('td.cell-status'),
-              ).some((td) => getComputedStyle(td).backgroundColor !== transparent);
-              if (leakedTd) {
+            if (
+              colBar.dataset.active !== 'true' ||
+              colBar.dataset.colIndex !== String(colIdx) ||
+              headBar.dataset.active !== 'true' ||
+              headBar.dataset.colIndex !== String(colIdx)
+            ) {
+              return {
+                ok: false,
+                reason: `expected col/head bar ${colIdx}, got col=${colBar.dataset.colIndex} head=${headBar.dataset.colIndex}`,
+              };
+            }
+            const otherStages = Array.from(
+              document.querySelectorAll<HTMLElement>('.ledger-table-stage'),
+            ).filter((s) => s !== activeStage);
+            for (const other of otherStages) {
+              const leaked = Array.from(
+                other.querySelectorAll<HTMLElement>(
+                  '.crosshair-row-bar, .crosshair-col-bar, .crosshair-head-bar',
+                ),
+              ).some((bar) => bar.dataset.active === 'true');
+              if (leaked) {
                 return { ok: false, reason: 'crosshair leaked into sibling table' };
               }
             }
@@ -875,7 +903,10 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
           },
           target,
         );
-        expect(audit, `Crosshair sweep mismatch on ${target.actionId} col ${target.colIdx}: ${audit.reason}`).toEqual({
+        expect(
+          audit,
+          `Crosshair sweep mismatch on ${target.actionId} col ${target.colIdx}: ${audit.reason}`,
+        ).toEqual({
           ok: true,
           reason: '',
         });
@@ -946,15 +977,60 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await fajrCell.hover();
     await cycleCell(page, fajrCell);
     await expect(fajrCell).toHaveClass(/st-done/);
-    const afterCycleHoverBg = await fajrCell.evaluate((el) => ({
-      rowBg: getComputedStyle(el.closest('tr')!).backgroundColor,
-      cellBg: getComputedStyle(el.closest('td')!).backgroundColor,
-    }));
-    expect(afterCycleHoverBg.rowBg).not.toBe('rgba(0, 0, 0, 0)');
-    expect(afterCycleHoverBg.cellBg).not.toBe('rgba(0, 0, 0, 0)');
+    await page.evaluate(
+      () =>
+        new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(r)),
+        ),
+    );
+    const afterCycleCrosshair = await fajrCell.evaluate((el) => {
+      const stage = el.closest<HTMLElement>('.ledger-table-stage')!;
+      return {
+        mode: stage.dataset.crosshairMode,
+        rowActive: stage.querySelector<HTMLElement>('.crosshair-row-bar')?.dataset.active,
+        colActive: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.active,
+      };
+    });
+    expect(afterCycleCrosshair).toEqual({
+      mode: 'hover',
+      rowActive: 'true',
+      colActive: 'true',
+    });
     await cycleCell(page, fajrCell);
     await cycleCell(page, fajrCell);
     await expect(fajrCell).not.toHaveClass(/st-done|st-missed/);
+
+    // Hovering sticky day header smoothly tracks that column (never sticks on previously focused column)
+    const firstHeaderBox = await page
+      .locator('.overview-table-time thead th.col-day[data-col-index="0"]')
+      .boundingBox();
+    if (firstHeaderBox) {
+      await page.mouse.move(
+        firstHeaderBox.x + firstHeaderBox.width / 2,
+        firstHeaderBox.y + firstHeaderBox.height / 2,
+      );
+      await page.evaluate(
+        () =>
+          new Promise((r) =>
+            requestAnimationFrame(() => requestAnimationFrame(r)),
+          ),
+      );
+      const headerHoverState = await page.evaluate(() => {
+        const stage = document
+          .querySelector('.overview-table-time')!
+          .closest<HTMLElement>('.ledger-table-stage')!;
+        return {
+          rowActive: stage.querySelector<HTMLElement>('.crosshair-row-bar')?.dataset.active,
+          colActive: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.active,
+          colIndex: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.colIndex,
+        };
+      });
+      expect(headerHoverState).toEqual({
+        rowActive: 'false',
+        colActive: 'true',
+        colIndex: '0',
+      });
+    }
 
     // Moving pointer outside table clears hover crosshair and cleanly falls back to focus crosshair
     await page.mouse.move(10, 10);
@@ -964,10 +1040,21 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(
       page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
     ).toHaveClass(/is-col-crosshair/);
-    const fallbackRowBg = await fajrCell.evaluate(
-      (el) => getComputedStyle(el.closest('tr')!).backgroundColor,
-    );
-    expect(fallbackRowBg).not.toBe('rgba(0, 0, 0, 0)');
+    const fallbackCrosshair = await fajrCell.evaluate((el) => {
+      const stage = el.closest<HTMLElement>('.ledger-table-stage')!;
+      return {
+        mode: stage.dataset.crosshairMode,
+        rowActive: stage.querySelector<HTMLElement>('.crosshair-row-bar')?.dataset.active,
+        colActive: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.active,
+        colIndex: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.colIndex,
+      };
+    });
+    expect(fallbackCrosshair).toEqual({
+      mode: 'focus',
+      rowActive: 'true',
+      colActive: 'true',
+      colIndex: String(todayColIdx),
+    });
 
     // Also run rapid crosshair sweep in Standard Mode (العرض المريح) across group-row separators!
     await page.getByRole('tab', { name: 'العرض المريح' }).click();
@@ -1014,10 +1101,20 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
         groupRowBox.x + groupRowBox.width / 2,
         groupRowBox.y + groupRowBox.height / 2,
       );
-      const anyHoveredTd = await page.evaluate(() =>
-        document.querySelector('table.ledger-table td.cell-status:hover') !== null,
+      await page.evaluate(
+        () =>
+          new Promise((r) =>
+            requestAnimationFrame(() => requestAnimationFrame(r)),
+          ),
       );
-      expect(anyHoveredTd).toBe(false);
+      const groupRowState = await page.evaluate(() => {
+        const stage = document.querySelector<HTMLElement>('.ledger-table-stage')!;
+        return {
+          rowActive: stage.querySelector<HTMLElement>('.crosshair-row-bar')?.dataset.active,
+          colActive: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.active,
+        };
+      });
+      expect(groupRowState).toEqual({ rowActive: 'false', colActive: 'false' });
     }
     // Switch back to One-Glance Mode for remaining desktop tests
     await page.getByRole('tab', { name: 'نظرة واحدة' }).click();
