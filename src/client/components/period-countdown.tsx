@@ -1,18 +1,41 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { formatCountdownClock } from './cell-display';
 
 const SHOW_SECONDS_PREF_KEY = 'mohasba.countdown.showSeconds';
+const SHOW_SECONDS_EVENT = 'mohasba:countdown-show-seconds-change';
 const TICK_MS = 1000;
 
-function readShowSecondsPref(): boolean {
+let memoryFallbackShowSeconds = false;
+
+function getShowSecondsPrefSnapshot(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     return window.localStorage.getItem(SHOW_SECONDS_PREF_KEY) === '1';
   } catch {
-    return false;
+    return memoryFallbackShowSeconds;
   }
+}
+
+function getShowSecondsServerSnapshot(): boolean {
+  return false;
+}
+
+function subscribeShowSecondsPref(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === null || e.key === SHOW_SECONDS_PREF_KEY) {
+      listener();
+    }
+  };
+  const onLocalChange = () => listener();
+  window.addEventListener('storage', onStorage);
+  window.addEventListener(SHOW_SECONDS_EVENT, onLocalChange);
+  return () => {
+    window.removeEventListener('storage', onStorage);
+    window.removeEventListener(SHOW_SECONDS_EVENT, onLocalChange);
+  };
 }
 
 interface PeriodCountdownProps {
@@ -25,7 +48,11 @@ interface PeriodCountdownProps {
  * Click toggles between `H:MM` and `H:MM:SS`; the choice persists on this device.
  */
 export function PeriodCountdown({ endInstant, isClosing }: PeriodCountdownProps) {
-  const [showSeconds, setShowSeconds] = useState(readShowSecondsPref);
+  const showSeconds = useSyncExternalStore(
+    subscribeShowSecondsPref,
+    getShowSecondsPrefSnapshot,
+    getShowSecondsServerSnapshot,
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -42,15 +69,14 @@ export function PeriodCountdown({ endInstant, isClosing }: PeriodCountdownProps)
   }, []);
 
   const toggleSeconds = () => {
-    setShowSeconds((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(SHOW_SECONDS_PREF_KEY, next ? '1' : '0');
-      } catch {
-        // Storage unavailable (private mode): keep the in-memory toggle only.
-      }
-      return next;
-    });
+    const next = !showSeconds;
+    memoryFallbackShowSeconds = next;
+    try {
+      window.localStorage.setItem(SHOW_SECONDS_PREF_KEY, next ? '1' : '0');
+    } catch {
+      // Storage unavailable (private mode): keep the in-memory toggle only.
+    }
+    window.dispatchEvent(new Event(SHOW_SECONDS_EVENT));
   };
 
   const remainingMs = endInstant - nowMs;

@@ -16,7 +16,8 @@ loadTestEnv();
 const PORT = 3103;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const SCREENSHOT_DIR =
-  'C:/Users/ahmed/.gemini/antigravity/brain/f71a0285-daff-460c-9b19-50e9a1762d6f/scratch/screenshots/stage8';
+  process.env.PLAYWRIGHT_SCREENSHOT_DIR ||
+  path.resolve(process.cwd(), 'test-results', 'screenshots', 'stage8');
 
 let serverProcess: ChildProcess | null = null;
 

@@ -126,8 +126,9 @@ if [[ -n "${AGE_RECIPIENT:-}" ]]; then
   fi
   ENC_FILE="${FINAL_FILE}.age"
   age -r "$AGE_RECIPIENT" -o "$ENC_FILE" "$FINAL_FILE"
+  rm -f "$FINAL_FILE"
   UPLOAD_TARGET="$ENC_FILE"
-  echo "[$(date -u +%FT%TZ)] Encrypted snapshot with age: $ENC_FILE"
+  echo "[$(date -u +%FT%TZ)] Encrypted snapshot with age (plaintext removed): $ENC_FILE"
 fi
 
 if [[ -n "${RCLONE_REMOTE:-}" ]]; then
@@ -140,10 +141,19 @@ if [[ -n "${RCLONE_REMOTE:-}" ]]; then
 fi
 
 # Rotate local dated snapshots ONLY after a verified new snapshot succeeded
-mapfile -t SNAPSHOTS < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'mohasba-*.sql.gz' | sort -r)
+if [[ -n "${AGE_RECIPIENT:-}" ]]; then
+  SNAPSHOT_PATTERN='mohasba-*.sql.gz.age'
+else
+  SNAPSHOT_PATTERN='mohasba-*.sql.gz'
+fi
+mapfile -t SNAPSHOTS < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name "$SNAPSHOT_PATTERN" | sort -r)
 if [[ "${#SNAPSHOTS[@]}" -gt "$KEEP_SNAPSHOTS" ]]; then
   for OLD in "${SNAPSHOTS[@]:$KEEP_SNAPSHOTS}"; do
-    rm -f "$OLD" "${OLD}.age"
+    if [[ "$OLD" == *.age ]]; then
+      rm -f "$OLD" "${OLD%.age}"
+    else
+      rm -f "$OLD" "${OLD}.age"
+    fi
     echo "[$(date -u +%FT%TZ)] Rotated old snapshot: $OLD"
   done
 fi

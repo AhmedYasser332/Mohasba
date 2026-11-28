@@ -3,6 +3,8 @@ import {
   DELETE as actionDelete,
 } from '@/app/api/actions/[id]/route';
 import { POST as initPost } from '@/app/api/bootstrap/init/route';
+import { POST as mergeTemplatePost } from '@/app/api/bootstrap/merge-template/route';
+import { POST as resetPost } from '@/app/api/bootstrap/reset/route';
 import { POST as periodsPost } from '@/app/api/periods/route';
 import {
   DELETE as periodDelete,
@@ -364,5 +366,334 @@ describe('3-Level Template Onboarding & Smart 2-Tier Permanent Delete (Live DB)'
       .single();
     expect(settingsRow?.city_name).not.toBe('جدة');
     expect(settingsRow?.onboarding_completed).toBe(false);
+  });
+
+  it('merges Level 1 -> Level 2 non-destructively (preserving logs/actions, exclusions, idempotent 2nd pass, audit log) and enforces 409/400 guards', async () => {
+    // 1. Before onboarding -> 409 CONFLICT
+    const preOnboardRes = await mergeTemplatePost(
+      makeJsonRequest('/api/bootstrap/merge-template', 'POST', {
+        level: 'level_2',
+      }),
+    );
+    expect(preOnboardRes.status).toBe(409);
+
+    // Seed Level 1
+    const initRes = await initPost(
+      makeJsonRequest('/api/bootstrap/init', 'POST', {
+        mode: 'template',
+        level: 'level_1',
+        active_from: '2026-11-01',
+      }),
+    );
+    expect(initRes.status).toBe(200);
+
+    // 2. Invalid active_from -> 400 VALIDATION_ERROR
+    const badDateRes = await mergeTemplatePost(
+      makeJsonRequest('/api/bootstrap/merge-template', 'POST', {
+        level: 'level_2',
+        active_from: '2026-02-31',
+      }),
+    );
+    expect(badDateRes.status).toBe(400);
+
+    const l1 = buildTemplateBundle('level_1', '2026-11-01');
+    const l2 = buildTemplateBundle('level_2', '2026-11-01');
+    const fajrAction = l1.actions.find((a) => a.title === 'الجماعة الأولى (الفجر)')!;
+
+    // Create an existing log on fajrAction to prove merge preserves all existing logs
+    const deviceId = 'aaaaaaaa-0000-4000-8000-000000000077';
+    const syncRes = await syncPost(
+      makeJsonRequest('/api/sync', 'POST', {
+        device_id: deviceId,
+        mutations: [
+          {
+            mutation_id: '55000000-0000-4000-8000-000000000071',
+            device_id: deviceId,
+            parent_mutation_id: null,
+            action_id: fajrAction.id,
+            log_date: '2026-11-20',
+            base_row_version: null,
+            availability_override: null,
+            status: 'DONE',
+            percent_value: null,
+            qadaa_resolved_at: null,
+            client_target_version_id: null,
+            note: 'keep me across merge',
+            note_updated_at: '2026-11-20T06:00:00.000Z',
+            client_updated_at: '2026-11-20T06:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    expect(syncRes.status).toBe(200);
+
+    // Exclude 1 net-new Level 2 period and 1 net-new Level 2 action
+    const l1Titles = new Set(l1.actions.map((a) => a.title));
+    const l1PeriodIds = new Set(l1.periods.map((p) => p.id));
+    const netNewPeriod = l2.periods.find((p) => !l1PeriodIds.has(p.id));
+    const netNewAction = l2.actions.find(
+      (a) => !l1Titles.has(a.title) && a.period_id !== netNewPeriod?.id,
+    )!;
+
+    const mergeRes = await mergeTemplatePost(
+      makeJsonRequest('/api/bootstrap/merge-template', 'POST', {
+        level: 'level_2',
+        active_from: '2026-11-22',
+        ...(netNewPeriod ? { excluded_period_ids: [netNewPeriod.id] } : {}),
+        excluded_action_ids: [netNewAction.id],
+      }),
+    );
+    expect(mergeRes.status).toBe(200);
+    const mergeBody = (await mergeRes.json()) as {
+      ok: boolean;
+      added_actions: number;
+      skipped_existing_actions: number;
+    };
+    expect(mergeBody.ok).toBe(true);
+    expect(mergeBody.added_actions).toBeGreaterThan(0);
+    expect(mergeBody.skipped_existing_actions).toBe(l1.actions.length);
+
+    // Verify excluded items were omitted and existing log remained untouched
+    const { data: postMergeActions } = await admin.from('actions').select('id, title');
+    expect(postMergeActions?.some((a) => a.id === netNewAction.id)).toBe(false);
+    if (netNewPeriod) {
+      const { data: postMergePeriods } = await admin.from('periods').select('id');
+      expect(postMergePeriods?.some((p) => p.id === netNewPeriod.id)).toBe(false);
+    }
+    const { data: preservedLog } = await admin
+      .from('daily_logs')
+      .select('status, note')
+      .eq('action_id', fajrAction.id)
+      .eq('log_date', '2026-11-20')
+      .single();
+    expect(preservedLog).toEqual({
+      status: 'DONE',
+      note: 'keep me across merge',
+    });
+
+    // Verify template_merged audit log was recorded
+    const { data: auditRows } = await admin
+      .from('audit_logs')
+      .select('event_name')
+      .eq('event_name', 'template_merged');
+    expect((auditRows ?? []).length).toBeGreaterThanOrEqual(1);
+
+    // 3. Idempotent 2nd pass with exact same exclusions -> 0 net-new additions
+    const secondMergeRes = await mergeTemplatePost(
+      makeJsonRequest('/api/bootstrap/merge-template', 'POST', {
+        level: 'level_2',
+        active_from: '2026-11-22',
+        ...(netNewPeriod ? { excluded_period_ids: [netNewPeriod.id] } : {}),
+        excluded_action_ids: [netNewAction.id],
+      }),
+    );
+    expect(secondMergeRes.status).toBe(200);
+    const secondBody = (await secondMergeRes.json()) as {
+      added_periods: number;
+      added_actions: number;
+      added_target_versions: number;
+    };
+    expect(secondBody.added_periods).toBe(0);
+    expect(secondBody.added_actions).toBe(0);
+    expect(secondBody.added_target_versions).toBe(0);
+  });
+
+  it('safely resets workspace via POST /api/bootstrap/reset while preserving app_settings & audit_logs', async () => {
+    const initRes = await initPost(
+      makeJsonRequest('/api/bootstrap/init', 'POST', {
+        mode: 'template',
+        level: 'level_1',
+        active_from: '2026-11-01',
+        settings_patch: {
+          city_name: 'الإسكندرية',
+          rollover_mode: 'MIDNIGHT',
+          ntfy_topic_url: 'https://ntfy.sh/mohasba-reset-preserve-1234',
+          ntfy_access_token: 'tk_preserve_me',
+        },
+      }),
+    );
+    expect(initRes.status).toBe(200);
+
+    // Customize keyboard_shortcuts in app_settings and write 1 daily_log + 1 reminder_dispatch
+    await admin
+      .from('app_settings')
+      .update({
+        keyboard_shortcuts: {
+          nav_analytics: { code: 'KeyA', mod: false, alt: true, shift: false },
+        },
+      })
+      .eq('id', 1);
+
+    const l1 = buildTemplateBundle('level_1', '2026-11-01');
+    const fajrAction = l1.actions[0]!;
+    const fajrPeriod = l1.periods[0]!;
+
+    await syncPost(
+      makeJsonRequest('/api/sync', 'POST', {
+        device_id: 'aaaaaaaa-0000-4000-8000-000000000088',
+        mutations: [
+          {
+            mutation_id: '55000000-0000-4000-8000-000000000081',
+            device_id: 'aaaaaaaa-0000-4000-8000-000000000088',
+            parent_mutation_id: null,
+            action_id: fajrAction.id,
+            log_date: '2026-11-20',
+            base_row_version: null,
+            availability_override: null,
+            status: 'DONE',
+            percent_value: null,
+            qadaa_resolved_at: null,
+            client_target_version_id: null,
+            note: null,
+            note_updated_at: null,
+            client_updated_at: '2026-11-20T06:00:00.000Z',
+          },
+        ],
+      }),
+    );
+
+    await admin.from('reminder_dispatches').insert({
+      period_id: fajrPeriod.id,
+      islamic_date: '2026-11-20',
+      reminder_kind: 'pre_expiry',
+      dispatch_status: 'sent',
+    });
+
+    // 1. Reject missing/wrong confirm token -> 400
+    const badConfirmRes = await resetPost(
+      makeJsonRequest('/api/bootstrap/reset', 'POST', {
+        confirm: 'WRONG_TOKEN',
+      }),
+    );
+    expect(badConfirmRes.status).toBe(400);
+
+    // 2. Valid confirm -> wipes schedule/log tables, preserves app_settings + audit_logs
+    const resetRes = await resetPost(
+      makeJsonRequest('/api/bootstrap/reset', 'POST', {
+        confirm: 'RESET_WORKSPACE',
+      }),
+    );
+    expect(resetRes.status).toBe(200);
+    const resetBody = (await resetRes.json()) as {
+      ok: boolean;
+      onboarding_completed: boolean;
+    };
+    expect(resetBody.ok).toBe(true);
+    expect(resetBody.onboarding_completed).toBe(false);
+
+    for (const table of [
+      'daily_logs',
+      'target_versions',
+      'actions',
+      'reminder_dispatches',
+      'periods',
+      'applied_mutations',
+    ]) {
+      const { count } = await admin
+        .from(table)
+        .select('*', { count: 'exact', head: true });
+      expect(count).toBe(0);
+    }
+
+    const { data: settingsAfter } = await admin
+      .from('app_settings')
+      .select(
+        'onboarding_completed, city_name, rollover_mode, ntfy_topic_url, ntfy_access_token, keyboard_shortcuts',
+      )
+      .eq('id', 1)
+      .single();
+    expect(settingsAfter).toMatchObject({
+      onboarding_completed: false,
+      city_name: 'الإسكندرية',
+      rollover_mode: 'MIDNIGHT',
+      ntfy_topic_url: 'https://ntfy.sh/mohasba-reset-preserve-1234',
+      ntfy_access_token: 'tk_preserve_me',
+      keyboard_shortcuts: {
+        nav_analytics: { code: 'KeyA', mod: false, alt: true, shift: false },
+      },
+    });
+
+    const { data: resetAudit } = await admin
+      .from('audit_logs')
+      .select('event_name')
+      .eq('event_name', 'workspace_reset');
+    expect((resetAudit ?? []).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('handles DELETE 404/400/JSON-body edge cases and mode=template init idempotency when already onboarded', async () => {
+    const initRes = await initPost(
+      makeJsonRequest('/api/bootstrap/init', 'POST', {
+        mode: 'template',
+        level: 'level_1',
+        active_from: '2026-11-01',
+      }),
+    );
+    expect(initRes.status).toBe(200);
+
+    // mode='template' idempotency when already onboarded
+    const repeatInitRes = await initPost(
+      makeJsonRequest('/api/bootstrap/init', 'POST', {
+        mode: 'template',
+        level: 'level_3',
+      }),
+    );
+    expect(repeatInitRes.status).toBe(200);
+    const repeatBody = (await repeatInitRes.json()) as {
+      ok: boolean;
+      already_completed: boolean;
+    };
+    expect(repeatBody.ok).toBe(true);
+    expect(repeatBody.already_completed).toBe(true);
+    const { count: actionCountAfterRepeat } = await admin
+      .from('actions')
+      .select('id', { count: 'exact', head: true });
+    expect(actionCountAfterRepeat).toBe(buildTemplateBundle('level_1').actions.length);
+
+    // 404 on unknown period/action UUID
+    const unknownId = '00000000-0000-4000-8000-000000000999';
+    const notFoundPeriodRes = await periodDelete(
+      makeJsonRequest(`/api/periods/${unknownId}`, 'DELETE'),
+      { params: Promise.resolve({ id: unknownId }) },
+    );
+    expect(notFoundPeriodRes.status).toBe(404);
+
+    const notFoundActionRes = await actionDelete(
+      makeJsonRequest(`/api/actions/${unknownId}`, 'DELETE'),
+      { params: Promise.resolve({ id: unknownId }) },
+    );
+    expect(notFoundActionRes.status).toBe(404);
+
+    // 400 on malformed UUID
+    const badUuidPeriodRes = await periodDelete(
+      makeJsonRequest('/api/periods/not-a-uuid', 'DELETE'),
+      { params: Promise.resolve({ id: 'not-a-uuid' }) },
+    );
+    expect(badUuidPeriodRes.status).toBe(400);
+
+    const badUuidActionRes = await actionDelete(
+      makeJsonRequest('/api/actions/not-a-uuid', 'DELETE'),
+      { params: Promise.resolve({ id: 'not-a-uuid' }) },
+    );
+    expect(badUuidActionRes.status).toBe(400);
+
+    // 400 on invalid JSON schema body `{ force: 'yes' }`
+    const l1 = buildTemplateBundle('level_1', '2026-11-01');
+    const fastingPeriod = l1.periods.find((p) => p.title === 'الصيام')!;
+    const badForceTypeRes = await periodDelete(
+      makeJsonRequest(`/api/periods/${fastingPeriod.id}`, 'DELETE', {
+        force: 'yes',
+      }),
+      { params: Promise.resolve({ id: fastingPeriod.id }) },
+    );
+    expect(badForceTypeRes.status).toBe(400);
+
+    // DELETE via JSON body `{ force: true }` (without ?force=true query param)
+    const jsonForcePeriodRes = await periodDelete(
+      makeJsonRequest(`/api/periods/${fastingPeriod.id}`, 'DELETE', {
+        force: true,
+      }),
+      { params: Promise.resolve({ id: fastingPeriod.id }) },
+    );
+    expect(jsonForcePeriodRes.status).toBe(200);
   });
 });

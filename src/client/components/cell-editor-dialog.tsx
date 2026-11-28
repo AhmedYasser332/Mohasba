@@ -15,6 +15,7 @@ import {
 import type { LocalDailyLog } from '../db/idb';
 import { useMohasba } from '../store/mohasba-provider';
 import { formatArabicDateFull } from './cell-display';
+import { AppDialog } from './app-dialog';
 import { IconCheck, IconCross, IconDash, IconQadaa } from './icons';
 
 export interface CellEditorTarget {
@@ -213,9 +214,9 @@ function CellEditorContent({
   return (
     <>
       <div className="dialog-head">
-        <h3 className="dialog-title" id="cell-editor-title">
+        <h2 className="dialog-title" id="cell-editor-title">
           {target.action.title} ({formatArabicDateFull(target.logDate)})
-        </h3>
+        </h2>
         <button
           type="button"
           className="btn btn-icon"
@@ -488,8 +489,6 @@ export function CellEditorDialog({
   onSaved,
 }: CellEditorDialogProps) {
   const { logsByKey, targetVersions } = useMohasba();
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const backdropPointerDownRef = useRef(false);
   const requestCloseRef = useRef<() => void>(onClose);
 
   const existingLog: LocalDailyLog | undefined = useMemo(() => {
@@ -515,41 +514,18 @@ export function CellEditorDialog({
   }, [existingLog, target, targetVersions]);
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (target) {
-      backdropPointerDownRef.current = false;
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-    } else {
-      backdropPointerDownRef.current = false;
+    if (!target) {
       requestCloseRef.current = onClose;
-      if (dialog.open) {
-        dialog.close();
-      }
     }
   }, [onClose, target]);
 
   return (
-    <dialog
-      ref={dialogRef}
+    <AppDialog
+      open={Boolean(target)}
+      onRequestClose={() => requestCloseRef.current()}
+      onNativeClose={onClose}
       className="app-dialog"
       aria-labelledby="cell-editor-title"
-      onCancel={(e) => {
-        e.preventDefault();
-        requestCloseRef.current();
-      }}
-      onPointerDown={(e) => {
-        backdropPointerDownRef.current = e.target === dialogRef.current;
-      }}
-      onClick={(e) => {
-        const startedOnBackdrop = backdropPointerDownRef.current;
-        backdropPointerDownRef.current = false;
-        if (startedOnBackdrop && e.target === dialogRef.current) {
-          requestCloseRef.current();
-        }
-      }}
     >
       {target && (
         <CellEditorContent
@@ -562,6 +538,6 @@ export function CellEditorDialog({
           onSaved={onSaved}
         />
       )}
-    </dialog>
+    </AppDialog>
   );
 }

@@ -5,7 +5,8 @@ An **open-source, personal, single-instance, offline-first PWA** for daily Islam
 ## Key Capabilities
 
 - **Instant Offline-First PWA (`الآن` Street Mode):** Local IndexedDB (`idb`) writes in `<50ms` with 5-second Undo, frozen-on-send `mutation_id` + causal `parent_mutation_id` conflict resolution, cross-tab sync, and Service Worker shell caching for offline reloads & deep links.
-- **Dual-Mode Weekly Ledger (`الجدول الأسبوعي`):** Switch between Desktop Standard Mode (`العرض المريح`) and zero-scroll side-by-side **One-Glance Mode (`نظرة واحدة`)** with `Ctrl+I` (`Ctrl+ه`) collapsible RTL sidebar, plus Mobile WHOOP-style 7-day boxes.
+- **Dual-Mode Weekly Ledger (`الجدول الأسبوعي`):** Switch between Desktop Standard Mode (`العرض المريح`) and zero-scroll side-by-side **One-Glance Mode (`نظرة واحدة`)** with `Ctrl+I` (`Ctrl+ه`) collapsible RTL sidebar, per-device **Crosshair** customization (mode, `20%–220%` opacity, motion, period-column coverage), and Mobile WHOOP-style 7-day boxes.
+- **3-Level Onboarding, Template Merge & Safe Reset:** Start from 3 progressive Islamic accountability templates (`level_1` / `level_2` / `level_3`), upgrade/merge net-new actions non-destructively via `TemplateMergeDialog` without touching existing logs, or safely reset workspace schedules while keeping location/`ntfy`/shortcut preferences.
 - **Prayer-Aware Islamic Day Engine:** Offline astronomical calculation (`adhan`) supporting `FAJR` or `MIDNIGHT` day rollover, Egypt/global DST gap & overlap handling, manual per-prayer offsets, and the `2px` Time-Window Horizon Rail.
 - **Cross-Week Qadaa (`القضاء`) & Target Evolution (`تطوير الهدف`):** Upgrade action targets over time (e.g., `10 صفحات` → `20 صفحة`) while preserving historical logs and open Qadaa items under their original day's target snapshot.
 - **3 Lean Weakness Insights (`التحليلات`):** Cold-start & `"هدف جديد"` adaptation guard, isolated `TIME_BOUND` vs `DAILY_GROUP` metrics separating `الجماعة الأولى` from Sunan, and Qadaa velocity / anti-`مراكمة` logging coverage.
@@ -16,7 +17,7 @@ An **open-source, personal, single-instance, offline-first PWA** for daily Islam
 
 ## Architecture & Portability
 
-- **Stack:** Next.js App Router (TypeScript strict, `output: 'standalone'`), Tailwind CSS v4, pure TypeScript `src/domain/*`, Supabase PostgreSQL 15+/17 (HTTP `@supabase/supabase-js` only, 9 tables + 2 logic-free persistence RPCs).
+- **Stack:** Next.js App Router (TypeScript strict, `output: 'standalone'`), Tailwind CSS v4, pure TypeScript `src/domain/*`, Supabase PostgreSQL 15+/17 (HTTP `@supabase/supabase-js` only, 9 tables + 6 logic-free persistence/security RPCs).
 - **Primary Self-Hosting Target:** Any Linux / Oracle Always-Free VPS running **Docker (`127.0.0.1:3000`) + Cloudflare Tunnel (`cloudflared`)** with zero open inbound ports (`80`/`443`).
 - **Web-Standard Portable Codebase:** `src/domain/*` has zero runtime dependencies, `src/server/*` uses Web Crypto (`crypto.subtle`), standard Web `Request`, HTTP Supabase, and zero `next/headers` or `import 'server-only'` — keeping it portable across Node 22 Docker and standard Web runtimes *(note: MVP launch verification targets Docker + Node 22; Cloudflare Workers Free CPU benchmarking is not claimed as part of MVP)*.
 
@@ -29,7 +30,11 @@ In the Supabase Dashboard when creating your project:
 1. **Enable Data API:** `ON`
 2. **Grant API access to new tables automatically:** `OFF`
 3. **Enable Row Level Security (RLS) on new tables automatically:** `ON`
-4. Open the **SQL Editor** and run [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) verbatim (creates all 9 tables, 2 RPCs, default-deny RLS, `REVOKE` from `PUBLIC/anon/authenticated`, and explicit `GRANT ... TO service_role`).
+4. Open the **SQL Editor** and run all 4 migrations in **exact numerical order**:
+   1. [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) *(9 tables, `commit_sync_batch` + `trim_audit_logs_if_needed`, default-deny RLS, `REVOKE`/`GRANT` lockdown)*
+   2. [`supabase/migrations/0002_ux_preferences.sql`](supabase/migrations/0002_ux_preferences.sql) *(UX preference columns, `enter_key_mode`, `keyboard_shortcuts`, in-app `ntfy` columns)*
+   3. [`supabase/migrations/0003_atomic_delete_rpcs.sql`](supabase/migrations/0003_atomic_delete_rpcs.sql) *(atomic `delete_action_atomic` + `delete_period_atomic` RPCs)*
+   4. [`supabase/migrations/0004_atomic_workspace_and_unlock.sql`](supabase/migrations/0004_atomic_workspace_and_unlock.sql) *(atomic `reset_workspace_atomic` + `record_unlock_failure_atomic` RPCs)*
 5. Verify in **Database → Advisors** that there are zero exposed-table warnings.
 
 ### 2. Configure Environment Variables
@@ -80,6 +85,7 @@ npm run build
    docker compose --profile tunnel up -d --build
    ```
    *(To test locally without a tunnel token, run `docker compose up -d --build mohasba` and verify `http://127.0.0.1:3000/api/health`.)*
+4. **Proxy Header Trust (`CF-Connecting-IP`):** `POST /api/unlock` derives per-IP rate-limit buckets from `CF-Connecting-IP` (injected by Cloudflare Tunnel). Always keep the app bound to `127.0.0.1:3000` behind `cloudflared` (never expose port `3000` directly to the internet) so clients cannot spoof `CF-Connecting-IP`.
 
 ### 5. Automated Cron & Encrypted Weekly Backups
 1. Install `postgresql-client-17` (from the official PGDG repo so `pg_dump` major version matches Supabase PostgreSQL 17), plus `age` or `rclone` (`rclone crypt`) for off-VPS encryption.

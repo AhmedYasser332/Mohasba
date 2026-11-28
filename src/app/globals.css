@@ -316,6 +316,7 @@
 }
 
 .brand-title {
+  display: block;
   margin: 0;
   font-size: 1.0625rem;
   font-weight: 700;
@@ -1349,12 +1350,6 @@ button.window-countdown.is-live-countdown:focus-visible {
   color: var(--qadaa-ink);
 }
 
-.tap-btn.active-disabled {
-  background: var(--disabled-fill);
-  border-color: var(--disabled-border);
-  color: var(--disabled-ink);
-}
-
 .tap-btn-more {
   width: 44px;
   height: 44px;
@@ -1996,6 +1991,29 @@ table.ledger-table {
   }
 }
 
+/* Floating Drag Ghost Pill (Transient Overlay Elevation) */
+.dnd-drag-ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-block: 6px;
+  padding-inline: 12px;
+  border-radius: var(--r-control);
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-live);
+  color: var(--ink-primary);
+  box-shadow: var(--shadow-overlay);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Native <dialog> Modals */
 dialog.app-dialog {
   border: 1px solid var(--border-hairline);
@@ -2488,11 +2506,13 @@ table.analytics-table {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
+  .undo-progress {
+    animation: none;
+  }
+
+  .accordion-chevron,
+  .desktop-rail {
+    transition: none;
   }
 }
 

@@ -34,6 +34,7 @@ import {
 import { fetchAllDailyLogsKeyset } from '../db/pagination';
 import { ServiceError } from '../errors';
 import { writeAuditLog } from '../observability/logger';
+import { assertValidIanaTimezone } from '../validation';
 import { updateSettings, type SettingsPatchSchema } from './crud-service';
 
 export interface BootstrapResponse {
@@ -240,6 +241,10 @@ export async function initStarterPack(params: {
     }
   }
 
+  if (settingsPatch?.iana_timezone) {
+    assertValidIanaTimezone(settingsPatch.iana_timezone);
+  }
+
   const resolvedLevel: TemplateLevelId = level ?? 'level_1';
   const effectiveActiveFrom =
     activeFromIso ??
@@ -256,6 +261,12 @@ export async function initStarterPack(params: {
         : {}),
       ...(settingsPatch?.calc_method
         ? { calc_method: settingsPatch.calc_method }
+        : {}),
+      ...(settingsPatch?.asr_madhhab
+        ? { asr_madhhab: settingsPatch.asr_madhhab }
+        : {}),
+      ...(settingsPatch?.prayer_offsets
+        ? { prayer_offsets: settingsPatch.prayer_offsets }
         : {}),
       ...(settingsPatch?.rollover_mode
         ? { rollover_mode: settingsPatch.rollover_mode }
@@ -520,18 +531,33 @@ export async function mergeTemplateIntoWorkspace(params: {
     generateId: () => crypto.randomUUID(),
   });
 
+  const insertedPeriodIds: string[] = [];
+  const insertedActionIds: string[] = [];
+
+  const rollbackPartialMerge = async (): Promise<void> => {
+    if (insertedActionIds.length > 0) {
+      await supabase.from('actions').delete().in('id', insertedActionIds);
+    }
+    if (insertedPeriodIds.length > 0) {
+      await supabase.from('periods').delete().in('id', insertedPeriodIds);
+    }
+  };
+
   if (plan.newPeriods.length > 0) {
     const { error: pErr } = await supabase.from('periods').insert(plan.newPeriods);
     if (pErr) {
       throw new Error(`Template merge periods insert failed: ${pErr.message}`);
     }
+    insertedPeriodIds.push(...plan.newPeriods.map((p) => p.id));
   }
 
   if (plan.newActions.length > 0) {
     const { error: aErr } = await supabase.from('actions').insert(plan.newActions);
     if (aErr) {
+      await rollbackPartialMerge();
       throw new Error(`Template merge actions insert failed: ${aErr.message}`);
     }
+    insertedActionIds.push(...plan.newActions.map((a) => a.id));
   }
 
   if (plan.newTargetVersions.length > 0) {
@@ -539,6 +565,7 @@ export async function mergeTemplateIntoWorkspace(params: {
       .from('target_versions')
       .insert(plan.newTargetVersions);
     if (tErr) {
+      await rollbackPartialMerge();
       throw new Error(
         `Template merge target_versions insert failed: ${tErr.message}`,
       );
@@ -590,43 +617,14 @@ export async function resetWorkspaceForOnboarding(params: {
 }): Promise<ResetWorkspaceResult> {
   const { supabase, requestId } = params;
 
-  // Delete in strict child-to-parent FK order
-  const deleteSteps: Array<{ table: string; notNullCol: string }> = [
-    { table: 'daily_logs', notNullCol: 'action_id' },
-    { table: 'target_versions', notNullCol: 'id' },
-    { table: 'actions', notNullCol: 'id' },
-    { table: 'reminder_dispatches', notNullCol: 'id' },
-    { table: 'periods', notNullCol: 'id' },
-    { table: 'applied_mutations', notNullCol: 'mutation_id' },
-  ];
-
-  for (const step of deleteSteps) {
-    const { error } = await supabase
-      .from(step.table)
-      .delete()
-      .not(step.notNullCol, 'is', null);
-    if (error) {
-      throw new Error(
-        `Workspace reset failed clearing ${step.table}: ${error.message}`,
-      );
-    }
+  const { data: deletedCounts, error: rpcErr } = await supabase.rpc(
+    'reset_workspace_atomic',
+  );
+  if (rpcErr) {
+    throw new Error(`Workspace reset failed: ${rpcErr.message}`);
   }
 
-  const { data: updatedRow, error: sErr } = await supabase
-    .from('app_settings')
-    .update({
-      onboarding_completed: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', 1)
-    .select('*')
-    .single();
-
-  if (sErr || !updatedRow) {
-    throw new Error(
-      `Workspace reset failed updating onboarding flag: ${sErr?.message ?? 'missing row'}`,
-    );
-  }
+  const settings = await fetchAppSettings(supabase);
 
   await writeAuditLog(supabase, {
     level: 'INFO',
@@ -637,12 +635,18 @@ export async function resetWorkspaceForOnboarding(params: {
     entity_id: '1',
     summary:
       'Reset workspace schedule and logs to return to 3-level onboarding wizard (preferences preserved).',
-    context: { preserved_settings: true },
+    context: {
+      preserved_settings: true,
+      deleted_counts:
+        deletedCounts && typeof deletedCounts === 'object'
+          ? deletedCounts
+          : null,
+    },
   });
 
   return {
     ok: true,
     onboarding_completed: false,
-    settings: normalizeAppSettingsRow(updatedRow as Record<string, unknown>),
+    settings,
   };
 }

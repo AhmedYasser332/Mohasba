@@ -6,6 +6,7 @@ import {
 } from '@/domain/lifecycle';
 import {
   addDaysIso,
+  computePrayerTimesForDay,
   diffDaysIso,
   formatLocalIsoDate,
   isTimeInQuietHours,
@@ -154,7 +155,12 @@ export async function runCronTick(
     const cutoff90dIso = new Date(nowMs - 90 * 86_400_000).toISOString();
     const cutoff90dDate = addDaysIso(todayIslamicDate, -90);
 
-    await Promise.all([
+    const [
+      pruneMutationsRes,
+      pruneDispatchesRes,
+      pruneRateLimitsRes,
+      trimAuditRes,
+    ] = await Promise.all([
       supabase
         .from('applied_mutations')
         .delete()
@@ -174,15 +180,87 @@ export async function runCronTick(
       }),
     ]);
 
-    await supabase
-      .from('app_settings')
-      .update({
-        last_pruned_date: todayIslamicDate,
-        updated_at: nowIso,
-      })
-      .eq('id', 1);
+    const pruneFailures: Array<{ step: string; message: string }> = [];
+    if (pruneMutationsRes.error) {
+      pruneFailures.push({
+        step: 'applied_mutations',
+        message: pruneMutationsRes.error.message,
+      });
+    }
+    if (pruneDispatchesRes.error) {
+      pruneFailures.push({
+        step: 'reminder_dispatches',
+        message: pruneDispatchesRes.error.message,
+      });
+    }
+    if (pruneRateLimitsRes.error) {
+      pruneFailures.push({
+        step: 'unlock_rate_limits',
+        message: pruneRateLimitsRes.error.message,
+      });
+    }
+    if (trimAuditRes.error) {
+      pruneFailures.push({
+        step: 'trim_audit_logs_if_needed',
+        message: trimAuditRes.error.message,
+      });
+    }
 
-    pruned = true;
+    if (pruneFailures.length > 0) {
+      console.error(
+        JSON.stringify({
+          ts: nowIso,
+          level: 'ERROR',
+          event: 'daily_prune_failed',
+          requestId,
+          islamicDate: todayIslamicDate,
+          failures: pruneFailures,
+        }),
+      );
+      await writeAuditLog(supabase, {
+        level: 'ERROR',
+        category: 'CRON',
+        event_name: 'daily_prune_failed',
+        request_id: requestId,
+        summary: `Daily prune encountered ${pruneFailures.length} failure(s); last_pruned_date not advanced.`,
+        context: {
+          islamic_date: todayIslamicDate,
+          failures: pruneFailures,
+        },
+      });
+    } else {
+      const { error: stampErr } = await supabase
+        .from('app_settings')
+        .update({
+          last_pruned_date: todayIslamicDate,
+          updated_at: nowIso,
+        })
+        .eq('id', 1);
+
+      if (stampErr) {
+        console.error(
+          JSON.stringify({
+            ts: nowIso,
+            level: 'ERROR',
+            event: 'daily_prune_stamp_failed',
+            requestId,
+            islamicDate: todayIslamicDate,
+            error: stampErr.message,
+          }),
+        );
+        await writeAuditLog(supabase, {
+          level: 'ERROR',
+          category: 'CRON',
+          event_name: 'daily_prune_stamp_failed',
+          request_id: requestId,
+          summary: `Failed stamping last_pruned_date after daily prune: ${stampErr.message}`,
+          context: { islamic_date: todayIslamicDate },
+          error: stampErr,
+        });
+      } else {
+        pruned = true;
+      }
+    }
   }
 
   let dispatchedCount = 0;
@@ -260,7 +338,7 @@ export async function runCronTick(
 
   // 3. Biweekly Backup Nudge (even if period reminders are off, as long as backup_reminder_enabled)
   if (settings.backup_reminder_enabled && !inQuietHours) {
-    const { data: lastBackup } = await supabase
+    const { data: lastBackup, error: lastBackupErr } = await supabase
       .from('reminder_dispatches')
       .select('islamic_date')
       .eq('reminder_kind', 'backup_nudge')
@@ -268,26 +346,47 @@ export async function runCronTick(
       .limit(1)
       .maybeSingle();
 
-    const shouldNudge =
-      !lastBackup ||
-      diffDaysIso(String(lastBackup.islamic_date), todayIslamicDate) >= 14;
-
-    if (shouldNudge) {
-      const claimId = await tryClaimDispatch({
-        periodId: null,
-        islamicDate: todayIslamicDate,
-        reminderKind: 'backup_nudge',
+    if (lastBackupErr) {
+      console.error(
+        JSON.stringify({
+          ts: nowIso,
+          level: 'ERROR',
+          event: 'backup_nudge_query_failed',
+          requestId,
+          error: lastBackupErr.message,
+        }),
+      );
+      await writeAuditLog(supabase, {
+        level: 'ERROR',
+        category: 'CRON',
+        event_name: 'backup_nudge_query_failed',
+        request_id: requestId,
+        summary: `Skipped backup nudge because querying last backup_nudge failed: ${lastBackupErr.message}`,
+        context: { islamic_date: todayIslamicDate },
+        error: lastBackupErr,
       });
-      if (claimId) {
-        dispatchesToSend.push({
-          claimId,
+    } else {
+      const shouldNudge =
+        !lastBackup ||
+        diffDaysIso(String(lastBackup.islamic_date), todayIslamicDate) >= 14;
+
+      if (shouldNudge) {
+        const claimId = await tryClaimDispatch({
           periodId: null,
           islamicDate: todayIslamicDate,
           reminderKind: 'backup_nudge',
-          titleAscii: 'Mohasba Tracker - Backup Reminder',
-          body: 'تذكير دوري: احفظ نسخة احتياطية كاملة (JSON) من جدول المحاسبة من الإعدادات.',
-          clickUrl: appBaseUrl ? `${appBaseUrl}/?view=settings` : undefined,
         });
+        if (claimId) {
+          dispatchesToSend.push({
+            claimId,
+            periodId: null,
+            islamicDate: todayIslamicDate,
+            reminderKind: 'backup_nudge',
+            titleAscii: 'Mohasba Tracker - Backup Reminder',
+            body: 'تذكير دوري: احفظ نسخة احتياطية كاملة (JSON) من جدول المحاسبة من الإعدادات.',
+            clickUrl: appBaseUrl ? `${appBaseUrl}/?view=settings` : undefined,
+          });
+        }
       }
     }
   }
@@ -406,11 +505,21 @@ export async function runCronTick(
 
     // Nightly Backlog Digest
     if (settings.digest_enabled && settings.digest_hhmm) {
-      const digestInstant = zonedWallClockToUtc(
+      let digestInstant = zonedWallClockToUtc(
         todayIslamicDate,
         settings.digest_hhmm,
         settings.iana_timezone,
       );
+      if (
+        settings.rollover_mode === 'FAJR' &&
+        digestInstant < computePrayerTimesForDay(todayIslamicDate, settings).fajr
+      ) {
+        digestInstant = zonedWallClockToUtc(
+          addDaysIso(todayIslamicDate, 1),
+          settings.digest_hhmm,
+          settings.iana_timezone,
+        );
+      }
       const dayEndInstant = resolveIslamicDayEndInstant(
         todayIslamicDate,
         settings,
@@ -486,10 +595,37 @@ export async function runCronTick(
       const item = dispatchesToSend[i]!;
       if (outcome.status === 'fulfilled') {
         dispatchedCount += 1;
-        await supabase
+        const { error: sentUpdateErr } = await supabase
           .from('reminder_dispatches')
           .update({ dispatch_status: 'sent' })
           .eq('id', item.claimId);
+        if (sentUpdateErr) {
+          console.error(
+            JSON.stringify({
+              ts: nowIso,
+              level: 'ERROR',
+              event: 'ntfy_status_update_failed',
+              requestId,
+              claimId: item.claimId,
+              targetStatus: 'sent',
+              error: sentUpdateErr.message,
+            }),
+          );
+          await writeAuditLog(supabase, {
+            level: 'ERROR',
+            category: 'CRON',
+            event_name: 'ntfy_status_update_failed',
+            request_id: requestId,
+            entity_type: 'reminder_dispatch',
+            entity_id: item.claimId,
+            summary: `Failed updating reminder_dispatch status to sent: ${sentUpdateErr.message}`,
+            context: {
+              reminder_kind: item.reminderKind,
+              target_status: 'sent',
+            },
+            error: sentUpdateErr,
+          });
+        }
       } else {
         failedCount += 1;
         const rawErrMsg =
@@ -501,13 +637,40 @@ export async function runCronTick(
           effectiveUrl,
           ntfyAccessTokenDb,
         );
-        await supabase
+        const { error: failedUpdateErr } = await supabase
           .from('reminder_dispatches')
           .update({
             dispatch_status: 'failed',
             error_message: scrubbedErrMsg.slice(0, 500),
           })
           .eq('id', item.claimId);
+        if (failedUpdateErr) {
+          console.error(
+            JSON.stringify({
+              ts: nowIso,
+              level: 'ERROR',
+              event: 'ntfy_status_update_failed',
+              requestId,
+              claimId: item.claimId,
+              targetStatus: 'failed',
+              error: failedUpdateErr.message,
+            }),
+          );
+          await writeAuditLog(supabase, {
+            level: 'ERROR',
+            category: 'CRON',
+            event_name: 'ntfy_status_update_failed',
+            request_id: requestId,
+            entity_type: 'reminder_dispatch',
+            entity_id: item.claimId,
+            summary: `Failed updating reminder_dispatch status to failed: ${failedUpdateErr.message}`,
+            context: {
+              reminder_kind: item.reminderKind,
+              target_status: 'failed',
+            },
+            error: failedUpdateErr,
+          });
+        }
 
         await writeAuditLog(supabase, {
           level: 'WARN',

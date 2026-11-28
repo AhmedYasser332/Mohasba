@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useId, useRef } from 'react';
 import {
   ARABIC_NOUN_FORMS,
   formatArabicCount,
 } from '../../utils/arabic-plural';
+import { AppDialog } from '../app-dialog';
 import { IconArchive, IconExpiredAlert, IconTrash, IconX } from '../icons';
 
 export interface DeleteConfirmState {
@@ -38,24 +39,9 @@ export function DeleteConfirmDialog({
   onArchiveInstead,
   onConfirmForceDelete,
 }: DeleteConfirmDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const safeActionRef = useRef<HTMLButtonElement | null>(null);
-  const pointerDownOutsideRef = useRef(false);
   const titleId = useId();
   const descId = useId();
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (target) {
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-      safeActionRef.current?.focus();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [target]);
 
   const isPeriod = target?.entityType === 'period';
   const hasHistory = (target?.logCount ?? 0) > 0;
@@ -63,18 +49,6 @@ export function DeleteConfirmDialog({
   const actionCount = target?.actionCount ?? 0;
   const entityWord = isPeriod ? 'الفترة' : 'العمل';
   const logsPossessive = isPeriod ? 'وسجلاتها التاريخية' : 'وسجلاته التاريخية';
-
-  const isOutsideDialog = (e: React.PointerEvent<HTMLDialogElement>): boolean => {
-    const dialog = dialogRef.current;
-    if (!dialog) return false;
-    const r = dialog.getBoundingClientRect();
-    return (
-      e.clientX < r.left ||
-      e.clientX > r.right ||
-      e.clientY < r.top ||
-      e.clientY > r.bottom
-    );
-  };
 
   const forceButtonLabel = busy
     ? 'جاري الحذف...'
@@ -87,28 +61,15 @@ export function DeleteConfirmDialog({
         : 'حذف نهائي';
 
   return (
-    <dialog
-      ref={dialogRef}
+    <AppDialog
+      open={Boolean(target)}
+      onRequestClose={onClose}
+      canDismiss={!busy}
+      initialFocusRef={safeActionRef}
       className="app-dialog"
       data-testid="delete-confirm-dialog"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!busy) onClose();
-      }}
-      onPointerDown={(e) => {
-        pointerDownOutsideRef.current = isOutsideDialog(e);
-      }}
-      onPointerUp={(e) => {
-        if (pointerDownOutsideRef.current && isOutsideDialog(e) && !busy) {
-          onClose();
-        }
-        pointerDownOutsideRef.current = false;
-      }}
-      onClose={() => {
-        if (target && !busy) onClose();
-      }}
     >
       {target && (
         <div>
@@ -245,6 +206,6 @@ export function DeleteConfirmDialog({
           </div>
         </div>
       )}
-    </dialog>
+    </AppDialog>
   );
 }

@@ -15,8 +15,8 @@
 ## 1. Execution Strategy, Environment Isolation & Slice Definition of Done
 
 ### 1.1 Dual-Database Environment Isolation (Zero Risk to Production Data)
-- **`mohasba-test` (Staging / Dev / Automated Testing — PostgreSQL 17.12):** Receives `0001_init.sql` in **Slice 0** and hosts ALL Stage 7 integration tests, `>1,000`-row pagination tests, concurrent `commit_sync_batch` race tests, negative SQL `CHECK` tests, and Stage 8 `.sql.gz` + JSON Restore Drills.
-- **`Mohasba` (Production — PostgreSQL 17.12):** Remains **100% untouched** throughout Stages 6, 7, and 8. Only receives `0001_init.sql` during **Stage 9 (Release)** with explicit user deploy consent so personal daily use starts from a guaranteed clean slate.
+- **`mohasba-test` (Staging / Dev / Automated Testing — PostgreSQL 17.12):** Receives `0001_init.sql`–`0004_atomic_workspace_and_unlock.sql` and hosts ALL Stage 7 integration tests, `>1,000`-row pagination tests, concurrent `commit_sync_batch` race tests, negative SQL `CHECK` tests, and Stage 8 `.sql.gz` + JSON Restore Drills.
+- **`Mohasba` (Production — PostgreSQL 17.12):** Remains **100% untouched** throughout Stages 6, 7, and 8. Only receives `0001_init.sql`–`0004_atomic_workspace_and_unlock.sql` during **Stage 9 (Release)** with explicit user deploy consent so personal daily use starts from a guaranteed clean slate.
 - **Safe `mohasba-test` Reset Helper (`tests/helpers/reset-test-db.ts`):** Hard-guarded by `ALLOW_TEST_DB_RESET=true` AND explicit test-ref verification (refuses to run against `Mohasba`). Deletes test rows in strict FK order (`daily_logs → applied_mutations → reminder_dispatches → target_versions → actions → periods → unlock_rate_limits → audit_logs`) and restores default `app_settings (id = 1)`.
 - **Public Repo Hygiene:** Live Supabase project refs, keys, `.env*`, `public/sw-manifest.json`, `_archive_v1_sheets/`, and server IPs are **never** committed to Git.
 
@@ -91,7 +91,7 @@ flowchart LR
 
 ---
 
-### Slice 2 — Server Layer (`src/server/*`) + All 20 API Operations + Live `mohasba-test` Integration Suite
+### Slice 2 — Server Layer (`src/server/*`) + All 26 API Operations + Live `mohasba-test` Integration Suite
 - **Dependencies:** Slice 0, Slice 1.
 - **Files / Deliverables:**
   - `src/server/config.ts` (`RuntimeConfig`), `db/supabase.ts`, `db/pagination.ts` (Keyset Paginator on `(log_date ASC, action_id ASC)`, page size `1,000`), `observability/logger.ts` (`stdout` JSON + `sanitizeAuditContext` stripping secrets AND raw `note` text + `<= 2 KB` context / `<= 1.5 KB` stack + fail-safe non-blocking `audit_logs` writer).
@@ -99,10 +99,10 @@ flowchart LR
   - `src/server/services/*`:
     - `bootstrap-service.ts`: Full 90d + all open Qadaa (`>90d` included) via keyset pagination; delta mode with `since - 5 minutes` overlap; resumable `initStarterPack` guarded strictly by `!settings.onboarding_completed`.
     - `sync-service.ts`: 2–4 bulk reads → **sequential intra-batch resolution against an in-memory working `currentRows[cell_key]` map** (skipping `row_version` bump for `already_applied` IDs, advancing `expected_row_version` + `last_mutation_id` after each non-duplicate item so `[M1, M2]` for the same cell in ONE batch never self-collides on `MC001`!) → `commit_sync_batch` passing server-read `expected_row_version`, retrying any `race_conflict` row once after fresh re-read.
-    - `crud-service.ts`: Settings, Periods, Actions soft-archive/restore + open-Qadaa warning count when toggling `is_qadaa_eligible` off, Target Versions `POST/PATCH/DELETE` (`409` on referenced version), per-row `.update()` `reorder` (`<= 40` items).
+    - `crud-service.ts`: Settings, Periods, Actions soft-archive/restore + open-Qadaa warning count when toggling `is_qadaa_eligible` off, Target Versions `POST/PATCH/DELETE` (`409` on referenced version), per-row `.update()` `reorder` (`<= 300` items).
     - `export-import-service.ts`: Complete keyset-paginated `GET /api/export` + chunked (`<= 200` logs/req) `POST /api/import` (`target_versions` UUID/`effective_from` matching, cross-action validation, `Positive > MISSED` merge without polluting `applied_mutations`).
     - `ntfy-dispatcher.ts`: `runCronTick` keep-alive + daily prune guarded by `last_pruned_date` (`applied_mutations > 90d`, `reminder_dispatches > 90d`, expired `unlock_rate_limits`, `trim_audit_logs_if_needed`) + biweekly backup nudge + `triggerInstant <= now < endInstant` anti-flood bound + `Promise.allSettled` 5s timeout + `APP_URL` deep links + `test-ntfy`.
-  - All 18 Next.js `force-dynamic` Route Handlers (`src/app/api/**`) covering all 20 operations in [docs/04-data-and-security.md](file:///d:/Ahmed/Projects/mohasba/docs/04-data-and-security.md) §3.
+  - All 22 Next.js `force-dynamic` Route Handlers (`src/app/api/**`) covering all 26 active operations in [docs/04-data-and-security.md](file:///d:/Ahmed/Projects/mohasba/docs/04-data-and-security.md) §3.
 - **Mandatory Verification & Tests (Exit Criteria — `npm run test:integration` `tests/api/*.test.ts` against `mohasba-test`):**
   1. **RPC Concurrency, Intra-Batch Chaining & Poison Isolation:**
      - Simultaneous `expected_row_version = null` inserts → 1 `applied`, 1 `race_conflict` (resolved via retry, zero lost updates).
@@ -161,7 +161,7 @@ flowchart LR
 ### Slice 6 — Oracle VPS Docker, `cloudflared` Tunnel, Encrypted `pg_dump` 17 Backup & OSS Packaging (Local Prep)
 - **Dependencies:** Slice 5.
 - **Files / Deliverables (Local Repo Only — Live VPS Deploy Waits for Stage 9):**
-  - `Dockerfile`: 3-stage `node:20-alpine` (`deps → builder → non-root runner`, `output: 'standalone'`), explicitly copying **`.next/standalone`**, **`.next/static`**, and **`public/`** (including build-generated `public/sw-manifest.json`), setting `ENV HOSTNAME="0.0.0.0" PORT=3000`, requiring **zero build-time secrets**, and using **Node 20 built-in `fetch`** for healthcheck (`["CMD","node","-e","fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]` — no `curl` dependency on Alpine!).
+  - `Dockerfile`: 3-stage `node:22-alpine` (`deps → builder → non-root runner`, `output: 'standalone'`), explicitly copying **`.next/standalone`**, **`.next/static`**, and **`public/`** (including build-generated `public/sw-manifest.json`), setting `ENV HOSTNAME="0.0.0.0" PORT=3000`, requiring **zero build-time secrets**, and using **Node 22 built-in `fetch`** for healthcheck (`["CMD","node","-e","fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]` — no `curl` dependency on Alpine!).
   - `docker-compose.yml`: Two lean services on an internal bridge network:
     - `mohasba` (`ports: ["127.0.0.1:3000:3000"]`, `restart: unless-stopped`, `logging: json-file max-size: 20m max-file: 3`).
     - `cloudflared` (`profiles: ["tunnel"]` so local `docker compose up mohasba` tests cleanly without a tunnel token; `cloudflare/cloudflared:latest`, `restart: unless-stopped`, `mem_limit: 128m`, `logging: json-file max-size: 20m max-file: 3`, forwarding custom domain → `http://mohasba:3000`, zero open inbound ports 80/443).
@@ -184,6 +184,6 @@ flowchart LR
      - **(b) `>1,000`-Row JSON Restore:** Reset `mohasba-test` via `reset-test-db.ts`, import a full `1,250+`-row `GET /api/export` JSON snapshot, and assert exact parity of `periods`, `actions`, `target_versions`, `daily_logs`, and open Qadaa count.
   3. Final full regression run (`tsc`, `lint`, `test:unit`, `test:integration`, `playwright`, `impeccable detect`, `supabase advisors`, `anon` penetration check, fresh-clone OSS build check, optional `DESIGN.md` capture via `impeccable document`).
 - **Stage 9 (Production Release — Explicit User Deploy Consent Required):**
-  1. Apply `0001_init.sql` to clean Production **`Mohasba`** Supabase project + verify `get_advisors` clean.
+  1. Apply `0001_init.sql` through `0004_atomic_workspace_and_unlock.sql` in exact numerical order to clean Production **`Mohasba`** Supabase project + verify `get_advisors` clean.
   2. Deploy `docker-compose.yml` (`mohasba` + `cloudflared` Tunnel bound to custom domain via `--profile tunnel`), install `postgresql-client-17` + `crontab` + encrypted weekly off-VPS backup on Oracle VPS.
   3. Verify live HTTPS custom domain, `ntfy` test push + deep link on phone, and PWA installability (iOS/Android).

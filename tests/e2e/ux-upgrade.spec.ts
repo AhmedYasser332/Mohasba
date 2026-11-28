@@ -16,7 +16,8 @@ loadTestEnv();
 const PORT = 3104;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const SCREENSHOT_DIR =
-  'C:/Users/ahmed/.gemini/antigravity/brain/f71a0285-daff-460c-9b19-50e9a1762d6f/scratch/screenshots/ux-upgrade';
+  process.env.PLAYWRIGHT_SCREENSHOT_DIR ||
+  path.resolve(process.cwd(), 'test-results', 'screenshots', 'ux-upgrade');
 
 let serverProcess: ChildProcess | null = null;
 
@@ -1479,12 +1480,37 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(
       page.getByTestId('pref-enter-key-mode-move_down'),
     ).toHaveAttribute('aria-checked', 'true');
+
+    // Customize Desktop Crosshair preferences in Settings
+    await expect(page.getByTestId('pref-crosshair-mode-both')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(page.getByTestId('pref-crosshair-reset')).toBeDisabled();
+    await page.getByTestId('pref-crosshair-mode-row').click();
+    await expect(page.getByTestId('pref-crosshair-mode-row')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await page.getByTestId('pref-crosshair-opacity').fill('180');
+    await expect(page.getByTestId('pref-crosshair-opacity-value')).toHaveText('180%');
+    await page.getByTestId('pref-crosshair-cover-period').check();
+    await expect(page.getByTestId('pref-crosshair-cover-period')).toBeChecked();
+    await expect(page.getByTestId('pref-crosshair-reset')).toBeEnabled();
+
     await page.getByTestId('pref-home-view-week').click();
     await expect(page.getByTestId('general-prefs-feedback')).toBeVisible();
 
     await page.goto(`${BASE_URL}/`, { waitUntil: 'networkidle' });
     await expect(page.locator('.page-heading')).toHaveText('الجدول الأسبوعي');
     await expect(page.locator('.matrix-desktop-wrap')).toBeVisible();
+    const crosshairStrength = await page
+      .locator('.ledger-table-stage')
+      .first()
+      .evaluate((el) =>
+        getComputedStyle(el).getPropertyValue('--crosshair-strength').trim(),
+      );
+    expect(crosshairStrength).toBe('1.8');
 
     // User Decision #1: Enter moves focus down from row 0 (FAJR_FARD) to row 1 (FAJR_JAMAAH) with zero dialog; F2 opens CellEditorDialog
     const row0Cell = page.getByTestId(
@@ -1529,6 +1555,17 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       path: `${SCREENSHOT_DIR}/mobile-settings-dark.png`,
       fullPage: true,
     });
+
+    // Reset Crosshair preferences back to defaults
+    await page.getByTestId('accordion-toggle-general').click();
+    await page.getByTestId('pref-crosshair-reset').click();
+    await expect(page.getByTestId('pref-crosshair-mode-both')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(page.getByTestId('pref-crosshair-opacity-value')).toHaveText('100%');
+    await expect(page.getByTestId('pref-crosshair-cover-period')).not.toBeChecked();
+    await expect(page.getByTestId('pref-crosshair-reset')).toBeDisabled();
 
     expect(consoleErrors).toEqual([]);
     expect(pageErrors).toEqual([]);

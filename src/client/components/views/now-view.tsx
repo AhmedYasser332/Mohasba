@@ -72,7 +72,7 @@ export function NowView({
     activeWindowResolution,
     todayIslamicDate,
     catchUp48hItems,
-    analytics30d,
+    adaptingActionIds,
     logCellTap,
     logBulkMosqueDone,
     logBulkPeriodDone,
@@ -88,10 +88,6 @@ export function NowView({
   const targetVersionsById = useMemo(
     () => new Map(targetVersions.map((v) => [v.id, v])),
     [targetVersions],
-  );
-  const adaptingActionIds = useMemo(
-    () => new Set((analytics30d?.adaptingTargets ?? []).map((t) => t.action.id)),
-    [analytics30d],
   );
 
   const activeTimePeriods = useMemo(
@@ -428,6 +424,46 @@ export function NowView({
     const isExpired = info.state === 'UNLOGGED_EXPIRED';
     const showGrace = adaptingActionIds.has(action.id);
 
+    let doneCount = 0;
+    let qadaaCount = 0;
+    let percentCount = 0;
+    let missedCount = 0;
+    let expiredCount = 0;
+    const weekDotItems = weekDates.map((d) => {
+      const dayDisplay = resolveCellDisplay({
+        action,
+        logDate: d,
+        logsByKey,
+        periodsById,
+        periods,
+        targetVersions,
+        targetVersionsById,
+        settings,
+        nowMs,
+        windowCache,
+      });
+      if (dayDisplay.state === 'DONE') doneCount += 1;
+      else if (dayDisplay.state === 'QADAA_DONE') qadaaCount += 1;
+      else if (dayDisplay.state === 'PERCENT') percentCount += 1;
+      else if (dayDisplay.state === 'MISSED') missedCount += 1;
+      else if (dayDisplay.state === 'UNLOGGED_EXPIRED') expiredCount += 1;
+      return {
+        date: d,
+        dotCls: getWeekDotClass(dayDisplay.state),
+        dowName: AR_STRINGS.week.weekdaysAr[getIsoDayOfWeek(d)] ?? d,
+      };
+    });
+    const summaryParts: string[] = [];
+    if (doneCount > 0) summaryParts.push(`${doneCount} تم`);
+    if (qadaaCount > 0) summaryParts.push(`${qadaaCount} قضاء`);
+    if (percentCount > 0) summaryParts.push(`${percentCount} نسبة`);
+    if (missedCount > 0) summaryParts.push(`${missedCount} فات`);
+    if (expiredCount > 0) summaryParts.push(`${expiredCount} غير مسجل`);
+    const weekDotsAriaLabel =
+      summaryParts.length > 0
+        ? `ملخص الأسبوع: ${summaryParts.join('، ')}`
+        : 'ملخص الأسبوع: لا توجد سجلات بعد';
+
     return (
       <div
         key={action.id}
@@ -455,31 +491,18 @@ export function NowView({
             </div>
 
             <div className="action-sub-line">
-              <span className="week-dots" aria-label="حالة أيام الأسبوع">
-                {weekDates.map((d) => {
-                  const dayDisplay = resolveCellDisplay({
-                    action,
-                    logDate: d,
-                    logsByKey,
-                    periodsById,
-                    periods,
-                    targetVersions,
-                    targetVersionsById,
-                    settings,
-                    nowMs,
-                    windowCache,
-                  });
-                  const dotCls = getWeekDotClass(dayDisplay.state);
-                  const dowName =
-                    AR_STRINGS.week.weekdaysAr[getIsoDayOfWeek(d)] ?? d;
-                  return (
-                    <span
-                      key={d}
-                      className={`w-dot ${dotCls}`}
-                      title={dowName}
-                    />
-                  );
-                })}
+              <span
+                className="week-dots"
+                role="img"
+                aria-label={weekDotsAriaLabel}
+              >
+                {weekDotItems.map((dot) => (
+                  <span
+                    key={dot.date}
+                    className={`w-dot ${dot.dotCls}`}
+                    title={dot.dowName}
+                  />
+                ))}
               </span>
               {info.note && (
                 <span className="row-note-preview" title={info.note}>
@@ -738,11 +761,11 @@ export function NowView({
       {activePeriod ? (
         <section className="panel" aria-label="أعمال الفترة">
           <div className="window-header">
-            <h3 className="window-title">
+            <h2 className="window-title">
               {activePeriod.side === 'TIME_BOUND'
                 ? `فترة ${activePeriod.title}`
                 : activePeriod.title}
-            </h3>
+            </h2>
 
             {activeWindow ? (
               <div className="window-time-meta nums">

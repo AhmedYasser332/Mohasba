@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   AR_STRINGS,
   countOpenQadaaForAction,
@@ -14,6 +14,7 @@ import {
   type PointerDndReorderPayload,
 } from '../../hooks/use-pointer-dnd';
 import { useMohasba } from '../../store/mohasba-provider';
+import { AppDialog } from '../app-dialog';
 import {
   IconArchive,
   IconChevronDown,
@@ -95,33 +96,11 @@ export function ActionsSection() {
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [form, setForm] = useState<ActionFormState | null>(null);
-  const editDialogRef = useRef<HTMLDialogElement | null>(null);
 
   const [renameTarget, setRenameTarget] = useState<Action | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
-  const renameDialogRef = useRef<HTMLDialogElement | null>(null);
 
   const [evolveAction, setEvolveAction] = useState<Action | null>(null);
-
-  useEffect(() => {
-    const dialog = editDialogRef.current;
-    if (!dialog) return;
-    if (editDialogOpen && form) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [editDialogOpen, form]);
-
-  useEffect(() => {
-    const dialog = renameDialogRef.current;
-    if (!dialog) return;
-    if (renameTarget) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [renameTarget]);
 
   const sortedPeriods = useMemo(
     () => [...periods].sort((a, b) => a.sort_order - b.sort_order),
@@ -860,20 +839,11 @@ export function ActionsSection() {
       <PointerDragGhost dragState={dragState} />
 
       {/* Create / Full Edit Action Dialog */}
-      <dialog
-        ref={editDialogRef}
+      <AppDialog
+        open={editDialogOpen && Boolean(form)}
+        onRequestClose={() => setEditDialogOpen(false)}
         className="app-dialog dialog-wide"
         aria-labelledby="action-dialog-title"
-        onCancel={(e) => {
-          e.preventDefault();
-          setEditDialogOpen(false);
-        }}
-        onClick={(e) => {
-          if (e.target === editDialogRef.current) {
-            setEditDialogOpen(false);
-          }
-        }}
-        onClose={() => setEditDialogOpen(false)}
       >
         {editDialogOpen && form && (
           <form
@@ -882,9 +852,9 @@ export function ActionsSection() {
             }}
           >
             <div className="dialog-head">
-              <h3 className="dialog-title" id="action-dialog-title">
+              <h2 className="dialog-title" id="action-dialog-title">
                 {form.id ? `تعديل خصائص: ${form.title}` : 'إضافة عمل جديد'}
-              </h3>
+              </h2>
               <button
                 type="button"
                 className="btn btn-icon"
@@ -1126,23 +1096,14 @@ export function ActionsSection() {
             </div>
           </form>
         )}
-      </dialog>
+      </AppDialog>
 
       {/* Simple Rename Dialog */}
-      <dialog
-        ref={renameDialogRef}
+      <AppDialog
+        open={Boolean(renameTarget)}
+        onRequestClose={() => setRenameTarget(null)}
         className="app-dialog"
         aria-labelledby="simple-rename-title"
-        onCancel={(e) => {
-          e.preventDefault();
-          setRenameTarget(null);
-        }}
-        onClick={(e) => {
-          if (e.target === renameDialogRef.current) {
-            setRenameTarget(null);
-          }
-        }}
-        onClose={() => setRenameTarget(null)}
       >
         {renameTarget && (
           <form
@@ -1151,9 +1112,9 @@ export function ActionsSection() {
             }}
           >
             <div className="dialog-head">
-              <h3 className="dialog-title" id="simple-rename-title">
+              <h2 className="dialog-title" id="simple-rename-title">
                 {AR_STRINGS.settings.simpleRenameAction}
-              </h3>
+              </h2>
               <button
                 type="button"
                 className="btn btn-icon"
@@ -1198,7 +1159,7 @@ export function ActionsSection() {
             </div>
           </form>
         )}
-      </dialog>
+      </AppDialog>
 
       {/* Target Evolution Dialog */}
       <TargetEvolutionDialog

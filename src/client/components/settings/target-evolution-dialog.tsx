@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AR_STRINGS,
   isTargetVersionReferenced,
@@ -11,6 +11,7 @@ import {
   type TargetVersion,
 } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
+import { AppDialog } from '../app-dialog';
 import { IconCross, IconEdit, IconTrash } from '../icons';
 
 interface TargetEvolutionDialogProps {
@@ -178,9 +179,9 @@ function TargetEvolutionContent({
       }}
     >
       <div className="dialog-head">
-        <h3 className="dialog-title" id="evolve-target-title">
+        <h2 className="dialog-title" id="evolve-target-title">
           {AR_STRINGS.settings.evolveTargetModalTitle}: {action.title}
-        </h3>
+        </h2>
         <button
           type="button"
           className="btn btn-icon"
@@ -389,33 +390,12 @@ export function TargetEvolutionDialog({
   onClose,
   onChanged,
 }: TargetEvolutionDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (action) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [action]);
-
   return (
-    <dialog
-      ref={dialogRef}
+    <AppDialog
+      open={Boolean(action)}
+      onRequestClose={onClose}
       className="app-dialog dialog-wide"
       aria-labelledby="evolve-target-title"
-      onCancel={(e) => {
-        e.preventDefault();
-        onClose();
-      }}
-      onClick={(e) => {
-        if (e.target === dialogRef.current) {
-          onClose();
-        }
-      }}
-      onClose={onClose}
     >
       {action && (
         <TargetEvolutionContent
@@ -425,6 +405,6 @@ export function TargetEvolutionDialog({
           onChanged={onChanged}
         />
       )}
-    </dialog>
+    </AppDialog>
   );
 }

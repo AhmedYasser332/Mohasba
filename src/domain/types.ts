@@ -3,9 +3,29 @@ import { z } from 'zod';
 export const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 export const HHMM_REGEX = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
+export function isValidCalendarIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return (
+    probe.getUTCFullYear() === year &&
+    probe.getUTCMonth() + 1 === month &&
+    probe.getUTCDate() === day
+  );
+}
+
 export const IsoDateSchema = z
   .string()
-  .regex(ISO_DATE_REGEX, 'Expected ISO date YYYY-MM-DD');
+  .regex(ISO_DATE_REGEX, 'Expected ISO date YYYY-MM-DD')
+  .refine(isValidCalendarIsoDate, 'Expected valid calendar date YYYY-MM-DD');
 
 export const HhmmSchema = z
   .string()
@@ -315,7 +335,8 @@ export const SyncMutationSchema = z.object({
   device_id: z.string().uuid(),
   parent_mutation_id: z.string().uuid().nullable(),
   action_id: z.string().uuid(),
-  log_date: IsoDateSchema,
+  // Syntactic regex only so sync-service isolates bad calendar dates per-item instead of rejecting the entire batch
+  log_date: z.string().regex(ISO_DATE_REGEX, 'Expected ISO date YYYY-MM-DD'),
   base_row_version: z.number().int().min(1).nullable(),
   availability_override: AvailabilityOverrideSchema.nullable(),
   status: CellStatusSchema.nullable(),

@@ -6,6 +6,7 @@ export const SESSION_COOKIE_NAME = 'mohasba_session';
 export const SESSION_MAX_AGE_SECONDS = 180 * 24 * 60 * 60; // 15552000 (180 days)
 export const MAX_UNLOCK_FAILURES = 5;
 export const LOCKOUT_DURATION_MS = 60_000;
+export const UNLOCK_WINDOW_MS = 15 * 60_000;
 
 const encoder = new TextEncoder();
 
@@ -141,7 +142,11 @@ export function parseCookieHeader(
     if (eqIdx === -1) continue;
     const k = pair.slice(0, eqIdx).trim();
     if (k === name) {
-      return decodeURIComponent(pair.slice(eqIdx + 1).trim());
+      try {
+        return decodeURIComponent(pair.slice(eqIdx + 1).trim());
+      } catch {
+        return null;
+      }
     }
   }
   return null;
@@ -204,6 +209,17 @@ export function extractClientIp(req: Request): string | null {
     }
   }
   return null;
+}
+
+export function resolveClientIpForRateLimit(
+  req: Request,
+  isProduction: boolean,
+): string | null {
+  const ip = extractClientIp(req);
+  if (ip) {
+    return ip;
+  }
+  return isProduction ? 'unknown' : null;
 }
 
 export async function hashClientIp(
@@ -281,33 +297,42 @@ export async function checkUnlockRateLimit(
 export async function recordUnlockFailure(
   supabase: SupabaseClient,
   ipHash: string | null,
-  previousAttempts: number,
   nowMs: number = Date.now(),
 ): Promise<{ nowLocked: boolean; attempts: number; retryAfterSec: number }> {
   if (!ipHash) {
     return { nowLocked: false, attempts: 0, retryAfterSec: 0 };
   }
 
-  const attempts = previousAttempts + 1;
-  const nowLocked = attempts >= MAX_UNLOCK_FAILURES;
-  const lockedUntil = nowLocked
-    ? new Date(nowMs + LOCKOUT_DURATION_MS).toISOString()
-    : null;
+  const { data, error } = await supabase.rpc('record_unlock_failure_atomic', {
+    p_ip_hash: ipHash,
+    p_now: new Date(nowMs).toISOString(),
+    p_window_ms: UNLOCK_WINDOW_MS,
+    p_max_attempts: MAX_UNLOCK_FAILURES,
+    p_lock_ms: LOCKOUT_DURATION_MS,
+  });
 
-  await supabase.from('unlock_rate_limits').upsert(
-    {
-      ip_hash: ipHash,
-      failed_attempts: attempts,
-      locked_until: lockedUntil,
-      updated_at: new Date(nowMs).toISOString(),
-    },
-    { onConflict: 'ip_hash' },
-  );
+  if (error) {
+    throw new Error(`Failed recording unlock failure: ${error.message}`);
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { failed_attempts?: number; locked_until?: string | null }
+    | null
+    | undefined;
+
+  const attempts = Number(row?.failed_attempts ?? 1);
+  const lockedUntilMs = row?.locked_until
+    ? Date.parse(String(row.locked_until))
+    : 0;
+  const nowLocked = Number.isFinite(lockedUntilMs) && lockedUntilMs > nowMs;
+  const retryAfterSec = nowLocked
+    ? Math.max(1, Math.ceil((lockedUntilMs - nowMs) / 1000))
+    : 0;
 
   return {
     nowLocked,
     attempts,
-    retryAfterSec: nowLocked ? Math.ceil(LOCKOUT_DURATION_MS / 1000) : 0,
+    retryAfterSec,
   };
 }
 

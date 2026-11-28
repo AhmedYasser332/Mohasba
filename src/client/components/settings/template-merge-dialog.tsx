@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useId, useMemo, useRef, useState } from 'react';
 import {
   TEMPLATE_CATALOG,
   buildTemplateBundle,
@@ -15,6 +15,8 @@ import {
   ARABIC_NOUN_FORMS,
   formatArabicCount,
 } from '../../utils/arabic-plural';
+import { buildActionMetaBadges } from '../../utils/template-badges';
+import { AppDialog } from '../app-dialog';
 import {
   IconCheck,
   IconChevronDown,
@@ -35,31 +37,6 @@ interface TemplateMergeDialogProps {
   onConfirmMerge: (payload: MergeTemplatePayload) => Promise<void>;
 }
 
-function getActionCadenceLabel(disabledDays: readonly number[]): string | null {
-  if (disabledDays.length === 0) return null;
-  const key = [...disabledDays].sort((a, b) => a - b).join(',');
-  if (key === '0,1,2,3,4,6') return 'الجمعة فقط';
-  if (key === '0,2,3,5,6') return 'الإثنين والخميس';
-  if (key === '0,1,2,3,5') return 'السبت والخميس';
-  if (key === '5') return 'عدا الجمعة';
-  return `${7 - disabledDays.length} أيام/أسبوع`;
-}
-
-function buildMetaBadges(
-  action: Action,
-  targetByActionId: ReadonlyMap<string, TargetVersion>,
-): string[] {
-  const badges: string[] = [];
-  const tv = targetByActionId.get(action.id);
-  if (tv) badges.push(tv.target_label);
-  const cadence = getActionCadenceLabel(action.default_disabled_days);
-  if (cadence) badges.push(cadence);
-  if (action.is_mosque_action) badges.push('مسجد');
-  if (action.is_qadaa_eligible) badges.push('قضاء');
-  if (action.supports_percentage) badges.push('نسبة %');
-  return badges;
-}
-
 export function TemplateMergeDialog({
   open,
   busy,
@@ -71,9 +48,7 @@ export function TemplateMergeDialog({
   onClose,
   onConfirmMerge,
 }: TemplateMergeDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
-  const pointerDownOutsideRef = useRef(false);
   const titleId = useId();
   const descId = useId();
 
@@ -88,19 +63,6 @@ export function TemplateMergeDialog({
     Record<string, boolean>
   >({});
   const [search, setSearch] = useState('');
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open) {
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-      closeBtnRef.current?.focus();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [open]);
 
   // Precompute baseline diff stats per level for the 3 selector cards
   const levelSummaries = useMemo(() => {
@@ -233,46 +195,21 @@ export function TemplateMergeDialog({
     });
   };
 
-  const isOutsideDialog = (e: React.PointerEvent<HTMLDialogElement>): boolean => {
-    const dialog = dialogRef.current;
-    if (!dialog) return false;
-    const r = dialog.getBoundingClientRect();
-    return (
-      e.clientX < r.left ||
-      e.clientX > r.right ||
-      e.clientY < r.top ||
-      e.clientY > r.bottom
-    );
-  };
-
   const query = search.trim().toLowerCase();
   const netNewCount = activePlan?.newActions.length ?? 0;
   const netNewPeriodsCount = activePlan?.newPeriods.length ?? 0;
   const skippedCount = activePlan?.skippedExistingActionsCount ?? 0;
 
   return (
-    <dialog
-      ref={dialogRef}
+    <AppDialog
+      open={open}
+      onRequestClose={onClose}
+      canDismiss={!busy}
+      initialFocusRef={closeBtnRef}
       className="app-dialog app-dialog-wide"
       data-testid="template-merge-dialog"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!busy) onClose();
-      }}
-      onPointerDown={(e) => {
-        pointerDownOutsideRef.current = isOutsideDialog(e);
-      }}
-      onPointerUp={(e) => {
-        if (pointerDownOutsideRef.current && isOutsideDialog(e) && !busy) {
-          onClose();
-        }
-        pointerDownOutsideRef.current = false;
-      }}
-      onClose={() => {
-        if (open && !busy) onClose();
-      }}
     >
       {open && activePlan && (
         <div className="merge-dialog-shell">
@@ -488,7 +425,7 @@ export function TemplateMergeDialog({
                                 !isExisting &&
                                 periodChecked &&
                                 !excludedActionSet.has(act.id);
-                              const badges = buildMetaBadges(
+                              const badges = buildActionMetaBadges(
                                 act,
                                 targetByTemplateActionId,
                               );
@@ -571,6 +508,6 @@ export function TemplateMergeDialog({
           </div>
         </div>
       )}
-    </dialog>
+    </AppDialog>
   );
 }

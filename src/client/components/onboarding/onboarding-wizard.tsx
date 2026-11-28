@@ -22,6 +22,7 @@ import {
   CITY_PRESETS,
   generateSecureNtfyTopicUrl,
 } from '../../utils/presets';
+import { buildActionMetaBadges } from '../../utils/template-badges';
 import {
   IconBell,
   IconCheck,
@@ -64,31 +65,6 @@ function formatPeriodWindowBrief(period: Period): string {
   const start = ANCHOR_LABELS[period.start_anchor ?? ''] ?? 'الفجر';
   const end = ANCHOR_LABELS[period.end_anchor ?? ''] ?? 'الشروق';
   return `من ${start} إلى ${end}`;
-}
-
-function getActionCadenceLabel(disabledDays: readonly number[]): string | null {
-  if (disabledDays.length === 0) return null;
-  const key = [...disabledDays].sort((a, b) => a - b).join(',');
-  if (key === '0,1,2,3,4,6') return 'الجمعة فقط';
-  if (key === '0,2,3,5,6') return 'الإثنين والخميس';
-  if (key === '0,1,2,3,5') return 'السبت والخميس';
-  if (key === '5') return 'عدا الجمعة';
-  return `${7 - disabledDays.length} أيام/أسبوع`;
-}
-
-function buildActionMetaBadges(
-  action: Action,
-  targetByActionId: ReadonlyMap<string, TargetVersion>,
-): string[] {
-  const badges: string[] = [];
-  const tv = targetByActionId.get(action.id);
-  if (tv) badges.push(tv.target_label);
-  const cadence = getActionCadenceLabel(action.default_disabled_days);
-  if (cadence) badges.push(cadence);
-  if (action.is_mosque_action) badges.push('مسجد');
-  if (action.is_qadaa_eligible) badges.push('قضاء');
-  if (action.supports_percentage) badges.push('نسبة %');
-  return badges;
 }
 
 function validateClientNtfyUrl(raw: string): string | null {
@@ -1069,6 +1045,7 @@ export function OnboardingWizard({
                             placeholder="https://ntfy.sh/mohasba-..."
                             value={ntfyTopicUrl}
                             aria-invalid={Boolean(ntfyUrlError)}
+                            aria-describedby={ntfyUrlError ? 'onb-ntfy-url-error' : undefined}
                             data-testid="onboarding-ntfy-url"
                             disabled={busy}
                             onChange={(e) => {
@@ -1110,7 +1087,11 @@ export function OnboardingWizard({
                           )}
                         </div>
                         {ntfyUrlError && (
-                          <span className="onboarding-field-error" role="alert">
+                          <span
+                            id="onb-ntfy-url-error"
+                            className="onboarding-field-error"
+                            role="alert"
+                          >
                             {ntfyUrlError}
                           </span>
                         )}

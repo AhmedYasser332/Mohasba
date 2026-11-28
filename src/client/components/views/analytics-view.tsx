@@ -6,6 +6,7 @@ import {
   type Action,
   type MetricsSummary,
 } from '@/domain';
+import { computeAnalytics } from '@/domain/analytics';
 import { useMohasba } from '../../store/mohasba-provider';
 
 function formatRate(rate: number | null): string {
@@ -28,7 +29,15 @@ function RateBadge({ rate }: { rate: number | null }) {
 }
 
 export function AnalyticsView() {
-  const { analytics7d, analytics30d, actions } = useMohasba();
+  const {
+    periods,
+    actions,
+    targetVersions,
+    logs,
+    todayIslamicDate,
+    nowMs,
+    settings,
+  } = useMohasba();
   const [windowDays, setWindowDays] = useState<7 | 30>(7);
 
   const actionsById = useMemo(
@@ -36,11 +45,30 @@ export function AnalyticsView() {
     [actions],
   );
 
-  const activeAnalytics = windowDays === 7 ? analytics7d : analytics30d;
-  const insight30 = analytics30d ?? analytics7d;
-  const pulse = (analytics7d ?? analytics30d)?.pulse ?? null;
+  const analytics = useMemo(() => {
+    if (!settings || !todayIslamicDate) return null;
+    return computeAnalytics({
+      periods,
+      actions,
+      targetVersions,
+      logs,
+      todayIso: todayIslamicDate,
+      windowDays,
+      now: nowMs,
+      settings,
+    });
+  }, [
+    actions,
+    logs,
+    nowMs,
+    periods,
+    settings,
+    targetVersions,
+    todayIslamicDate,
+    windowDays,
+  ]);
 
-  if (!activeAnalytics || !insight30 || !pulse) {
+  if (!analytics) {
     return (
       <section className="panel" aria-label={AR_STRINGS.analytics.title}>
         <div className="empty-state">
@@ -50,8 +78,8 @@ export function AnalyticsView() {
     );
   }
 
-  const { weakSpots, adaptingTargets, progressionTrails } = insight30;
-  const { breakdown } = activeAnalytics;
+  const { weakSpots, adaptingTargets, progressionTrails, breakdown, pulse } =
+    analytics;
 
   const renderSummaryMetrics = (label: string, summary: MetricsSummary) => (
     <tr className="summary-row">
@@ -72,7 +100,7 @@ export function AnalyticsView() {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h3 className="panel-title">{AR_STRINGS.analytics.title}</h3>
+            <h2 className="panel-title">{AR_STRINGS.analytics.title}</h2>
             <span className="panel-meta">
               البيانات الفارغة أو المعذورة لا تُحتسب في المقام ولا تتحول تلقائياً إلى فوات
             </span>
@@ -180,9 +208,9 @@ export function AnalyticsView() {
       {/* Insight 1: Weakest Spots (< 85%) + Adapting New Targets + Progression Trails */}
       <section className="panel" data-testid="analytics-weak-spots">
         <div className="panel-header">
-          <h3 className="panel-title">
+          <h2 className="panel-title">
             أضعف النقاط (&lt; 85%) خلال 30 يوماً
-          </h3>
+          </h2>
           <span className="panel-meta">
             يشترط 5 أيام مسجّلة على الأقل (أو يومين للأعمال الأسبوعية)
           </span>
@@ -316,7 +344,7 @@ export function AnalyticsView() {
         {/* Time-Bound Windows */}
         <section className="panel">
           <div className="panel-header">
-            <h3 className="panel-title">الفترات الموقوتة ({windowDays === 7 ? '7 أيام' : '30 يوماً'})</h3>
+            <h2 className="panel-title">الفترات الموقوتة ({windowDays === 7 ? '7 أيام' : '30 يوماً'})</h2>
             <span className="panel-meta">
               فصل صريح بين {AR_STRINGS.analytics.coreJamaahLabel} و{AR_STRINGS.analytics.sunanLabel}
             </span>
@@ -325,7 +353,12 @@ export function AnalyticsView() {
           <div className="table-scroll-cue">
             <span>اسحب أفقياً لعرض باقي الأعمدة</span>
           </div>
-          <div className="analytics-table-wrap">
+          <div
+            className="analytics-table-wrap"
+            tabIndex={0}
+            role="region"
+            aria-label={`جدول تحليل الفترات الموقوتة (${windowDays === 7 ? '7 أيام' : '30 يوماً'})`}
+          >
             <table className="analytics-table">
               <thead>
                 <tr>
@@ -380,14 +413,19 @@ export function AnalyticsView() {
         {/* Daily Habit Groups (Isolated) */}
         <section className="panel">
           <div className="panel-header">
-            <h3 className="panel-title">المجموعات اليومية ({windowDays === 7 ? '7 أيام' : '30 يوماً'})</h3>
+            <h2 className="panel-title">المجموعات اليومية ({windowDays === 7 ? '7 أيام' : '30 يوماً'})</h2>
             <span className="panel-meta">معزولة تماماً عن حسابات الفترات</span>
           </div>
 
           <div className="table-scroll-cue">
             <span>اسحب أفقياً لعرض باقي الأعمدة</span>
           </div>
-          <div className="analytics-table-wrap">
+          <div
+            className="analytics-table-wrap"
+            tabIndex={0}
+            role="region"
+            aria-label={`جدول تحليل المجموعات اليومية (${windowDays === 7 ? '7 أيام' : '30 يوماً'})`}
+          >
             <table className="analytics-table">
               <thead>
                 <tr>

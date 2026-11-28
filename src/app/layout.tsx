@@ -43,7 +43,6 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <link rel="manifest" href="/manifest.webmanifest" />
         <script
           dangerouslySetInnerHTML={{ __html: ANTI_FOUC_THEME_SCRIPT }}
         />

@@ -5,9 +5,9 @@ import {
   clearUnlockRateLimit,
   constantTimeStringEqual,
   createSessionToken,
-  extractClientIp,
   hashClientIp,
   recordUnlockFailure,
+  resolveClientIpForRateLimit,
 } from '@/server/access/guard';
 import { jsonError, jsonOk, parseJsonBody } from '@/server/http/response';
 import { handleAppRoute } from '@/server/http/route-handler';
@@ -38,7 +38,7 @@ export async function POST(req: Request): Promise<Response> {
         return body.response;
       }
 
-      const ip = extractClientIp(request);
+      const ip = resolveClientIpForRateLimit(request, config.isProduction);
       const ipHash = ip ? await hashClientIp(ip, config.cronSecret) : null;
 
       const rateState = await checkUnlockRateLimit(supabase, ipHash);
@@ -58,11 +58,7 @@ export async function POST(req: Request): Promise<Response> {
       );
 
       if (!matches) {
-        const failure = await recordUnlockFailure(
-          supabase,
-          ipHash,
-          rateState.existingAttempts,
-        );
+        const failure = await recordUnlockFailure(supabase, ipHash);
 
         if (failure.nowLocked) {
           await writeAuditLog(supabase, {

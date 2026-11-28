@@ -64,7 +64,14 @@ export async function registerServiceWorker(
 
   void requestPersistentStorage();
 
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let controllerChanged = false;
   const handleControllerChange = () => {
+    // Only reload when upgrading from an existing SW controller (never on first-ever clients.claim())
+    if (!hadController || controllerChanged) {
+      return;
+    }
+    controllerChanged = true;
     options.onControllerChange?.();
   };
   navigator.serviceWorker.addEventListener(

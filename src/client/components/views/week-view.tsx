@@ -51,6 +51,7 @@ import {
   type CellDisplayInfo,
 } from '../cell-display';
 import type { CellEditorTarget } from '../cell-editor-dialog';
+import { AppDialog } from '../app-dialog';
 import {
   IconArrowDown,
   IconCheck,
@@ -73,6 +74,30 @@ import {
 
 /** Max gap between clicks/taps on the same cell to count as a repeat (cycle) click. */
 const MULTI_TAP_WINDOW_MS = 450;
+
+function useCellButtonRefs() {
+  const cellButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const callbacksRef = useRef<
+    Map<string, (el: HTMLButtonElement | null) => void>
+  >(new Map());
+
+  const getCellButtonRef = useCallback((coordKey: string) => {
+    let cb = callbacksRef.current.get(coordKey);
+    if (!cb) {
+      cb = (el: HTMLButtonElement | null) => {
+        if (el) {
+          cellButtonRefs.current.set(coordKey, el);
+        } else {
+          cellButtonRefs.current.delete(coordKey);
+        }
+      };
+      callbacksRef.current.set(coordKey, cb);
+    }
+    return cb;
+  }, []);
+
+  return { cellButtonRefs, getCellButtonRef };
+}
 
 interface WeekViewProps {
   oneGlanceMode: boolean;
@@ -477,7 +502,6 @@ export function WeekView({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const fetchedRangesRef = useRef<Set<string>>(new Set());
-  const normalDialogRef = useRef<HTMLDialogElement | null>(null);
   const appliedDefaultWeekModeRef = useRef(false);
   const clipboardRef = useRef<ClipboardMatrix | null>(null);
   const lastWrittenTsvRef = useRef<string | null>(null);
@@ -485,7 +509,7 @@ export function WeekView({
   const redoStackRef = useRef<SessionUndoEntry[]>([]);
   const extraCoordsRef = useRef<GridCoord[]>([]);
   const pendingJumpTodayFocusRef = useRef(false);
-  const cellButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const { cellButtonRefs, getCellButtonRef } = useCellButtonRefs();
   const desktopGridAreaRef = useRef<HTMLDivElement | null>(null);
   const bulkBarRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -568,16 +592,6 @@ export function WeekView({
       });
     }
   }, [fetchLogsRange, isOnline, todayIslamicDate, weekDates]);
-
-  useEffect(() => {
-    const dlg = normalDialogRef.current;
-    if (!dlg) return;
-    if (normalDialogOpen) {
-      if (!dlg.open) dlg.showModal();
-    } else if (dlg.open) {
-      dlg.close();
-    }
-  }, [normalDialogOpen]);
 
   const periodsById = useMemo(
     () => new Map(periods.map((p) => [p.id, p])),
@@ -1041,6 +1055,7 @@ export function WeekView({
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
+      document.body.style.cursor = '';
     };
   }, []);
 
@@ -1322,14 +1337,17 @@ export function WeekView({
     return true;
   }, [logCellBatch, onActionFeedback]);
 
-  const focusGridCell = useCallback((row: number, col: number) => {
-    const coord = { row, col };
-    setFocusedCell(coord);
-    const btn = cellButtonRefs.current.get(`${row}:${col}`);
-    if (btn && !btn.disabled) {
-      btn.focus({ preventScroll: false });
-    }
-  }, []);
+  const focusGridCell = useCallback(
+    (row: number, col: number) => {
+      const coord = { row, col };
+      setFocusedCell(coord);
+      const btn = cellButtonRefs.current.get(`${row}:${col}`);
+      if (btn && !btn.disabled) {
+        btn.focus({ preventScroll: false });
+      }
+    },
+    [cellButtonRefs],
+  );
 
   const restoreFocusToGrid = useCallback(
     (coord?: GridCoord | null) => {
@@ -3099,18 +3117,11 @@ export function WeekView({
           } ${isCopyEnd ? 'is-copy-end' : ''}`}
         >
           <button
-            ref={(el) => {
-              if (el) {
-                cellButtonRefs.current.set(coordKey, el);
-              } else {
-                cellButtonRefs.current.delete(coordKey);
-              }
-            }}
+            ref={getCellButtonRef(coordKey)}
             type="button"
             role="gridcell"
             tabIndex={isTabStop ? 0 : -1}
             disabled={nonInteractive}
-            aria-disabled={nonInteractive || undefined}
             aria-selected={isSelected}
             aria-label={`${action.title} ${dayLabel}${hasNote ? ' — يحتوي على ملاحظة' : ''}`}
             title={hasNote ? `ملاحظة: ${display.note.trim()}` : undefined}
@@ -3359,7 +3370,7 @@ export function WeekView({
           data-period-side={group.side}
           {...groupDropProps}
         >
-          <td colSpan={9}>
+          <td colSpan={9} role="gridcell">
             <div className="group-row-bar">
               <button
                 type="button"
@@ -3478,7 +3489,7 @@ export function WeekView({
                 data-period-side={group.side}
                 {...itemProps}
               >
-                <td className="cell-title" title={action.title}>
+                <td className="cell-title" role="rowheader" title={action.title}>
                   <div className="cell-title-inner">
                     <button
                       type="button"
@@ -3525,7 +3536,7 @@ export function WeekView({
                   });
                 })}
 
-                <td className="cell-rate nums">{computeWeekRate(action)}</td>
+                <td className="cell-rate nums" role="gridcell">{computeWeekRate(action)}</td>
               </tr>
             );
           })}
@@ -3580,7 +3591,6 @@ export function WeekView({
                     <button
                       type="button"
                       disabled={nonInteractive}
-                      aria-disabled={nonInteractive || undefined}
                       className={`m-cell nums ${getCellStateClass(display.state)} ${
                         longPress.pressingKey === cellKey ? 'is-pressing' : ''
                       }`}
@@ -3756,6 +3766,7 @@ export function WeekView({
                         {idx === 0 && (
                           <td
                             className={`cell-period ${isLive ? 'is-live-period' : ''}`}
+                            role="rowheader"
                             rowSpan={groupActions.length}
                             data-period-id={group.id}
                             data-period-side={side}
@@ -3833,7 +3844,7 @@ export function WeekView({
                             </div>
                           </td>
                         )}
-                        <td className="cell-title" title={action.title}>
+                        <td className="cell-title" role="rowheader" title={action.title}>
                           <button
                             type="button"
                             className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
@@ -3861,7 +3872,7 @@ export function WeekView({
                             rowSide: side,
                           });
                         })}
-                        <td className="cell-rate nums">
+                        <td className="cell-rate nums" role="gridcell">
                           {computeWeekRate(action)}
                         </td>
                       </tr>
@@ -4105,7 +4116,7 @@ export function WeekView({
                 </thead>
 
                 <tbody>
-                  <tr className="side-label-row" role="row">
+                  <tr className="side-label-row" role="presentation">
                     <td colSpan={9}>{AR_STRINGS.week.rightSideTitle}</td>
                   </tr>
                   {activeGroups.right.map(renderStandardGroupRows)}
@@ -4114,7 +4125,7 @@ export function WeekView({
                     <td colSpan={9} />
                   </tr>
 
-                  <tr className="side-label-row" role="row">
+                  <tr className="side-label-row" role="presentation">
                     <td colSpan={9}>{AR_STRINGS.week.leftSideTitle}</td>
                   </tr>
                   {activeGroups.left.map(renderStandardGroupRows)}
@@ -4785,28 +4796,22 @@ export function WeekView({
       </div>
 
       {/* Normal Day Confirmation Dialog */}
-      <dialog
-        ref={normalDialogRef}
+      <AppDialog
+        open={normalDialogOpen}
+        onRequestClose={() => setNormalDialogOpen(false)}
+        canDismiss={!bulkBusy}
         className="app-dialog"
         aria-labelledby="normal-day-dialog-title"
-        onCancel={(e) => {
-          e.preventDefault();
-          setNormalDialogOpen(false);
-        }}
-        onClick={(e) => {
-          if (e.target === normalDialogRef.current) {
-            setNormalDialogOpen(false);
-          }
-        }}
       >
         <div className="dialog-head">
-          <h3 className="dialog-title" id="normal-day-dialog-title">
+          <h2 className="dialog-title" id="normal-day-dialog-title">
             {AR_STRINGS.week.normalDayButton}
-          </h3>
+          </h2>
           <button
             type="button"
             className="btn btn-icon"
             aria-label="إغلاق"
+            disabled={bulkBusy}
             onClick={() => setNormalDialogOpen(false)}
           >
             <IconCross size="sm" />
@@ -4849,7 +4854,7 @@ export function WeekView({
             تطبيق التعبئة
           </button>
         </div>
-      </dialog>
+      </AppDialog>
     </>
   );
 }

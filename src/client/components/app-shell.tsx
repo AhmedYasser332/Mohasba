@@ -20,6 +20,7 @@ import {
   useMohasba,
   type InitOnboardingPayload,
 } from '../store/mohasba-provider';
+import { AppDialog } from './app-dialog';
 import {
   CellEditorDialog,
   type CellEditorTarget,
@@ -276,7 +277,7 @@ export function MohasbaAppShell() {
   const [signedOutNotice, setSignedOutNotice] = useState(false);
 
   const syncWrapRef = useRef<HTMLDivElement | null>(null);
-  const shortcutsDialogRef = useRef<HTMLDialogElement | null>(null);
+  const syncBadgeBtnRef = useRef<HTMLButtonElement | null>(null);
   const hiddenAtRef = useRef<number | null>(null);
 
   const showOnboarding =
@@ -391,16 +392,6 @@ export function MohasbaAppShell() {
     showWorkspaceViews,
     userNavigated,
   ]);
-
-  useEffect(() => {
-    const dlg = shortcutsDialogRef.current;
-    if (!dlg) return;
-    if (shortcutsHelpOpen) {
-      if (!dlg.open) dlg.showModal();
-    } else if (dlg.open) {
-      dlg.close();
-    }
-  }, [shortcutsHelpOpen]);
 
   const handleNavigate = useCallback(
     (view: AppView, tab: string | null = null) => {
@@ -573,10 +564,10 @@ export function MohasbaAppShell() {
     };
   }, [effectiveUrlState, showWorkspaceViews, updateUrlState]);
 
-  // Close sync popover on outside click or Escape
+  // Close sync popover on outside pointerdown or Escape (restoring focus to trigger)
   useEffect(() => {
     if (!syncPopoverOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
       if (
         syncWrapRef.current &&
         !syncWrapRef.current.contains(e.target as Node)
@@ -586,13 +577,15 @@ export function MohasbaAppShell() {
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         setSyncPopoverOpen(false);
+        syncBadgeBtnRef.current?.focus();
       }
     };
-    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [syncPopoverOpen]);
@@ -794,7 +787,7 @@ export function MohasbaAppShell() {
         <aside className="desktop-rail" aria-label="التنقل الرئيسي">
           <div className="brand-block">
             <div>
-              <h1 className="brand-title">{AR_STRINGS.app.name}</h1>
+              <span className="brand-title">{AR_STRINGS.app.name}</span>
               <p className="brand-note">محاسبة يومية وأسبوعية</p>
             </div>
             <Tooltip content="طي القائمة" shortcut={sidebarToggleShortcutText}>
@@ -877,20 +870,22 @@ export function MohasbaAppShell() {
                   </button>
                 </Tooltip>
               )}
-              <h2 className="page-heading">
+              <h1 className="page-heading">
                 {showWorkspaceViews
                   ? activeNavMeta.desktopLabel
                   : AR_STRINGS.app.name}
-              </h2>
+              </h1>
             </div>
 
             <div className="top-bar-end" ref={syncWrapRef}>
               <button
+                ref={syncBadgeBtnRef}
                 type="button"
                 className="sync-btn"
                 data-testid="sync-badge-btn"
                 data-sync={syncBadge.state}
                 aria-expanded={syncPopoverOpen}
+                aria-controls="sync-popover-panel"
                 onClick={() => setSyncPopoverOpen((prev) => !prev)}
               >
                 <span className="sync-dot" />
@@ -911,9 +906,8 @@ export function MohasbaAppShell() {
 
               {syncPopoverOpen && (
                 <div
+                  id="sync-popover-panel"
                   className="sync-popover"
-                  role="dialog"
-                  aria-label="حالة المزامنة"
                 >
                   <div className="sync-popover-head">
                     <strong className="text-sm">حالة المزامنة المحلية</strong>
@@ -921,7 +915,10 @@ export function MohasbaAppShell() {
                       type="button"
                       className="btn btn-icon"
                       aria-label="إغلاق"
-                      onClick={() => setSyncPopoverOpen(false)}
+                      onClick={() => {
+                        setSyncPopoverOpen(false);
+                        syncBadgeBtnRef.current?.focus();
+                      }}
                     >
                       <IconCross size="sm" />
                     </button>
@@ -1075,7 +1072,7 @@ export function MohasbaAppShell() {
           {authStatus === 'setup_incomplete' && (
             <section className="panel auth-gate-wrap">
               <div className="panel-header">
-                <h3 className="panel-title">إعداد الخادم غير مكتمل</h3>
+                <h2 className="panel-title">إعداد الخادم غير مكتمل</h2>
               </div>
               <div className="p-4 flex flex-col gap-3 text-sm">
                 <p className="m-0">{AR_STRINGS.errors.setupIncomplete}</p>
@@ -1096,10 +1093,10 @@ export function MohasbaAppShell() {
           {authStatus === 'locked' && (
             <section className="panel auth-gate-wrap">
               <div className="panel-header">
-                <h3 className="panel-title flex items-center gap-2">
+                <h2 className="panel-title flex items-center gap-2">
                   <IconLock size="sm" />
                   <span>{AR_STRINGS.authAndOnboarding.unlockTitle}</span>
-                </h3>
+                </h2>
               </div>
               <form
                 onSubmit={(e) => {
@@ -1342,25 +1339,17 @@ export function MohasbaAppShell() {
       />
 
       {/* Keyboard Shortcuts Quick Reference <dialog> */}
-      <dialog
-        ref={shortcutsDialogRef}
+      <AppDialog
+        open={shortcutsHelpOpen}
+        onRequestClose={() => setShortcutsHelpOpen(false)}
         className="app-dialog dialog-wide"
         aria-labelledby="shortcuts-help-title"
-        onCancel={(e) => {
-          e.preventDefault();
-          setShortcutsHelpOpen(false);
-        }}
-        onClick={(e) => {
-          if (e.target === shortcutsDialogRef.current) {
-            setShortcutsHelpOpen(false);
-          }
-        }}
       >
         <div className="dialog-head">
-          <h3 className="dialog-title flex items-center gap-2" id="shortcuts-help-title">
+          <h2 className="dialog-title flex items-center gap-2" id="shortcuts-help-title">
             <IconKeyboard size="sm" />
             <span>خريطة اختصارات لوحة المفاتيح</span>
-          </h3>
+          </h2>
           <button
             type="button"
             className="btn btn-icon"
@@ -1409,7 +1398,7 @@ export function MohasbaAppShell() {
             إغلاق
           </button>
         </div>
-      </dialog>
+      </AppDialog>
     </div>
   );
 }

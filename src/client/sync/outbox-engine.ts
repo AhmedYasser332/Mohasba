@@ -19,11 +19,13 @@ import {
   runReadOnlyTx,
   runReadWriteTx,
   type LocalDailyLog,
+  type MetaRecord,
   type OutboxItem,
   type OutboxState,
 } from '../db/idb';
 
 export const MAX_SYNC_BATCH_SIZE = 50;
+export const MAX_FLUSH_PASSES = 20;
 export const DEFAULT_UNDO_HOLD_MS = 5_000;
 export const SYNC_BROADCAST_CHANNEL = 'mohasba-sync';
 export const SYNC_LOCK_NAME = 'mohasba-outbox-drain';
@@ -255,6 +257,23 @@ function generateUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+async function getOrCreateDeviceIdInTx(metaStore: {
+  get(key: 'device_id'): Promise<MetaRecord | undefined>;
+  put(value: MetaRecord): Promise<unknown>;
+}): Promise<string> {
+  const existing = await metaStore.get('device_id');
+  if (
+    existing &&
+    typeof existing.value === 'string' &&
+    existing.value.length > 0
+  ) {
+    return existing.value;
+  }
+  const deviceId = generateUuid();
+  await metaStore.put({ key: 'device_id', value: deviceId });
+  return deviceId;
+}
+
 export class OutboxEngine {
   readonly dbName: string;
   private readonly fetchFn: typeof fetch;
@@ -355,16 +374,7 @@ export class OutboxEngine {
   async ensureDeviceId(): Promise<string> {
     return runReadWriteTx(
       ['meta'],
-      async (tx) => {
-        const metaStore = tx.objectStore('meta');
-        const existing = await metaStore.get('device_id');
-        if (existing && typeof existing.value === 'string' && existing.value.length > 0) {
-          return existing.value;
-        }
-        const id = generateUuid();
-        await metaStore.put({ key: 'device_id', value: id });
-        return id;
-      },
+      async (tx) => getOrCreateDeviceIdInTx(tx.objectStore('meta')),
       this.dbName,
     );
   }
@@ -402,15 +412,7 @@ export class OutboxEngine {
         const logsStore = tx.objectStore('logs');
         const outboxStore = tx.objectStore('outbox');
 
-        const devRec = await metaStore.get('device_id');
-        let deviceId =
-          devRec && typeof devRec.value === 'string' && devRec.value.length > 0
-            ? devRec.value
-            : '';
-        if (!deviceId) {
-          deviceId = generateUuid();
-          await metaStore.put({ key: 'device_id', value: deviceId });
-        }
+        const deviceId = await getOrCreateDeviceIdInTx(metaStore);
 
         const writtenItems: OutboxItem[] = [];
         const writtenLogs: LocalDailyLog[] = [];
@@ -683,15 +685,7 @@ export class OutboxEngine {
         const metaStore = tx.objectStore('meta');
         const outboxStore = tx.objectStore('outbox');
 
-        const devRec = await metaStore.get('device_id');
-        let deviceId =
-          devRec && typeof devRec.value === 'string' && devRec.value.length > 0
-            ? devRec.value
-            : '';
-        if (!deviceId) {
-          deviceId = generateUuid();
-          await metaStore.put({ key: 'device_id', value: deviceId });
-        }
+        const deviceId = await getOrCreateDeviceIdInTx(metaStore);
 
         const pending = await outboxStore.index('by_state').getAll('pending');
         pending.sort((a, b) => {
@@ -790,7 +784,11 @@ export class OutboxEngine {
   private async applySyncAckResults(
     serverNow: string,
     results: readonly SyncResultItem[],
-  ): Promise<{ appliedCount: number; attentionCount: number }> {
+  ): Promise<{
+    appliedCount: number;
+    attentionCount: number;
+    raceConflictCount: number;
+  }> {
     const nowMs = this.nowFn();
     const counts = await runReadWriteTx(
       ['outbox', 'logs', 'meta'],
@@ -799,12 +797,9 @@ export class OutboxEngine {
         const logsStore = tx.objectStore('logs');
         const metaStore = tx.objectStore('meta');
 
-        await metaStore.put({ key: 'consecutive_failures', value: 0 });
-        await metaStore.put({ key: 'last_auth_error', value: null });
-        await metaStore.put({ key: 'last_synced_at', value: serverNow });
-
         let appliedCount = 0;
         let attentionCount = 0;
+        let raceConflictCount = 0;
 
         for (const res of results) {
           const item = await outboxStore.get(res.mutation_id);
@@ -840,6 +835,13 @@ export class OutboxEngine {
                   await outboxStore.put({
                     ...pendingItem,
                     base_row_version: res.resolved_row.row_version,
+                    undo_prior_snapshot: pendingItem.undo_prior_snapshot
+                      ? {
+                          ...pendingItem.undo_prior_snapshot,
+                          row_version: res.resolved_row.row_version,
+                          server_row_version: res.resolved_row.row_version,
+                        }
+                      : null,
                   });
                 }
               }
@@ -854,6 +856,7 @@ export class OutboxEngine {
               updated_at: nowMs,
             });
           } else if (res.outcome === 'race_conflict') {
+            raceConflictCount += 1;
             await outboxStore.put({
               ...item,
               state: 'pending',
@@ -863,7 +866,17 @@ export class OutboxEngine {
           }
         }
 
-        return { appliedCount, attentionCount };
+        if (raceConflictCount > 0) {
+          const prev = await metaStore.get('consecutive_failures');
+          const count = typeof prev?.value === 'number' ? prev.value + 1 : 1;
+          await metaStore.put({ key: 'consecutive_failures', value: count });
+        } else {
+          await metaStore.put({ key: 'consecutive_failures', value: 0 });
+        }
+        await metaStore.put({ key: 'last_auth_error', value: null });
+        await metaStore.put({ key: 'last_synced_at', value: serverNow });
+
+        return { appliedCount, attentionCount, raceConflictCount };
       },
       this.dbName,
     );
@@ -896,8 +909,28 @@ export class OutboxEngine {
       let flushedCount = 0;
       let appliedCount = 0;
       let attentionCount = 0;
+      let passes = 0;
 
-      while (true) {
+      const abortWithNetworkError = async (
+        mutationIds: readonly string[],
+      ): Promise<FlushResult> => {
+        await this.revertInFlightToPending(mutationIds, {
+          incrementFailure: true,
+        });
+        const remaining = await this.getActiveOutboxCount();
+        return {
+          ok: false,
+          reason: 'network_error',
+          flushedCount,
+          appliedCount,
+          attentionCount,
+          remainingActiveCount: remaining,
+        };
+      };
+
+      while (passes < MAX_FLUSH_PASSES) {
+        passes += 1;
+
         if (!this.isOnlineFn()) {
           const remaining = await this.getActiveOutboxCount();
           return {
@@ -932,21 +965,11 @@ export class OutboxEngine {
                 : undefined,
           });
         } catch {
-          await this.revertInFlightToPending(mutationIds, {
-            incrementFailure: true,
-          });
-          const remaining = await this.getActiveOutboxCount();
-          return {
-            ok: false,
-            reason: 'network_error' as const,
-            flushedCount,
-            appliedCount,
-            attentionCount,
-            remainingActiveCount: remaining,
-          };
+          return abortWithNetworkError(mutationIds);
         }
 
         if (response.status === 401) {
+          await response.body?.cancel().catch(() => {});
           await this.revertInFlightToPending(mutationIds, {
             authError: 'UNLOCK_REQUIRED',
           });
@@ -974,9 +997,41 @@ export class OutboxEngine {
         }
 
         if (!response.ok) {
-          await this.revertInFlightToPending(mutationIds, {
-            incrementFailure: true,
-          });
+          await response.body?.cancel().catch(() => {});
+          return abortWithNetworkError(mutationIds);
+        }
+
+        let data: { server_now: string; results: SyncResultItem[] };
+        try {
+          const parsed = (await response.json()) as Partial<{
+            server_now: unknown;
+            results: unknown;
+          }>;
+          if (
+            !parsed ||
+            typeof parsed !== 'object' ||
+            typeof parsed.server_now !== 'string' ||
+            !Array.isArray(parsed.results)
+          ) {
+            throw new Error('Invalid sync response payload');
+          }
+          data = {
+            server_now: parsed.server_now,
+            results: parsed.results as SyncResultItem[],
+          };
+        } catch {
+          return abortWithNetworkError(mutationIds);
+        }
+
+        const ackSummary = await this.applySyncAckResults(
+          data.server_now,
+          data.results,
+        );
+        flushedCount += batch.length;
+        appliedCount += ackSummary.appliedCount;
+        attentionCount += ackSummary.attentionCount;
+
+        if (ackSummary.raceConflictCount > 0) {
           const remaining = await this.getActiveOutboxCount();
           return {
             ok: false,
@@ -987,18 +1042,6 @@ export class OutboxEngine {
             remainingActiveCount: remaining,
           };
         }
-
-        const data = (await response.json()) as {
-          server_now: string;
-          results: SyncResultItem[];
-        };
-        const ackSummary = await this.applySyncAckResults(
-          data.server_now,
-          data.results,
-        );
-        flushedCount += batch.length;
-        appliedCount += ackSummary.appliedCount;
-        attentionCount += ackSummary.attentionCount;
       }
 
       const remaining = await this.getActiveOutboxCount();
@@ -1176,6 +1219,7 @@ export class OutboxEngine {
     });
 
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
       throw new Error(`Failed loading logs range (${response.status})`);
     }
 

@@ -33,6 +33,7 @@ import {
 import { fetchAllDailyLogsKeyset, normalizeDailyLogRow } from '../db/pagination';
 import { ServiceError } from '../errors';
 import { writeAuditLog } from '../observability/logger';
+import { assertValidIanaTimezone } from '../validation';
 
 export async function buildFullExport(params: {
   supabase: SupabaseClient;
@@ -168,6 +169,9 @@ export async function processImportChunk(params: {
 
   // 1. Settings
   if (input.settings && Object.keys(input.settings).length > 0) {
+    if (input.settings.iana_timezone) {
+      assertValidIanaTimezone(input.settings.iana_timezone);
+    }
     const { error } = await supabase
       .from('app_settings')
       .update({
@@ -286,6 +290,18 @@ export async function processImportChunk(params: {
     );
     const logDates = Array.from(new Set(input.daily_logs.map((l) => l.log_date)));
 
+    for (const d of logDates) {
+      try {
+        parseIsoDateParts(d);
+      } catch {
+        throw new ServiceError(
+          400,
+          'VALIDATION_ERROR',
+          `Invalid calendar date in daily_logs: ${d}`,
+        );
+      }
+    }
+
     const [actionsRes, targetsRes, existingLogsRes] = await Promise.all([
       supabase.from('actions').select('*').in('id', logActionIds),
       supabase
@@ -366,19 +382,9 @@ export async function processImportChunk(params: {
       existingByCell.set(makeCellKey(log.action_id, log.log_date), log);
     }
 
-    const rowsToUpsert: Array<Record<string, unknown>> = [];
+    const rowsToUpsertByCell = new Map<string, Record<string, unknown>>();
 
     for (const rawLog of input.daily_logs) {
-      try {
-        parseIsoDateParts(rawLog.log_date);
-      } catch {
-        throw new ServiceError(
-          400,
-          'VALIDATION_ERROR',
-          `Invalid calendar date in daily_logs: ${rawLog.log_date}`,
-        );
-      }
-
       const action = actionsById.get(rawLog.action_id);
       if (!action) {
         throw new ServiceError(
@@ -431,13 +437,13 @@ export async function processImportChunk(params: {
       }
 
       if (merged.resolution === 'import_existing_won') {
-        skipped += 1;
         // Note: independent note LWW may still have updated note even when status stayed existing
         const noteChanged =
           existingRow &&
           (merged.row.note !== existingRow.note ||
             merged.row.note_updated_at !== existingRow.note_updated_at);
         if (!noteChanged) {
+          skipped += 1;
           continue;
         }
         updated += 1;
@@ -448,7 +454,7 @@ export async function processImportChunk(params: {
       }
 
       const nextRowVersion = existingRow ? existingRow.row_version + 1 : 1;
-      rowsToUpsert.push({
+      rowsToUpsertByCell.set(key, {
         ...merged.row,
         row_version: nextRowVersion,
         last_mutation_id: null,
@@ -464,6 +470,7 @@ export async function processImportChunk(params: {
       });
     }
 
+    const rowsToUpsert = Array.from(rowsToUpsertByCell.values());
     if (rowsToUpsert.length > 0) {
       const { error: upsertErr } = await supabase
         .from('daily_logs')

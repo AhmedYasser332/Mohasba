@@ -11,7 +11,8 @@ loadTestEnv();
 const PORT = 3105;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const SCREENSHOT_DIR =
-  'C:/Users/ahmed/.gemini/antigravity/brain/f71a0285-daff-460c-9b19-50e9a1762d6f/scratch/screenshots/onboarding-delete';
+  process.env.PLAYWRIGHT_SCREENSHOT_DIR ||
+  path.resolve(process.cwd(), 'test-results', 'screenshots', 'onboarding-delete');
 
 let serverProcess: ChildProcess | null = null;
 
@@ -306,6 +307,29 @@ test.describe('2-Step 3-Level Onboarding Wizard & Smart 2-Tier Permanent Delete'
     await page.screenshot({
       path: `${SCREENSHOT_DIR}/desktop-settings-periods-dark.png`,
       fullPage: false,
+    });
+
+    // 2f. Open Backup & Templates Lifecycle accordion -> TemplateMergeDialog (Level 2) -> WorkspaceResetDialog
+    await page.getByTestId('accordion-toggle-backup').click();
+    await page.getByTestId('open-template-merge-btn').click();
+    const mergeDialog = page.locator('dialog[data-testid="template-merge-dialog"][open]');
+    await expect(mergeDialog).toBeVisible({ timeout: 10_000 });
+    await mergeDialog.getByTestId('merge-level-level_2').click();
+    await expect(mergeDialog.getByTestId('merge-confirm-btn')).toBeEnabled();
+    await mergeDialog.getByTestId('merge-confirm-btn').click();
+    await expect(mergeDialog).toHaveCount(0, { timeout: 20_000 });
+
+    // Verify Safe Workspace Reset with typed 'تصفير' guard returns cleanly to onboarding-wizard
+    await page.getByTestId('open-workspace-reset-btn').click();
+    const resetDialog = page.locator('dialog[data-testid="workspace-reset-dialog"][open]');
+    await expect(resetDialog).toBeVisible({ timeout: 10_000 });
+    await expect(resetDialog.getByTestId('reset-confirm-submit-btn')).toBeDisabled();
+    await resetDialog.getByTestId('reset-confirm-input').fill('تصفير');
+    await expect(resetDialog.getByTestId('reset-confirm-submit-btn')).toBeEnabled();
+    await resetDialog.getByTestId('reset-confirm-submit-btn').click();
+    await expect(resetDialog).toHaveCount(0, { timeout: 20_000 });
+    await expect(page.getByTestId('onboarding-wizard')).toBeVisible({
+      timeout: 20_000,
     });
 
     expect(consoleErrors).toEqual([]);

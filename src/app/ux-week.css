@@ -626,23 +626,6 @@
   box-shadow: inset 0 0 0 1px var(--accent-live);
 }
 
-/* Floating Drag Ghost Pill (Transient Overlay Elevation) */
-.dnd-drag-ghost {
-  background: var(--bg-surface);
-  color: var(--ink-primary);
-  border: 1px solid var(--accent-live);
-  border-radius: var(--r-control);
-  box-shadow: var(--shadow-overlay);
-  padding-block: 5px;
-  padding-inline: 12px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  white-space: nowrap;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* Floating Contextual Bulk Selection Bar (>= 2 Cells Selected on Desktop) */
 .week-bulk-bar-wrap {
   position: fixed;

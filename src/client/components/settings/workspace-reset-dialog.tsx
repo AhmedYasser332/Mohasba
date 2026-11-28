@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import {
   ARABIC_NOUN_FORMS,
   formatArabicCount,
 } from '../../utils/arabic-plural';
+import { AppDialog } from '../app-dialog';
 import {
   IconCheck,
   IconDownload,
@@ -42,9 +43,7 @@ export function WorkspaceResetDialog({
   onDownloadBackup,
   onConfirmReset,
 }: WorkspaceResetDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const safeActionRef = useRef<HTMLButtonElement | null>(null);
-  const pointerDownOutsideRef = useRef(false);
   const titleId = useId();
   const descId = useId();
 
@@ -57,56 +56,18 @@ export function WorkspaceResetDialog({
     onClose();
   };
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open) {
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-      safeActionRef.current?.focus();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [open]);
-
-  const isOutsideDialog = (e: React.PointerEvent<HTMLDialogElement>): boolean => {
-    const dialog = dialogRef.current;
-    if (!dialog) return false;
-    const r = dialog.getBoundingClientRect();
-    return (
-      e.clientX < r.left ||
-      e.clientX > r.right ||
-      e.clientY < r.top ||
-      e.clientY > r.bottom
-    );
-  };
-
   const confirmMatches = CONFIRM_TOKENS.has(confirmText.trim().toLowerCase());
 
   return (
-    <dialog
-      ref={dialogRef}
+    <AppDialog
+      open={open}
+      onRequestClose={handleClose}
+      canDismiss={!busy}
+      initialFocusRef={safeActionRef}
       className="app-dialog"
       data-testid="workspace-reset-dialog"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!busy) handleClose();
-      }}
-      onPointerDown={(e) => {
-        pointerDownOutsideRef.current = isOutsideDialog(e);
-      }}
-      onPointerUp={(e) => {
-        if (pointerDownOutsideRef.current && isOutsideDialog(e) && !busy) {
-          handleClose();
-        }
-        pointerDownOutsideRef.current = false;
-      }}
-      onClose={() => {
-        if (open && !busy) handleClose();
-      }}
     >
       {open && (
         <div>
@@ -236,6 +197,6 @@ export function WorkspaceResetDialog({
           </div>
         </div>
       )}
-    </dialog>
+    </AppDialog>
   );
 }

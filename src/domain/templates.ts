@@ -815,46 +815,41 @@ function defaultDeterministicCollisionUuid(
   return `${kind}9000000-0000-4000-8000-${suffix}`;
 }
 
-/**
- * Pure non-destructive merge planner for upgrading / adding a template level onto an existing workspace.
- * - Matches existing active periods by ID, normalized Arabic title + side, unique prayer window, or majority action overlap.
- * - Skips actions that already exist (by ID or normalized Arabic title) so zero existing logs or targets are ever touched.
- * - Remaps any colliding archived IDs cleanly so PK constraints are never violated.
- */
-export function planTemplateMerge(params: {
-  level: TemplateLevelId;
-  activeFromIso: string;
-  existingPeriods: readonly Period[];
-  existingActions: readonly Action[];
-  existingTargetVersionIds?: readonly string[];
-  excludedPeriodIds?: readonly string[];
-  excludedActionIds?: readonly string[];
-  generateId?: () => string;
-}): TemplateMergePlan {
-  const base = buildTemplateBundle(params.level, params.activeFromIso);
-  const excludedPeriods = new Set(params.excludedPeriodIds ?? []);
-  const excludedActions = new Set(params.excludedActionIds ?? []);
+type UniqueIdAllocator = (kind: '4' | '5' | '6', occupied: Set<string>) => string;
 
-  const activePeriods = params.existingPeriods.filter((p) => p.archived_at === null);
-  const activeActions = params.existingActions.filter((a) => a.archived_at === null);
+interface KeptNewTemplateAction {
+  templateAction: Action;
+  targetPeriodId: string;
+  newActionId: string;
+}
 
-  const occupiedPeriodIds = new Set(params.existingPeriods.map((p) => p.id));
-  const occupiedActionIds = new Set(params.existingActions.map((a) => a.id));
-  const occupiedTargetIds = new Set(params.existingTargetVersionIds ?? []);
+interface MatchedTemplatePeriodsResult {
+  periodStatuses: TemplateMergePeriodStatus[];
+  resolvedPeriodIdMap: Map<string, string>;
+  periodStatusByTemplateId: Map<string, TemplateMergePeriodStatus>;
+  activeActionById: Map<string, Action>;
+  activeActionByTitle: Map<string, Action>;
+  maxTimeSortOrder: number;
+  maxDailySortOrder: number;
+  maxActionSortByPeriod: Map<string, number>;
+}
 
-  let collisionSeq = 1;
-  const nextUniqueId = (kind: '4' | '5' | '6', occupied: Set<string>): string => {
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      const candidate = params.generateId
-        ? params.generateId()
-        : defaultDeterministicCollisionUuid(kind, collisionSeq++);
-      if (!occupied.has(candidate)) {
-        occupied.add(candidate);
-        return candidate;
-      }
-    }
-    throw new Error('Failed allocating non-colliding UUID for template merge.');
-  };
+function matchTemplatePeriods(params: {
+  templatePeriods: readonly Period[];
+  templateActions: readonly Action[];
+  activePeriods: readonly Period[];
+  activeActions: readonly Action[];
+  occupiedPeriodIds: Set<string>;
+  nextUniqueId: UniqueIdAllocator;
+}): MatchedTemplatePeriodsResult {
+  const {
+    templatePeriods,
+    templateActions,
+    activePeriods,
+    activeActions,
+    occupiedPeriodIds,
+    nextUniqueId,
+  } = params;
 
   const activePeriodById = new Map<string, Period>();
   const activePeriodByTitleSide = new Map<string, Period>();
@@ -901,19 +896,18 @@ export function planTemplateMerge(params: {
   }
 
   const templateActionsByPeriodId = new Map<string, Action[]>();
-  for (const a of base.actions) {
+  for (const a of templateActions) {
     const list = templateActionsByPeriodId.get(a.period_id) ?? [];
     list.push(a);
     templateActionsByPeriodId.set(a.period_id, list);
   }
 
-  // Step 1: Match each template period to an existing active period or allocate a net-new ID
   const periodStatuses: TemplateMergePeriodStatus[] = [];
   const resolvedPeriodIdMap = new Map<string, string>();
   const periodStatusByTemplateId = new Map<string, TemplateMergePeriodStatus>();
   const usedMatchedPeriodIds = new Set<string>();
 
-  for (const tp of base.periods) {
+  for (const tp of templatePeriods) {
     let matched: Period | null = null;
 
     // 1. Exact ID match
@@ -1006,18 +1000,50 @@ export function planTemplateMerge(params: {
     resolvedPeriodIdMap.set(tp.id, targetPeriodId);
   }
 
-  // Step 2: Classify every template action (existing vs net-new)
+  return {
+    periodStatuses,
+    resolvedPeriodIdMap,
+    periodStatusByTemplateId,
+    activeActionById,
+    activeActionByTitle,
+    maxTimeSortOrder,
+    maxDailySortOrder,
+    maxActionSortByPeriod,
+  };
+}
+
+function classifyTemplateActions(params: {
+  templateActions: readonly Action[];
+  periodStatusByTemplateId: ReadonlyMap<string, TemplateMergePeriodStatus>;
+  activeActionById: ReadonlyMap<string, Action>;
+  activeActionByTitle: ReadonlyMap<string, Action>;
+  excludedPeriods: ReadonlySet<string>;
+  excludedActions: ReadonlySet<string>;
+  occupiedActionIds: Set<string>;
+  nextUniqueId: UniqueIdAllocator;
+}): {
+  actionStatuses: TemplateMergeActionStatus[];
+  neededNewPeriodTemplateIds: Set<string>;
+  keptNewTemplateActions: KeptNewTemplateAction[];
+  skippedExistingActionsCount: number;
+} {
+  const {
+    templateActions,
+    periodStatusByTemplateId,
+    activeActionById,
+    activeActionByTitle,
+    excludedPeriods,
+    excludedActions,
+    occupiedActionIds,
+    nextUniqueId,
+  } = params;
+
   const actionStatuses: TemplateMergeActionStatus[] = [];
   const neededNewPeriodTemplateIds = new Set<string>();
-  const keptNewTemplateActions: Array<{
-    templateAction: Action;
-    targetPeriodId: string;
-    newActionId: string;
-  }> = [];
-
+  const keptNewTemplateActions: KeptNewTemplateAction[] = [];
   let skippedExistingActionsCount = 0;
 
-  for (const ta of base.actions) {
+  for (const ta of templateActions) {
     const pStatus = periodStatusByTemplateId.get(ta.period_id);
     if (!pStatus) continue;
 
@@ -1056,9 +1082,47 @@ export function planTemplateMerge(params: {
     });
   }
 
-  // Step 3: Emit ONLY net-new periods that receive at least one net-new action
+  return {
+    actionStatuses,
+    neededNewPeriodTemplateIds,
+    keptNewTemplateActions,
+    skippedExistingActionsCount,
+  };
+}
+
+function materializeMergeBundle(params: {
+  periodStatuses: readonly TemplateMergePeriodStatus[];
+  neededNewPeriodTemplateIds: ReadonlySet<string>;
+  keptNewTemplateActions: readonly KeptNewTemplateAction[];
+  templateTargetVersions: readonly TargetVersion[];
+  activePeriodIds: ReadonlySet<string>;
+  resolvedPeriodIdMap: ReadonlyMap<string, string>;
+  occupiedTargetIds: Set<string>;
+  maxTimeSortOrder: number;
+  maxDailySortOrder: number;
+  maxActionSortByPeriod: Map<string, number>;
+  nextUniqueId: UniqueIdAllocator;
+}): {
+  newPeriods: Period[];
+  newActions: Action[];
+  newTargetVersions: TargetVersion[];
+} {
+  const {
+    periodStatuses,
+    neededNewPeriodTemplateIds,
+    keptNewTemplateActions,
+    templateTargetVersions,
+    activePeriodIds,
+    resolvedPeriodIdMap,
+    occupiedTargetIds,
+    maxActionSortByPeriod,
+    nextUniqueId,
+  } = params;
+  let { maxTimeSortOrder, maxDailySortOrder } = params;
+
+  // Emit ONLY net-new periods that receive at least one net-new action
   const newPeriods: Period[] = [];
-  const validTargetPeriodIds = new Set<string>(activePeriods.map((p) => p.id));
+  const validTargetPeriodIds = new Set<string>(activePeriodIds);
 
   for (const ps of periodStatuses) {
     if (ps.matchedExistingPeriod) continue;
@@ -1073,7 +1137,7 @@ export function planTemplateMerge(params: {
     });
   }
 
-  // Step 4: Emit net-new actions with remapped period_id, bound_time_period_id, and appended sort_order
+  // Emit net-new actions with remapped period_id, bound_time_period_id, and appended sort_order
   const newActions: Action[] = [];
   const templateToNewActionId = new Map<string, string>();
 
@@ -1096,9 +1160,9 @@ export function planTemplateMerge(params: {
     });
   }
 
-  // Step 5: Emit target_versions belonging strictly to net-new actions
+  // Emit target_versions belonging strictly to net-new actions
   const newTargetVersions: TargetVersion[] = [];
-  for (const tv of base.targetVersions) {
+  for (const tv of templateTargetVersions) {
     const mappedActionId = templateToNewActionId.get(tv.action_id);
     if (!mappedActionId) continue;
     const tvId = occupiedTargetIds.has(tv.id)
@@ -1111,18 +1175,99 @@ export function planTemplateMerge(params: {
     });
   }
 
-  const matchedExistingPeriodsCount = periodStatuses.filter(
+  return { newPeriods, newActions, newTargetVersions };
+}
+
+/**
+ * Pure non-destructive merge planner for upgrading / adding a template level onto an existing workspace.
+ * - Matches existing active periods by ID, normalized Arabic title + side, unique prayer window, or majority action overlap.
+ * - Skips actions that already exist (by ID or normalized Arabic title) so zero existing logs or targets are ever touched.
+ * - Remaps any colliding archived IDs cleanly so PK constraints are never violated.
+ */
+export function planTemplateMerge(params: {
+  level: TemplateLevelId;
+  activeFromIso: string;
+  existingPeriods: readonly Period[];
+  existingActions: readonly Action[];
+  existingTargetVersionIds?: readonly string[];
+  excludedPeriodIds?: readonly string[];
+  excludedActionIds?: readonly string[];
+  generateId?: () => string;
+}): TemplateMergePlan {
+  const base = buildTemplateBundle(params.level, params.activeFromIso);
+  const excludedPeriods = new Set(params.excludedPeriodIds ?? []);
+  const excludedActions = new Set(params.excludedActionIds ?? []);
+
+  const activePeriods = params.existingPeriods.filter((p) => p.archived_at === null);
+  const activePeriodIds = new Set(activePeriods.map((p) => p.id));
+  const activeActions = params.existingActions.filter(
+    (a) => a.archived_at === null && activePeriodIds.has(a.period_id),
+  );
+
+  const occupiedPeriodIds = new Set(params.existingPeriods.map((p) => p.id));
+  const occupiedActionIds = new Set(params.existingActions.map((a) => a.id));
+  const occupiedTargetIds = new Set(params.existingTargetVersionIds ?? []);
+
+  let collisionSeq = 1;
+  const nextUniqueId: UniqueIdAllocator = (kind, occupied) => {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const candidate = params.generateId
+        ? params.generateId()
+        : defaultDeterministicCollisionUuid(kind, collisionSeq++);
+      if (!occupied.has(candidate)) {
+        occupied.add(candidate);
+        return candidate;
+      }
+    }
+    throw new Error('Failed allocating non-colliding UUID for template merge.');
+  };
+
+  const matched = matchTemplatePeriods({
+    templatePeriods: base.periods,
+    templateActions: base.actions,
+    activePeriods,
+    activeActions,
+    occupiedPeriodIds,
+    nextUniqueId,
+  });
+
+  const classified = classifyTemplateActions({
+    templateActions: base.actions,
+    periodStatusByTemplateId: matched.periodStatusByTemplateId,
+    activeActionById: matched.activeActionById,
+    activeActionByTitle: matched.activeActionByTitle,
+    excludedPeriods,
+    excludedActions,
+    occupiedActionIds,
+    nextUniqueId,
+  });
+
+  const materialized = materializeMergeBundle({
+    periodStatuses: matched.periodStatuses,
+    neededNewPeriodTemplateIds: classified.neededNewPeriodTemplateIds,
+    keptNewTemplateActions: classified.keptNewTemplateActions,
+    templateTargetVersions: base.targetVersions,
+    activePeriodIds,
+    resolvedPeriodIdMap: matched.resolvedPeriodIdMap,
+    occupiedTargetIds,
+    maxTimeSortOrder: matched.maxTimeSortOrder,
+    maxDailySortOrder: matched.maxDailySortOrder,
+    maxActionSortByPeriod: matched.maxActionSortByPeriod,
+    nextUniqueId,
+  });
+
+  const matchedExistingPeriodsCount = matched.periodStatuses.filter(
     (p) => p.matchedExistingPeriod !== null,
   ).length;
 
   return {
     level: params.level,
-    periodStatuses,
-    actionStatuses,
-    newPeriods,
-    newActions,
-    newTargetVersions,
-    skippedExistingActionsCount,
+    periodStatuses: matched.periodStatuses,
+    actionStatuses: classified.actionStatuses,
+    newPeriods: materialized.newPeriods,
+    newActions: materialized.newActions,
+    newTargetVersions: materialized.newTargetVersions,
+    skippedExistingActionsCount: classified.skippedExistingActionsCount,
     matchedExistingPeriodsCount,
   };
 }

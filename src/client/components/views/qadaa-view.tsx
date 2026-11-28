@@ -7,6 +7,7 @@ import {
   type Action,
   type CatchUpItem,
 } from '@/domain';
+import { getNonRecoverableMisses } from '@/domain/qadaa';
 import { useMohasba } from '../../store/mohasba-provider';
 import { DEFAULT_UNDO_HOLD_MS } from '../../sync/outbox-engine';
 import { ARABIC_NOUN_FORMS, formatArabicCount } from '../../utils/arabic-plural';
@@ -55,13 +56,28 @@ export function QadaaView({
   onActionFeedback,
 }: QadaaViewProps) {
   const {
+    actions,
+    periods,
+    targetVersions,
+    logs,
+    todayIslamicDate,
     openQadaaQueue,
     catchUp48hItems,
-    nonRecoverableMisses,
     logCellTap,
     logBulkDeferToQadaa,
     undoBatch,
   } = useMohasba();
+
+  const nonRecoverableMisses = useMemo(() => {
+    if (!todayIslamicDate) return [];
+    return getNonRecoverableMisses({
+      actions,
+      periods,
+      targetVersions,
+      logs,
+      todayIslamicDate,
+    });
+  }, [actions, logs, periods, targetVersions, todayIslamicDate]);
 
   const [deferBusy, setDeferBusy] = useState(false);
   const [multiBatchUndoIds, setMultiBatchUndoIds] = useState<string[] | null>(
@@ -233,7 +249,7 @@ export function QadaaView({
   return (
     <section className="panel" aria-label={AR_STRINGS.qadaa.title}>
       <div className="panel-header">
-        <h3 className="panel-title">{AR_STRINGS.qadaa.title}</h3>
+        <h2 className="panel-title">{AR_STRINGS.qadaa.title}</h2>
         <div
           className="seg-tabs"
           role="tablist"

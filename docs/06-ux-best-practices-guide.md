@@ -270,16 +270,17 @@ Every view must pass `document.documentElement.scrollWidth <= window.innerWidth`
 Rendering `PeriodsSection`, `ActionsSection` (50 rows!), `RolloverLocationSection`, `NtfySection`, and `BackupAuditSection` fully expanded at once creates a 4,000px+ scroll wall on both desktop and mobile.
 
 #### Target 1-Screen Scannable Settings Architecture
-Top of `SettingsView`: compact header row with **`توسيع الكل`** / **`طيّ الكل`** toggle button + offline guard banner (when `!isOnline`). Below it, **6 top-level ARIA Disclosure Accordions**, all **collapsed by default** (with an optional live summary pill in each header so users scan status without opening anything):
+Top of `SettingsView`: compact header row with **`توسيع الكل`** / **`طيّ الكل`** toggle button + offline guard banner (when `!isOnline`). Below it, **7 top-level ARIA Disclosure Accordions**, all **collapsed by default** (with an optional live summary pill in each header so users scan status without opening anything):
 
 | # | Accordion Section (Arabic Title) | Header Summary Pill (`.count-chip`) | Default State |
 | :--- | :--- | :--- | :--- |
-| 1 | **التفضيلات والاختصارات** *(Preferences & Shortcuts)* | `الشاشة الرئيسية: الآن` | Collapsed |
-| 2 | **الفترات الزمنية والمجموعات** *(Periods & Groups)* | `{N} فترة نشطة` | Collapsed |
-| 3 | **الأعمال والأهداف** *(Actions & Targets)* | `{N} عمل نشط` | Collapsed |
-| 4 | **بداية اليوم والموقع الجغرافي** *(Rollover & Location)* | `[بداية اليوم: الفجر]` `[القاهرة]` *(two clean chips, zero `·` middle-dots)* | Collapsed |
-| 5 | **التنبيهات الذكية (`ntfy`)** *(Smart Reminders)* | `[مفعّلة]` / `[غير مهيأة]` | Collapsed |
-| 6 | **النسخ الاحتياطي وسجل العمليات** *(Backup & Audit)* | `[تصدير JSON]` | Collapsed |
+| 1 | **التفضيلات والعرض العام** *(General Preferences)* | `الافتراضية: الآن` | Collapsed |
+| 2 | **الفترات والمجموعات** *(Periods & Groups)* | `{N} نشطة` | Collapsed |
+| 3 | **الأعمال والأهداف** *(Actions & Targets)* | `{N} عمل` | Collapsed |
+| 4 | **بداية اليوم والموقع الجغرافي** *(Rollover & Location)* | `[الفجر]` `[Cairo]` *(clean chips, zero `·` middle-dots)* | Collapsed |
+| 5 | **التنبيهات الذكية (`ntfy`)** *(Smart Reminders)* | `[مُعدّ]` / `[غير مُهيّأ]` | Collapsed |
+| 6 | **اختصارات لوحة المفاتيح** *(Keyboard Shortcuts)* | `[الافتراضية]` / `[{N} مخصص]` | Collapsed |
+| 7 | **النسخ الاحتياطي وسجل الأحداث والجلسة** *(Backup, Audit & Session)* | `[JSON]` | Collapsed |
 
 #### Nested Period-Group Accordions Inside `ActionsSection`
 - Inside **الأعمال والأهداف**, group actions by their parent Period (`الصبح`, `الصباح`, `الظهر`, ..., `المجموعات اليومية`), each rendered as a nested collapsible disclosure (`aria-expanded`) showing `{N} أعمال` + a section-level **`توسيع الفترات` / `طيّ الفترات`** toggle.
@@ -375,9 +376,9 @@ export interface ShortcutBinding {
 
 ---
 
-### 3.3 Configurable Default Home Screen & 48h Catch-Up Banner Toggle
+### 3.3 Configurable Default Home Screen, Enter-Key Mode, Catch-Up Toggle & GPU Crosshair
 
-Inside the **التفضيلات والاختصارات** (`Preferences & Shortcuts`) accordion:
+Inside the **التفضيلات والعرض العام** (`GeneralPreferencesSection`) accordion (`src/client/components/settings/general-section.tsx`):
 
 1. **الشاشة الافتراضية عند فتح التطبيق (`default_home_view`):**
    - Segmented radio control: **`الآن (تسجيل الشارع)`** *(default)* vs **`الجدول الأسبوعي`** *(with optional `القضاء` / `التحليلات` support matching `app_settings.default_home_view`)*.
@@ -389,8 +390,16 @@ Inside the **التفضيلات والاختصارات** (`Preferences & Shortcu
    - Clean toggle checkbox (`true` by default) with plain-Arabic helper text:
      - `عند الإيقاف، يختفي شريط التنبيه من أعلى شاشة «الآن» لتبقى خفيفة، بينما يظل التبويب متاحاً دائماً داخل شاشة «القضاء».`
    - **Data Integrity Guarantee:** Hiding the banner is purely presentational — it never suppresses `UNLOGGED_EXPIRED` detection, never alters Analytics Bucket B (`logging_coverage_7d`), and never hides the `القضاء` badge count!
+4. **سلوك مفتاح `Enter` في الجدول الأسبوعي (`enter_key_mode`):**
+   - Segmented radio control (`0002_ux_preferences.sql`): **`فتح محرر الخانة` (`editor`, default)** vs **`النزول للخانة التالية` (`move_down`)** (when `move_down` is active, `F2` / `Shift+F10` / right-click still open `<CellEditorDialog />`).
+5. **تخصيص تظليل الصف والعمود في الجدول الأسبوعي (`GPU Crosshair`, per-device `localStorage`):**
+   - Instant client-side customization via `src/client/utils/crosshair-prefs.ts` (`mohasba.crosshair.prefs`, synced across tabs via `storage` event + live mini preview) powering `TableCrosshairStage` (`src/client/components/views/table-crosshair-stage.tsx`):
+     - **Display Mode (`mode`):** `both` (صف وعمود) | `row` (صف فقط) | `col` (عمود فقط) | `off` (إيقاف).
+     - **Opacity Strength (`opacity`):** `20%`–`220%` in `10%` steps (`clampOpacity`, default `100%`).
+     - **Motion (`motion`):** `smooth` (انزلاق ناعم) | `instant` (فوري).
+     - **Toggles:** `showHeaderIndicator`, `showFocusFallback`, and `coverPeriodColumn` (in One-Glance mode), plus **`استعادة الافتراضي`** (`resetCrosshairPrefs`).
 
-*(All three preferences persist cleanly in `app_settings` and hydrate offline from IndexedDB, ensuring immediate startup parity with zero layout flash.)*
+*(Server-backed preferences `1–4` persist in `app_settings` and hydrate offline from IndexedDB; Crosshair prefs persist per device in `localStorage`.)*
 
 ---
 
@@ -489,8 +498,8 @@ Before any new interaction ships in Phase 7/8 polish commits, verify every box:
 | :--- | :--- | :--- |
 | **Portal `<Tooltip>` + `IconGripVertical`** | `src/client/components/tooltip.tsx` (new), `src/client/components/icons.tsx`, `src/client/components/app-shell.tsx`, `src/app/globals.css` | Replace `.has-tip::after`; Portal to `document.body`; WCAG 1.4.13 (`Escape`, hoverable, `aria-describedby`); RTL viewport clamping. |
 | **1-Click Cycle + Long-Press + Right-Click** | `src/client/hooks/use-long-press.ts` (new), `src/client/components/views/week-view.tsx` | 3-step binary / 4-step percent cycle; protect `QADAA_DONE` & `DISABLED`; `450ms` touch timer with `>10px` scroll cancel; `-webkit-touch-callout: none`; `touch-action: manipulation`. |
-| **Grid Navigation, Multi-Select, Copy/Paste & Undo Stack** | `src/client/hooks/use-matrix-grid.ts` (new), `src/client/components/views/week-view.tsx`, `src/client/store/mohasba-provider.tsx` | W3C APG roving `tabindex`; RTL `ArrowLeft = col+1`; `Shift+Click`, drag-select, column-header click; TSV + internal clipboard; skip incompatible `QADAA`/`PERCENT`; atomic `undoBatch` + `Ctrl+Z` stack. |
-| **6-Dot Drag-and-Drop (Same & Cross-Period)** | `src/client/hooks/use-pointer-dnd.ts` (new), `src/client/components/settings/periods-section.tsx`, `actions-section.tsx`, `week-view.tsx` | `touch-action: none` strictly on `.drag-handle`; online-only guard; `2px` drop line; `400ms` auto-expand collapsed period; `Alt+ArrowUp/Down` + `aria-live="assertive"`. |
-| **Collapsible Settings Accordions** | `src/client/components/accordion.tsx` (new), `settings-view.tsx`, `actions-section.tsx` | Default-collapsed 6 categories + `توسيع الكل` / `طيّ الكل`; nested period accordions inside `ActionsSection`. |
-| **Preferences + Shortcut Recorder** | `src/client/components/settings/preferences-shortcuts-section.tsx` (new), `src/client/shortcuts/shortcut-registry.ts` (new), `app-shell.tsx`, `now-view.tsx` | Physical `KeyboardEvent.code`; dual `I / ه` keycaps (`dir="ltr"`); browser-reserved hard block; inline conflict swap; `default_home_view`, `default_week_mode`, `show_catchup_banner`. |
-| **In-App Self-Hoster `ntfy` Setup** | `src/client/components/settings/ntfy-section.tsx`, `src/app/api/settings/route.ts`, `src/server/services/ntfy.ts`, `supabase/migrations/` (if DB columns added) | 3-step Arabic guide; random topic generator + copy; HTTPS + SSRF validation; write-only masked Access Token (never in GET/exports); actionable HTTP error copy on `تجربة التنبيه`. |
+| **Grid Navigation, Multi-Select, Copy/Paste, Crosshair & Undo Stack** | `src/client/components/views/week-view.tsx`, `src/client/components/views/table-crosshair-stage.tsx`, `src/client/utils/crosshair-prefs.ts`, `src/client/store/mohasba-provider.tsx` | W3C APG roving `tabindex`; RTL `ArrowLeft = col+1`; `Shift+Click`, drag-select, column-header click; TSV + internal clipboard; skip incompatible `QADAA`/`PERCENT`; GPU Crosshair overlay; atomic `undoBatch` + `Ctrl+Z` stack. |
+| **6-Dot Drag-and-Drop (Same & Cross-Period)** | `src/client/hooks/use-pointer-dnd.ts`, `src/client/components/settings/periods-section.tsx`, `src/client/components/settings/actions-section.tsx`, `src/client/components/views/week-view.tsx` | `touch-action: none` strictly on `.drag-handle`; online-only guard; `2px` drop line; `400ms` auto-expand collapsed period; `Alt+ArrowUp/Down` + `aria-live="assertive"`. |
+| **Collapsible Settings Accordions** | `src/client/components/views/settings-view.tsx`, `src/client/components/settings/actions-section.tsx`, `src/client/components/settings/backup-audit-section.tsx` | Default-collapsed 7 categories + `توسيع الكل` / `طيّ الكل`; nested period accordions inside `ActionsSection`; Template Merge & Safe Reset dialogs. |
+| **General Preferences + Shortcut Recorder** | `src/client/components/settings/general-section.tsx`, `src/client/components/settings/shortcuts-section.tsx`, `src/domain/shortcuts.ts`, `src/client/components/app-shell.tsx`, `src/client/components/views/now-view.tsx` | Physical `KeyboardEvent.code`; dual `I / ه` keycaps (`dir="ltr"`); browser-reserved hard block; inline conflict swap; `default_home_view`, `default_week_mode`, `show_catchup_banner`, `enter_key_mode`, Crosshair prefs. |
+| **In-App Self-Hoster `ntfy` Setup** | `src/client/components/settings/ntfy-section.tsx`, `src/app/api/settings/route.ts`, `src/server/services/ntfy-dispatcher.ts`, `supabase/migrations/0002_ux_preferences.sql` | 3-step Arabic guide; random topic generator + copy; HTTPS + SSRF validation; write-only masked Access Token (never in GET/exports); actionable HTTP error copy on `تجربة التنبيه`. |

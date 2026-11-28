@@ -4,13 +4,14 @@ import {
   type ConflictResolutionReason,
 } from '@/domain/conflict';
 import { parseIsoDateParts } from '@/domain/prayer-engine';
-import type {
-  Action,
-  DailyLog,
-  SyncCommitItem,
-  SyncMutation,
-  SyncResultItem,
-  TargetVersion,
+import {
+  makeCellKey,
+  type Action,
+  type DailyLog,
+  type SyncCommitItem,
+  type SyncMutation,
+  type SyncResultItem,
+  type TargetVersion,
 } from '@/domain/types';
 import {
   normalizeActionRow,
@@ -18,10 +19,6 @@ import {
 } from '../db/normalizers';
 import { normalizeDailyLogRow } from '../db/pagination';
 import { writeAuditLog } from '../observability/logger';
-
-function cellKey(actionId: string, logDate: string): string {
-  return `${actionId}|${logDate}`;
-}
 
 interface RawRpcResult {
   mutation_id: string;
@@ -66,6 +63,130 @@ function buildDuplicatePassThroughItem(
   };
 }
 
+function prepareCommitBatch(params: {
+  slotIndices: readonly number[];
+  mutations: readonly SyncMutation[];
+  actionsById: ReadonlyMap<string, Action>;
+  targetsByAction: ReadonlyMap<string, TargetVersion[]>;
+  currentRows: Map<string, DailyLog>;
+  seenMutationIds: Set<string>;
+  serverNow: string;
+  validateCalendarDates: boolean;
+  slotOutcomes: Array<SyncResultItem | null>;
+  conflictResolutions: ConflictResolutionReason[];
+  rejectedSummaries: Array<{ mutation_id: string; error: string }>;
+}): { commitItems: SyncCommitItem[]; commitSlotIndices: number[] } {
+  const {
+    slotIndices,
+    mutations,
+    actionsById,
+    targetsByAction,
+    currentRows,
+    seenMutationIds,
+    serverNow,
+    validateCalendarDates,
+    slotOutcomes,
+    conflictResolutions,
+    rejectedSummaries,
+  } = params;
+
+  const commitItems: SyncCommitItem[] = [];
+  const commitSlotIndices: number[] = [];
+
+  for (const slotIdx of slotIndices) {
+    const m = mutations[slotIdx]!;
+    const k = makeCellKey(m.action_id, m.log_date);
+
+    if (validateCalendarDates) {
+      // Validate calendar date (e.g. rejects '2026-02-31' or '2026-99-99' before SQL cast)
+      try {
+        parseIsoDateParts(m.log_date);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Invalid log_date';
+        slotOutcomes[slotIdx] = {
+          mutation_id: m.mutation_id,
+          outcome: 'rejected',
+          error: msg,
+        };
+        rejectedSummaries.push({ mutation_id: m.mutation_id, error: msg });
+        continue;
+      }
+    }
+
+    if (seenMutationIds.has(m.mutation_id)) {
+      // Duplicate mutation_id: do NOT advance currentRows.row_version; let RPC return already_applied.
+      commitItems.push(buildDuplicatePassThroughItem(m, currentRows.get(k)));
+      commitSlotIndices.push(slotIdx);
+      continue;
+    }
+
+    const action = actionsById.get(m.action_id);
+    if (!action) {
+      const msg = `Unknown action_id ${m.action_id}`;
+      slotOutcomes[slotIdx] = {
+        mutation_id: m.mutation_id,
+        outcome: 'rejected',
+        error: msg,
+      };
+      rejectedSummaries.push({ mutation_id: m.mutation_id, error: msg });
+      continue;
+    }
+
+    const actionTargets = targetsByAction.get(m.action_id) ?? [];
+    const serverRow = currentRows.get(k) ?? null;
+
+    const resolution = resolveSyncConflict({
+      serverRow,
+      mutation: m,
+      action,
+      targetVersions: actionTargets,
+      serverNow,
+    });
+
+    if (resolution.kind === 'rejected') {
+      slotOutcomes[slotIdx] = {
+        mutation_id: m.mutation_id,
+        outcome: 'rejected',
+        error: resolution.error,
+      };
+      rejectedSummaries.push({
+        mutation_id: m.mutation_id,
+        error: resolution.error,
+      });
+      continue;
+    }
+
+    commitItems.push(resolution.item);
+    commitSlotIndices.push(slotIdx);
+    if (
+      resolution.resolution === 'conflict_mutation_won' ||
+      resolution.resolution === 'conflict_server_won'
+    ) {
+      conflictResolutions.push(resolution.resolution);
+    }
+
+    // Advance in-memory state so sequential intra-batch mutations for the same cell chain cleanly.
+    currentRows.set(k, {
+      action_id: m.action_id,
+      log_date: m.log_date,
+      availability_override: resolution.item.availability_override,
+      status: resolution.item.status,
+      percent_value: resolution.item.percent_value,
+      qadaa_resolved_at: resolution.item.qadaa_resolved_at,
+      target_version_id: resolution.item.target_version_id,
+      note: resolution.item.note,
+      note_updated_at: resolution.item.note_updated_at,
+      row_version: (serverRow?.row_version ?? 0) + 1,
+      last_mutation_id: m.mutation_id,
+      last_device_id: m.device_id,
+      client_updated_at: resolution.item.client_updated_at,
+    });
+    seenMutationIds.add(m.mutation_id);
+  }
+
+  return { commitItems, commitSlotIndices };
+}
+
 export async function processSyncBatch(params: {
   supabase: SupabaseClient;
   deviceId: string;
@@ -96,7 +217,7 @@ export async function processSyncBatch(params: {
     ),
   );
   const touchedCells = new Set(
-    mutations.map((m) => cellKey(m.action_id, m.log_date)),
+    mutations.map((m) => makeCellKey(m.action_id, m.log_date)),
   );
 
   // 2-4 bulk reads
@@ -157,7 +278,7 @@ export async function processSyncBatch(params: {
   const currentRows = new Map<string, DailyLog>();
   for (const row of logsRes.data ?? []) {
     const normalized = normalizeDailyLogRow(row as Record<string, unknown>);
-    const k = cellKey(normalized.action_id, normalized.log_date);
+    const k = makeCellKey(normalized.action_id, normalized.log_date);
     if (touchedCells.has(k)) {
       currentRows.set(k, normalized);
     }
@@ -166,99 +287,22 @@ export async function processSyncBatch(params: {
   const slotOutcomes: Array<SyncResultItem | null> = new Array(
     mutations.length,
   ).fill(null);
-  const commitItems: SyncCommitItem[] = [];
-  const commitSlotIndices: number[] = [];
   const conflictResolutions: ConflictResolutionReason[] = [];
   const rejectedSummaries: Array<{ mutation_id: string; error: string }> = [];
 
-  for (let i = 0; i < mutations.length; i += 1) {
-    const m = mutations[i]!;
-    const k = cellKey(m.action_id, m.log_date);
-
-    // Validate calendar date (e.g. rejects '2026-02-31' or '2026-99-99' before SQL cast)
-    try {
-      parseIsoDateParts(m.log_date);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Invalid log_date';
-      slotOutcomes[i] = {
-        mutation_id: m.mutation_id,
-        outcome: 'rejected',
-        error: msg,
-      };
-      rejectedSummaries.push({ mutation_id: m.mutation_id, error: msg });
-      continue;
-    }
-
-    if (seenMutationIds.has(m.mutation_id)) {
-      // Duplicate mutation_id: do NOT advance currentRows.row_version; let RPC return already_applied.
-      commitItems.push(buildDuplicatePassThroughItem(m, currentRows.get(k)));
-      commitSlotIndices.push(i);
-      continue;
-    }
-
-    const action = actionsById.get(m.action_id);
-    if (!action) {
-      const msg = `Unknown action_id ${m.action_id}`;
-      slotOutcomes[i] = {
-        mutation_id: m.mutation_id,
-        outcome: 'rejected',
-        error: msg,
-      };
-      rejectedSummaries.push({ mutation_id: m.mutation_id, error: msg });
-      continue;
-    }
-
-    const actionTargets = targetsByAction.get(m.action_id) ?? [];
-    const serverRow = currentRows.get(k) ?? null;
-
-    const resolution = resolveSyncConflict({
-      serverRow,
-      mutation: m,
-      action,
-      targetVersions: actionTargets,
-      serverNow,
-    });
-
-    if (resolution.kind === 'rejected') {
-      slotOutcomes[i] = {
-        mutation_id: m.mutation_id,
-        outcome: 'rejected',
-        error: resolution.error,
-      };
-      rejectedSummaries.push({
-        mutation_id: m.mutation_id,
-        error: resolution.error,
-      });
-      continue;
-    }
-
-    commitItems.push(resolution.item);
-    commitSlotIndices.push(i);
-    if (
-      resolution.resolution === 'conflict_mutation_won' ||
-      resolution.resolution === 'conflict_server_won'
-    ) {
-      conflictResolutions.push(resolution.resolution);
-    }
-
-    // Advance in-memory state so sequential intra-batch mutations for the same cell chain cleanly.
-    currentRows.set(k, {
-      action_id: m.action_id,
-      log_date: m.log_date,
-      availability_override: resolution.item.availability_override,
-      status: resolution.item.status,
-      percent_value: resolution.item.percent_value,
-      qadaa_resolved_at: resolution.item.qadaa_resolved_at,
-      target_version_id: resolution.item.target_version_id,
-      note: resolution.item.note,
-      note_updated_at: resolution.item.note_updated_at,
-      row_version: (serverRow?.row_version ?? 0) + 1,
-      last_mutation_id: m.mutation_id,
-      last_device_id: deviceId,
-      client_updated_at: resolution.item.client_updated_at,
-    });
-    seenMutationIds.add(m.mutation_id);
-  }
+  const { commitItems, commitSlotIndices } = prepareCommitBatch({
+    slotIndices: mutations.map((_, i) => i),
+    mutations,
+    actionsById,
+    targetsByAction,
+    currentRows,
+    seenMutationIds,
+    serverNow,
+    validateCalendarDates: true,
+    slotOutcomes,
+    conflictResolutions,
+    rejectedSummaries,
+  });
 
   if (commitItems.length > 0) {
     const { data: rpcData, error: rpcError } = await supabase.rpc(
@@ -325,82 +369,27 @@ export async function processSyncBatch(params: {
       for (const row of freshLogsData ?? []) {
         const normalized = normalizeDailyLogRow(row as Record<string, unknown>);
         freshRows.set(
-          cellKey(normalized.action_id, normalized.log_date),
+          makeCellKey(normalized.action_id, normalized.log_date),
           normalized,
         );
       }
 
-      const retryItems: SyncCommitItem[] = [];
-      const retrySlotIndices: number[] = [];
-      const retrySeen = new Set<string>();
-
-      for (const slotIdx of raceIndices) {
-        const m = mutations[slotIdx]!;
-        const k = cellKey(m.action_id, m.log_date);
-        const action = actionsById.get(m.action_id);
-        if (!action) {
-          slotOutcomes[slotIdx] = {
-            mutation_id: m.mutation_id,
-            outcome: 'rejected',
-            error: `Unknown action_id ${m.action_id}`,
-          };
-          continue;
-        }
-
-        if (retrySeen.has(m.mutation_id)) {
-          retryItems.push(buildDuplicatePassThroughItem(m, freshRows.get(k)));
-          retrySlotIndices.push(slotIdx);
-          continue;
-        }
-
-        const freshRow = freshRows.get(k) ?? null;
-        const retried = resolveSyncConflict({
-          serverRow: freshRow,
-          mutation: m,
-          action,
-          targetVersions: targetsByAction.get(m.action_id) ?? [],
-          serverNow,
-        });
-
-        if (retried.kind === 'rejected') {
-          slotOutcomes[slotIdx] = {
-            mutation_id: m.mutation_id,
-            outcome: 'rejected',
-            error: retried.error,
-          };
-          rejectedSummaries.push({
-            mutation_id: m.mutation_id,
-            error: retried.error,
-          });
-          continue;
-        }
-
-        retryItems.push(retried.item);
-        retrySlotIndices.push(slotIdx);
-        if (
-          retried.resolution === 'conflict_mutation_won' ||
-          retried.resolution === 'conflict_server_won'
-        ) {
-          conflictResolutions.push(retried.resolution);
-        }
-
-        freshRows.set(k, {
-          action_id: m.action_id,
-          log_date: m.log_date,
-          availability_override: retried.item.availability_override,
-          status: retried.item.status,
-          percent_value: retried.item.percent_value,
-          qadaa_resolved_at: retried.item.qadaa_resolved_at,
-          target_version_id: retried.item.target_version_id,
-          note: retried.item.note,
-          note_updated_at: retried.item.note_updated_at,
-          row_version: (freshRow?.row_version ?? 0) + 1,
-          last_mutation_id: m.mutation_id,
-          last_device_id: deviceId,
-          client_updated_at: retried.item.client_updated_at,
-        });
-        retrySeen.add(m.mutation_id);
-      }
+      const {
+        commitItems: retryItems,
+        commitSlotIndices: retrySlotIndices,
+      } = prepareCommitBatch({
+        slotIndices: raceIndices,
+        mutations,
+        actionsById,
+        targetsByAction,
+        currentRows: freshRows,
+        seenMutationIds: new Set<string>(),
+        serverNow,
+        validateCalendarDates: false,
+        slotOutcomes,
+        conflictResolutions,
+        rejectedSummaries,
+      });
 
       if (retryItems.length > 0) {
         const { data: retryRpcData, error: retryRpcErr } = await supabase.rpc(

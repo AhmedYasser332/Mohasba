@@ -143,6 +143,7 @@ Every queued mutation carries `mutation_id` (client UUID), `client_updated_at`, 
 ## 7. Security, Single-Owner Auth & `ntfy` / Keep-Alive Rules
 
 ### 7.1 Single-Owner Auth & Offline Street Grace
+> *(Post-Gate Architectural Simplification: see [docs/03-architecture.md](file:///d:/Ahmed/Projects/mohasba/docs/03-architecture.md) §8 #2 — `OWNER_EMAIL` + Supabase Auth/JWT refresh is superseded by fail-closed `APP_PASSCODE` + 180-day `HttpOnly` HMAC cookie and server-only `SUPABASE_SERVICE_ROLE_KEY`.)*
 - **Owner-Only Lock:** Only configured `OWNER_EMAIL` (case-insensitive) may authenticate; any stranger login/signup receives `403 Owner-Only Instance` and public signups are disabled after owner bootstrap.
 - **Offline Expired-JWT Grace Mode:** Launching offline with an expired short-lived JWT **never** redirects to `/login` or wipes IndexedDB—street logging continues normally into the local outbox. On reconnect, session refresh runs *before* queue drain; on refresh failure (`401`), drain pauses cleanly (preserving all pending mutations) until the same owner re-authenticates. Explicit Sign Out warns if `unsynced_count > 0` and offers Emergency JSON Export first.
 - **Secret Isolation:** `CRON_SECRET`, `SERVICE_ROLE_KEY`, and private `ntfy` topic URLs are strictly server-only (never `NEXT_PUBLIC_*`). Cron routes verify constant-time `CRON_SECRET` (`401` on mismatch).

@@ -109,6 +109,36 @@ describe('Slice 0: mohasba-test schema & PostgREST security lockdown', () => {
         }
       }
     });
+
+    it('rejects anon POST /rest/v1/rpc/reset_workspace_atomic and record_unlock_failure_atomic', async () => {
+      const rpcCases: Array<{ fn: string; payload: Record<string, unknown> }> = [
+        { fn: 'reset_workspace_atomic', payload: {} },
+        {
+          fn: 'record_unlock_failure_atomic',
+          payload: {
+            p_ip_hash: 'anon-lockdown-probe',
+            p_now: '2026-11-28T00:00:00.000Z',
+            p_window_ms: 60_000,
+            p_max_attempts: 5,
+            p_lock_ms: 60_000,
+          },
+        },
+      ];
+
+      for (const { fn, payload } of rpcCases) {
+        const res = await fetch(`${supabaseUrl}/rest/v1/rpc/${fn}`, {
+          method: 'POST',
+          headers: anonHeaders(),
+          body: JSON.stringify(payload),
+        });
+        const body = (await res.json().catch(() => ({}))) as { code?: string };
+        expect(res.ok).toBe(false);
+        expect([401, 403]).toContain(res.status);
+        if (body.code) {
+          expect(body.code).toBe('42501');
+        }
+      }
+    });
   });
 
   describe('SQL 3-valued-logic CHECKs, composite FK & ON DELETE RESTRICT', () => {
@@ -294,6 +324,40 @@ describe('Slice 0: mohasba-test schema & PostgREST security lockdown', () => {
       expect(trimRes).toMatchObject({
         deleted_count: 0,
       });
+    });
+
+    it('enforces 0002_ux_preferences.sql CHECK constraints on app_settings', async () => {
+      // Non-HTTPS ntfy_topic_url rejected
+      const { error: badSchemeErr } = await admin
+        .from('app_settings')
+        .update({ ntfy_topic_url: 'http://ntfy.sh/insecure-topic' })
+        .eq('id', 1);
+      expect(badSchemeErr).not.toBeNull();
+      expect(badSchemeErr?.code).toBe('23514');
+
+      // Invalid default_home_view rejected
+      const { error: badHomeErr } = await admin
+        .from('app_settings')
+        .update({ default_home_view: 'invalid_view' })
+        .eq('id', 1);
+      expect(badHomeErr).not.toBeNull();
+      expect(badHomeErr?.code).toBe('23514');
+
+      // Invalid enter_key_mode rejected
+      const { error: badEnterErr } = await admin
+        .from('app_settings')
+        .update({ enter_key_mode: 'invalid_enter_mode' })
+        .eq('id', 1);
+      expect(badEnterErr).not.toBeNull();
+      expect(badEnterErr?.code).toBe('23514');
+
+      // Non-object keyboard_shortcuts JSONB rejected
+      const { error: badShortcutsErr } = await admin
+        .from('app_settings')
+        .update({ keyboard_shortcuts: [] })
+        .eq('id', 1);
+      expect(badShortcutsErr).not.toBeNull();
+      expect(badShortcutsErr?.code).toBe('23514');
     });
   });
 });

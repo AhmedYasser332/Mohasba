@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   type NtfyMode,
   type Period,
@@ -13,6 +13,7 @@ import {
   type PointerDndReorderPayload,
 } from '../../hooks/use-pointer-dnd';
 import { useMohasba } from '../../store/mohasba-provider';
+import { AppDialog } from '../app-dialog';
 import {
   IconArchive,
   IconCross,
@@ -111,17 +112,6 @@ export function PeriodsSection() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<PeriodFormState>(DEFAULT_FORM);
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (dialogOpen) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [dialogOpen]);
 
   const sortedPeriods = useMemo(() => {
     return [...periods].sort((a, b) => a.sort_order - b.sort_order);
@@ -557,20 +547,11 @@ export function PeriodsSection() {
       <PointerDragGhost dragState={dragState} />
 
       {/* Period Create / Edit Dialog */}
-      <dialog
-        ref={dialogRef}
+      <AppDialog
+        open={dialogOpen}
+        onRequestClose={() => setDialogOpen(false)}
         className="app-dialog dialog-wide"
         aria-labelledby="period-dialog-title"
-        onCancel={(e) => {
-          e.preventDefault();
-          setDialogOpen(false);
-        }}
-        onClick={(e) => {
-          if (e.target === dialogRef.current) {
-            setDialogOpen(false);
-          }
-        }}
-        onClose={() => setDialogOpen(false)}
       >
         {dialogOpen && (
           <form
@@ -579,9 +560,9 @@ export function PeriodsSection() {
             }}
           >
             <div className="dialog-head">
-              <h3 className="dialog-title" id="period-dialog-title">
+              <h2 className="dialog-title" id="period-dialog-title">
                 {form.id ? `تعديل فترة: ${form.title}` : 'إضافة فترة جديدة'}
-              </h3>
+              </h2>
               <button
                 type="button"
                 className="btn btn-icon"
@@ -815,7 +796,7 @@ export function PeriodsSection() {
             </div>
           </form>
         )}
-      </dialog>
+      </AppDialog>
 
       <DeleteConfirmDialog
         target={deleteConfirm}

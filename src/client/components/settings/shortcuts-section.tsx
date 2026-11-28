@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   DEFAULT_KEYBOARD_SHORTCUTS,
   findShortcutConflict,
@@ -129,28 +129,31 @@ export function ShortcutsSection() {
     return count;
   }, [effectiveMap]);
 
-  const persistMap = async (
-    nextMap: Record<KnownShortcutActionId, KeyboardShortcutBinding>,
-    successMsg: string,
-  ) => {
-    if (!isOnline || busy) return;
-    setBusy(true);
-    setFeedback(null);
-    try {
-      const overrides = buildMinimalOverrides(nextMap);
-      const res = await updateSettings({ keyboard_shortcuts: overrides });
-      if (res.ok) {
-        setFeedback({ text: successMsg, isError: false });
-      } else {
-        setFeedback({
-          text: res.errorMessage ?? 'تعذر حفظ اختصارات لوحة المفاتيح.',
-          isError: true,
-        });
+  const persistMap = useCallback(
+    async (
+      nextMap: Record<KnownShortcutActionId, KeyboardShortcutBinding>,
+      successMsg: string,
+    ) => {
+      if (!isOnline || busy) return;
+      setBusy(true);
+      setFeedback(null);
+      try {
+        const overrides = buildMinimalOverrides(nextMap);
+        const res = await updateSettings({ keyboard_shortcuts: overrides });
+        if (res.ok) {
+          setFeedback({ text: successMsg, isError: false });
+        } else {
+          setFeedback({
+            text: res.errorMessage ?? 'تعذر حفظ اختصارات لوحة المفاتيح.',
+            isError: true,
+          });
+        }
+      } finally {
+        setBusy(false);
       }
-    } finally {
-      setBusy(false);
-    }
-  };
+    },
+    [busy, isOnline, updateSettings],
+  );
 
   useEffect(() => {
     if (!recordingId) return;
@@ -238,7 +241,7 @@ export function ShortcutsSection() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true);
     };
-  });
+  }, [busy, effectiveMap, isOnline, persistMap, recordingId]);
 
   if (!settings) return null;
 

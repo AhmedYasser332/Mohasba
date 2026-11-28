@@ -10,22 +10,24 @@ import React, {
   useState,
 } from 'react';
 import {
-  computeAnalytics,
+  addDaysIso,
+  diffDaysIso,
   get48hCatchUpItems,
-  getNonRecoverableMisses,
   getOpenQadaaQueue,
+  isActionActiveOnDate,
+  isPeriodActiveOnDate,
   planDeferToQadaa,
   planMosqueDone,
   planNormalDay,
   planPeriodDone,
   resolveActiveWindow,
+  resolveCellAvailability,
+  scoreLoggedCell,
   type Action,
   type ActiveWindowResolution,
-  type AnalyticsResult,
   type AppSettings,
   type CatchUpItem,
   type DailyLog,
-  type NonRecoverableMissItem,
   type NtfySource,
   type Period,
   type QadaaQueueItem,
@@ -128,9 +130,7 @@ export interface MohasbaContextValue {
   todayIslamicDate: string | null;
   openQadaaQueue: QadaaQueueItem[];
   catchUp48hItems: CatchUpItem[];
-  nonRecoverableMisses: NonRecoverableMissItem[];
-  analytics7d: AnalyticsResult | null;
-  analytics30d: AnalyticsResult | null;
+  adaptingActionIds: ReadonlySet<string>;
   logCellTap: (input: CellMutationInput, holdMs?: number) => Promise<EnqueueResult>;
   logCellBatch: (
     inputs: readonly CellMutationInput[],
@@ -378,14 +378,17 @@ export function MohasbaProvider({
           }
 
           if (response.status === 401) {
+            await response.body?.cancel().catch(() => {});
             setAuthStatus('locked');
             return false;
           }
           if (response.status === 503) {
+            await response.body?.cancel().catch(() => {});
             setAuthStatus('setup_incomplete');
             return false;
           }
           if (!response.ok) {
+            await response.body?.cancel().catch(() => {});
             return false;
           }
 
@@ -598,9 +601,38 @@ export function MohasbaProvider({
     return map;
   }, [logs]);
 
+  const enqueuePlannedMutations = useCallback(
+    (
+      planned: readonly {
+        action_id: string;
+        log_date: string;
+        availability_override: CellMutationInput['availability_override'];
+        status: CellMutationInput['status'];
+        percent_value: CellMutationInput['percent_value'];
+        qadaa_resolved_at: CellMutationInput['qadaa_resolved_at'];
+      }[],
+    ): Promise<EnqueueResult> => {
+      const actionsById = new Map(actions.map((a) => [a.id, a]));
+      const inputs: CellMutationInput[] = [];
+      for (const p of planned) {
+        const action = actionsById.get(p.action_id);
+        if (!action) continue;
+        inputs.push({
+          action,
+          logDate: p.log_date,
+          availability_override: p.availability_override,
+          status: p.status,
+          percent_value: p.percent_value,
+          qadaa_resolved_at: p.qadaa_resolved_at,
+        });
+      }
+      return enqueueAndSchedule(inputs);
+    },
+    [actions, enqueueAndSchedule],
+  );
+
   const logBulkMosqueDone = useCallback(
     async (periodId: string, logDate: string): Promise<EnqueueResult> => {
-      const actionsById = new Map(actions.map((a) => [a.id, a]));
       const planned = planMosqueDone({
         periodId,
         logDate,
@@ -608,22 +640,13 @@ export function MohasbaProvider({
         periods,
         logsByKey,
       });
-      const inputs: CellMutationInput[] = planned.map((p) => ({
-        action: actionsById.get(p.action_id)!,
-        logDate: p.log_date,
-        availability_override: p.availability_override,
-        status: p.status,
-        percent_value: p.percent_value,
-        qadaa_resolved_at: p.qadaa_resolved_at,
-      }));
-      return enqueueAndSchedule(inputs);
+      return enqueuePlannedMutations(planned);
     },
-    [actions, enqueueAndSchedule, logsByKey, periods],
+    [actions, enqueuePlannedMutations, logsByKey, periods],
   );
 
   const logBulkPeriodDone = useCallback(
     async (periodId: string, logDate: string): Promise<EnqueueResult> => {
-      const actionsById = new Map(actions.map((a) => [a.id, a]));
       const planned = planPeriodDone({
         periodId,
         logDate,
@@ -631,39 +654,22 @@ export function MohasbaProvider({
         periods,
         logsByKey,
       });
-      const inputs: CellMutationInput[] = planned.map((p) => ({
-        action: actionsById.get(p.action_id)!,
-        logDate: p.log_date,
-        availability_override: p.availability_override,
-        status: p.status,
-        percent_value: p.percent_value,
-        qadaa_resolved_at: p.qadaa_resolved_at,
-      }));
-      return enqueueAndSchedule(inputs);
+      return enqueuePlannedMutations(planned);
     },
-    [actions, enqueueAndSchedule, logsByKey, periods],
+    [actions, enqueuePlannedMutations, logsByKey, periods],
   );
 
   const logBulkNormalDay = useCallback(
     async (logDate: string): Promise<EnqueueResult> => {
-      const actionsById = new Map(actions.map((a) => [a.id, a]));
       const planned = planNormalDay({
         logDate,
         actions,
         periods,
         logsByKey,
       });
-      const inputs: CellMutationInput[] = planned.map((p) => ({
-        action: actionsById.get(p.action_id)!,
-        logDate: p.log_date,
-        availability_override: p.availability_override,
-        status: p.status,
-        percent_value: p.percent_value,
-        qadaa_resolved_at: p.qadaa_resolved_at,
-      }));
-      return enqueueAndSchedule(inputs);
+      return enqueuePlannedMutations(planned);
     },
-    [actions, enqueueAndSchedule, logsByKey, periods],
+    [actions, enqueuePlannedMutations, logsByKey, periods],
   );
 
   const logBulkDeferToQadaa = useCallback(
@@ -671,7 +677,6 @@ export function MohasbaProvider({
       if (!settings) {
         return { batchId: null, items: [], logs: [], durationMs: 0 };
       }
-      const actionsById = new Map(actions.map((a) => [a.id, a]));
       const planned = planDeferToQadaa({
         logDate,
         actions,
@@ -680,17 +685,9 @@ export function MohasbaProvider({
         logsByKey,
         now: Date.now(),
       });
-      const inputs: CellMutationInput[] = planned.map((p) => ({
-        action: actionsById.get(p.action_id)!,
-        logDate: p.log_date,
-        availability_override: p.availability_override,
-        status: p.status,
-        percent_value: p.percent_value,
-        qadaa_resolved_at: p.qadaa_resolved_at,
-      }));
-      return enqueueAndSchedule(inputs);
+      return enqueuePlannedMutations(planned);
     },
-    [actions, enqueueAndSchedule, logsByKey, periods, settings],
+    [actions, enqueuePlannedMutations, logsByKey, periods, settings],
   );
 
   const undoMutation = useCallback(
@@ -944,6 +941,12 @@ export function MohasbaProvider({
 
       const data = await res.json();
 
+      sessionEpochRef.current += 1;
+      bootstrapAbortRef.current?.abort();
+      if (inFlightBootstrapRef.current) {
+        await inFlightBootstrapRef.current.catch(() => false);
+      }
+
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       await wipeAllLocalData(engine.dbName);
 
@@ -1095,6 +1098,7 @@ export function MohasbaProvider({
         const err = await parseApiError(res);
         return { ok: false, errorMessage: err.message };
       }
+      await res.body?.cancel().catch(() => {});
     } catch {
       return { ok: false, errorMessage: 'Network request failed.' };
     }
@@ -1183,44 +1187,55 @@ export function MohasbaProvider({
     });
   }, [actions, logs, nowMs, periods, settings, targetVersions]);
 
-  const nonRecoverableMisses = useMemo(() => {
-    if (!todayIslamicDate) return [];
-    return getNonRecoverableMisses({
-      actions,
-      periods,
-      targetVersions,
-      logs,
-      todayIslamicDate,
-    });
-  }, [actions, logs, periods, targetVersions, todayIslamicDate]);
+  const adaptingActionIds = useMemo<ReadonlySet<string>>(() => {
+    if (!todayIslamicDate) return new Set<string>();
+    const periodsById = new Map(periods.map((p) => [p.id, p]));
+    const ids = new Set<string>();
 
-  const analytics7d = useMemo(() => {
-    if (!settings || !todayIslamicDate) return null;
-    return computeAnalytics({
-      periods,
-      actions,
-      targetVersions,
-      logs,
-      todayIso: todayIslamicDate,
-      windowDays: 7,
-      now: nowMs,
-      settings,
-    });
-  }, [actions, logs, nowMs, periods, settings, targetVersions, todayIslamicDate]);
+    for (const action of actions) {
+      const period = periodsById.get(action.period_id) ?? null;
+      if (!isActionActiveOnDate(action, todayIslamicDate)) continue;
+      if (period && !isPeriodActiveOnDate(period, todayIslamicDate)) continue;
 
-  const analytics30d = useMemo(() => {
-    if (!settings || !todayIslamicDate) return null;
-    return computeAnalytics({
-      periods,
-      actions,
-      targetVersions,
-      logs,
-      todayIso: todayIslamicDate,
-      windowDays: 30,
-      now: nowMs,
-      settings,
-    });
-  }, [actions, logs, nowMs, periods, settings, targetVersions, todayIslamicDate]);
+      const effectiveVersions = targetVersions
+        .filter(
+          (v) =>
+            v.action_id === action.id && v.effective_from <= todayIslamicDate,
+        )
+        .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+
+      if (effectiveVersions.length < 2) continue;
+      const latestVersion = effectiveVersions[effectiveVersions.length - 1]!;
+      if (latestVersion.direction === 'step_down') continue;
+
+      const daysSinceUpgrade = diffDaysIso(
+        latestVersion.effective_from,
+        todayIslamicDate,
+      );
+      if (daysSinceUpgrade < 0 || daysSinceUpgrade >= 7) continue;
+
+      let loggedUnderNewCount = 0;
+      for (let offset = 0; offset <= daysSinceUpgrade; offset += 1) {
+        const d = addDaysIso(latestVersion.effective_from, offset);
+        if (!isActionActiveOnDate(action, d)) continue;
+        const log = logsByKey.get(makeCellKey(action.id, d));
+        if (!resolveCellAvailability(action, log, d).isEnabled) continue;
+        if (scoreLoggedCell(log) === null || !log) continue;
+        if (
+          log.target_version_id === latestVersion.id ||
+          log.target_version_id === null
+        ) {
+          loggedUnderNewCount += 1;
+        }
+      }
+
+      if (loggedUnderNewCount < 5) {
+        ids.add(action.id);
+      }
+    }
+
+    return ids;
+  }, [actions, logsByKey, periods, targetVersions, todayIslamicDate]);
 
   const value = useMemo<MohasbaContextValue>(
     () => ({
@@ -1249,9 +1264,7 @@ export function MohasbaProvider({
       todayIslamicDate,
       openQadaaQueue,
       catchUp48hItems,
-      nonRecoverableMisses,
-      analytics7d,
-      analytics30d,
+      adaptingActionIds,
       logCellTap,
       logCellBatch,
       logBulkMosqueDone,
@@ -1293,8 +1306,7 @@ export function MohasbaProvider({
       actions,
       activeUndoToast,
       activeWindowResolution,
-      analytics30d,
-      analytics7d,
+      adaptingActionIds,
       applySwUpdate,
       authStatus,
       buildOfflineExport,
@@ -1327,7 +1339,6 @@ export function MohasbaProvider({
       logs,
       logsByKey,
       mergeTemplate,
-      nonRecoverableMisses,
       nowMs,
       ntfyConfigured,
       ntfyHasToken,

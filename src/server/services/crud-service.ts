@@ -44,6 +44,7 @@ import { fetchAllDailyLogsKeyset } from '../db/pagination';
 import { ServiceError } from '../errors';
 import { writeAuditLog } from '../observability/logger';
 import { validateNtfyTopicUrl } from '../security/ntfy-url';
+import { assertValidIanaTimezone } from '../validation';
 
 function validateCalendarIsoDate(iso: string, fieldName: string): void {
   try {
@@ -95,15 +96,7 @@ export async function updateSettings(params: {
   const { supabase, config, patch, requestId } = params;
 
   if (patch.iana_timezone) {
-    try {
-      new Intl.DateTimeFormat('en-CA', { timeZone: patch.iana_timezone });
-    } catch {
-      throw new ServiceError(
-        400,
-        'VALIDATION_ERROR',
-        `Invalid IANA timezone: ${patch.iana_timezone}`,
-      );
-    }
+    assertValidIanaTimezone(patch.iana_timezone);
   }
 
   const { ntfy_topic_url, ntfy_access_token, ...safePatch } = patch;
@@ -132,12 +125,12 @@ export async function updateSettings(params: {
       if (
         trimmedToken.length < 1 ||
         trimmedToken.length > 500 ||
-        /[\s\u0000-\u001F\u007F]/.test(trimmedToken)
+        !/^[\x21-\x7E]+$/.test(trimmedToken)
       ) {
         throw new ServiceError(
           400,
           'VALIDATION_ERROR',
-          'ntfy access token must be 1..500 characters without whitespace or control characters.',
+          'ntfy access token must be 1..500 visible ASCII characters without whitespace or control characters.',
         );
       }
       dbPatch.ntfy_access_token = trimmedToken;
@@ -393,6 +386,16 @@ export async function createAction(params: {
     input.active_from ?? resolveIslamicDate(Date.now(), settings);
   validateCalendarIsoDate(activeFrom, 'active_from');
 
+  const initialTargetEffectiveFrom = input.initial_target
+    ? (input.initial_target.effective_from ?? activeFrom)
+    : null;
+  if (initialTargetEffectiveFrom !== null) {
+    validateCalendarIsoDate(
+      initialTargetEffectiveFrom,
+      'initial_target.effective_from',
+    );
+  }
+
   const { data: periodRow, error: periodErr } = await supabase
     .from('periods')
     .select('id, side')
@@ -407,6 +410,14 @@ export async function createAction(params: {
       400,
       'VALIDATION_ERROR',
       `period_id ${input.period_id} does not exist.`,
+    );
+  }
+
+  if (periodRow.side === 'TIME_BOUND' && input.bound_time_period_id !== null) {
+    throw new ServiceError(
+      400,
+      'VALIDATION_ERROR',
+      'bound_time_period_id is only allowed for DAILY_GROUP actions.',
     );
   }
 
@@ -433,7 +444,8 @@ export async function createAction(params: {
   const candidateAction: Action = {
     id: input.id ?? crypto.randomUUID(),
     period_id: input.period_id,
-    bound_time_period_id: input.bound_time_period_id,
+    bound_time_period_id:
+      periodRow.side === 'TIME_BOUND' ? null : input.bound_time_period_id,
     title: input.title,
     sort_order: input.sort_order,
     is_mosque_action: input.is_mosque_action,
@@ -471,16 +483,13 @@ export async function createAction(params: {
   const action = normalizeActionRow(insertedAction as Record<string, unknown>);
   let targetVersion: TargetVersion | null = null;
 
-  if (input.initial_target) {
-    const tvEffectiveFrom = input.initial_target.effective_from ?? activeFrom;
-    validateCalendarIsoDate(tvEffectiveFrom, 'initial_target.effective_from');
-
+  if (input.initial_target && initialTargetEffectiveFrom !== null) {
     const { data: tvData, error: tvErr } = await supabase
       .from('target_versions')
       .insert({
         id: input.initial_target.id ?? crypto.randomUUID(),
         action_id: action.id,
-        effective_from: tvEffectiveFrom,
+        effective_from: initialTargetEffectiveFrom,
         target_label: input.initial_target.target_label,
         target_value: input.initial_target.target_value,
         target_unit: input.initial_target.target_unit,
@@ -561,20 +570,32 @@ export async function updateAction(params: {
 
   const existing = normalizeActionRow(existingRow as Record<string, unknown>);
 
-  if (patch.period_id && patch.period_id !== existing.period_id) {
-    const { data: pRow, error: pErr } = await supabase
-      .from('periods')
-      .select('id')
-      .eq('id', patch.period_id)
-      .maybeSingle();
-    if (pErr) throw new Error(`Failed verifying period_id: ${pErr.message}`);
-    if (!pRow) {
-      throw new ServiceError(
-        400,
-        'VALIDATION_ERROR',
-        `period_id ${patch.period_id} does not exist.`,
-      );
-    }
+  const targetPeriodId = patch.period_id ?? existing.period_id;
+  const { data: targetPeriodRow, error: pErr } = await supabase
+    .from('periods')
+    .select('id, side')
+    .eq('id', targetPeriodId)
+    .maybeSingle();
+  if (pErr) throw new Error(`Failed verifying period_id: ${pErr.message}`);
+  if (!targetPeriodRow) {
+    throw new ServiceError(
+      400,
+      'VALIDATION_ERROR',
+      `period_id ${targetPeriodId} does not exist.`,
+    );
+  }
+
+  const isTargetTimeBound = targetPeriodRow.side === 'TIME_BOUND';
+  if (
+    isTargetTimeBound &&
+    patch.bound_time_period_id !== undefined &&
+    patch.bound_time_period_id !== null
+  ) {
+    throw new ServiceError(
+      400,
+      'VALIDATION_ERROR',
+      'bound_time_period_id is only allowed for DAILY_GROUP actions.',
+    );
   }
 
   if (
@@ -600,6 +621,9 @@ export async function updateAction(params: {
 
   const normalizedPatch = {
     ...patch,
+    ...(isTargetTimeBound && existing.bound_time_period_id !== null
+      ? { bound_time_period_id: null }
+      : {}),
     ...(patch.default_disabled_days !== undefined
       ? { default_disabled_days: Array.from(new Set(patch.default_disabled_days)) }
       : {}),
