@@ -8,14 +8,21 @@ import {
   type AuditLogLevel,
   type ExportSnapshot,
 } from '@/domain';
-import { useMohasba } from '../../store/mohasba-provider';
+import {
+  useMohasba,
+  type MergeTemplatePayload,
+} from '../../store/mohasba-provider';
 import {
   IconDownload,
   IconExpiredAlert,
   IconLogOut,
+  IconPlus,
   IconRefresh,
+  IconTrash,
   IconUpload,
 } from '../icons';
+import { TemplateMergeDialog } from './template-merge-dialog';
+import { WorkspaceResetDialog } from './workspace-reset-dialog';
 
 interface BackupAuditSectionProps {
   onStatusMessage?: (msg: string) => void;
@@ -49,11 +56,17 @@ export function BackupAuditSection({
   const {
     isOnline,
     isIosA2hsPromptVisible,
+    periods,
     actions,
+    targetVersions,
+    logs,
+    todayIslamicDate,
     outbox,
     syncBadge,
     buildOfflineExport,
     importBackupChunk,
+    mergeTemplate,
+    resetWorkspace,
     refreshBootstrap,
     drainBeforeCrud,
     retryAttentionItem,
@@ -71,6 +84,14 @@ export function BackupAuditSection({
     text: string;
     isError: boolean;
   } | null>(null);
+
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditLevel, setAuditLevel] = useState<'' | AuditLogLevel>('');
@@ -91,8 +112,8 @@ export function BackupAuditSection({
     [actions],
   );
 
-  const handleFullOnlineExport = async () => {
-    if (!isOnline || exportBusy) return;
+  const handleFullOnlineExport = async (): Promise<boolean> => {
+    if (!isOnline || exportBusy) return false;
     setExportBusy(true);
     setBackupFeedback(null);
     try {
@@ -106,7 +127,7 @@ export function BackupAuditSection({
           text: `تعذر تصدير النسخة الكاملة (HTTP ${res.status}).`,
           isError: true,
         });
-        return;
+        return false;
       }
       const snapshot = (await res.json()) as ExportSnapshot;
       const stamp =
@@ -117,13 +138,60 @@ export function BackupAuditSection({
         text: `تم تصدير النسخة الكاملة (${snapshot.daily_logs.length} سجل).`,
         isError: false,
       });
+      return true;
     } catch {
       setBackupFeedback({
         text: 'تعذر الاتصال بالخادم لتصدير النسخة الكاملة.',
         isError: true,
       });
+      return false;
     } finally {
       setExportBusy(false);
+    }
+  };
+
+  const handleConfirmTemplateMerge = async (payload: MergeTemplatePayload) => {
+    setMergeBusy(true);
+    setMergeError(null);
+    try {
+      const res = await mergeTemplate(payload);
+      if (!res.ok) {
+        setMergeError(res.errorMessage ?? 'تعذر دمج أعمال القالب.');
+        return;
+      }
+      const data = res.data as {
+        added_actions?: number;
+        added_periods?: number;
+        skipped_existing_actions?: number;
+      };
+      const addedActions = data?.added_actions ?? 0;
+      const addedPeriods = data?.added_periods ?? 0;
+      const skipped = data?.skipped_existing_actions ?? 0;
+      const msg =
+        addedActions > 0
+          ? `تمت إضافة ${addedActions} عملاً جديداً${addedPeriods > 0 ? ` و ${addedPeriods} فترة جديدة` : ''} مع الحفاظ على جميع سجلاتك (تجاهل ${skipped} موجود بالفعل).`
+          : 'جميع أعمال هذا القالب موجودة بالفعل في جدولك.';
+      setBackupFeedback({ text: msg, isError: false });
+      onStatusMessage?.(msg);
+      setMergeDialogOpen(false);
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
+  const handleConfirmWorkspaceReset = async () => {
+    setResetBusy(true);
+    setResetError(null);
+    try {
+      const res = await resetWorkspace();
+      if (!res.ok) {
+        setResetError(res.errorMessage ?? 'تعذر تصفير الجدول.');
+        return;
+      }
+      setResetDialogOpen(false);
+      onStatusMessage?.('تم تصفير الجدول — اختر المستوى المناسب للبدء من جديد.');
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -410,6 +478,71 @@ export function BackupAuditSection({
         )}
       </div>
 
+      {/* Templates Level-Up & Safe Workspace Reset */}
+      <div
+        className="settings-subpanel"
+        data-testid="settings-templates-lifecycle-section"
+      >
+        <div className="settings-subpanel-head">
+          <strong className="text-sm">القوالب وإعادة تهيئة الجدول</strong>
+        </div>
+        <div className="settings-body">
+          <div className="lifecycle-action-grid">
+            <div className="lifecycle-action-card">
+              <div className="pref-toggle-text">
+                <span className="pref-heading">
+                  ترقية أو إضافة أعمال من القوالب الـ 3 (آمن)
+                </span>
+                <span className="pref-helper">
+                  تقدر تترقّى لمستوى أعلى أو تختار أعمال إضافية من أي مستوى — يُضاف الجديد فقط داخل فتراتك الحالية بدون مسح أو تكرار أي عمل أو سجل سابق.
+                </span>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-live"
+                  data-testid="open-template-merge-btn"
+                  disabled={!isOnline}
+                  onClick={() => {
+                    setMergeError(null);
+                    setMergeDialogOpen(true);
+                  }}
+                >
+                  <IconPlus size="sm" />
+                  <span>ترقية / إضافة من القوالب</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="lifecycle-action-card is-danger">
+              <div className="pref-toggle-text">
+                <span className="pref-heading">
+                  تصفير الجدول والعودة لاختيار المستوى من الصفر
+                </span>
+                <span className="pref-helper">
+                  يمسح الفترات والأعمال والسجلات الحالية ويفتح لك شاشة اختيار المستويات الـ 3 للتخصيص من البداية، مع الاحتفاظ بإعدادات المدينة و ntfy والاختصارات.
+                </span>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  data-testid="open-workspace-reset-btn"
+                  disabled={!isOnline}
+                  onClick={() => {
+                    setResetError(null);
+                    setResetDialogOpen(true);
+                  }}
+                >
+                  <IconTrash size="sm" />
+                  <span>تصفير وإعادة اختيار القالب</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Audit Logs Subpanel */}
       <div className="settings-subpanel" data-testid="settings-audit-section">
         <div className="settings-subpanel-head">
@@ -623,6 +756,32 @@ export function BackupAuditSection({
           )}
         </div>
       </div>
+
+      <TemplateMergeDialog
+        open={mergeDialogOpen}
+        busy={mergeBusy}
+        error={mergeError}
+        activeFromIso={todayIslamicDate ?? new Date().toISOString().slice(0, 10)}
+        existingPeriods={periods}
+        existingActions={actions}
+        existingTargetVersionIds={targetVersions.map((tv) => tv.id)}
+        onClose={() => setMergeDialogOpen(false)}
+        onConfirmMerge={handleConfirmTemplateMerge}
+      />
+
+      <WorkspaceResetDialog
+        open={resetDialogOpen}
+        busy={resetBusy}
+        exportBusy={exportBusy}
+        error={resetError}
+        periodsCount={periods.length}
+        actionsCount={actions.length}
+        logsCount={logs.length}
+        unsyncedCount={syncBadge.activeCount}
+        onClose={() => setResetDialogOpen(false)}
+        onDownloadBackup={handleFullOnlineExport}
+        onConfirmReset={handleConfirmWorkspaceReset}
+      />
     </div>
   );
 }

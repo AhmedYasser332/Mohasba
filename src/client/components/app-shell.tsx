@@ -637,6 +637,17 @@ export function MohasbaAppShell() {
       const res = await initOnboarding(payload);
       if (!res.ok) {
         setOnboardingError(res.errorMessage ?? AR_STRINGS.errors.genericError);
+      } else {
+        setUserNavigated(false);
+        updateUrlState(
+          {
+            ...effectiveUrlState,
+            view: settings?.default_home_view ?? 'now',
+            date: null,
+            period: null,
+          },
+          'replace',
+        );
       }
     } finally {
       setOnboardingBusy(false);

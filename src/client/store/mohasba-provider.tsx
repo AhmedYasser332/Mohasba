@@ -95,6 +95,13 @@ export interface InitOnboardingPayload {
   settings_patch?: Record<string, unknown>;
 }
 
+export interface MergeTemplatePayload {
+  level: TemplateLevelId;
+  active_from?: string;
+  excluded_period_ids?: string[];
+  excluded_action_ids?: string[];
+}
+
 export interface MohasbaContextValue {
   hydrated: boolean;
   authStatus: AuthStatus;
@@ -154,6 +161,8 @@ export interface MohasbaContextValue {
     modeOrPayload: 'starter_pack' | 'blank' | InitOnboardingPayload,
     activeFrom?: string,
   ) => Promise<CrudResponse>;
+  mergeTemplate: (payload: MergeTemplatePayload) => Promise<CrudResponse>;
+  resetWorkspace: () => Promise<CrudResponse>;
   updateSettings: (patch: Record<string, unknown>) => Promise<CrudResponse>;
   testNtfy: () => Promise<CrudResponse>;
   createPeriod: (input: Record<string, unknown>) => Promise<CrudResponse>;
@@ -892,6 +901,82 @@ export function MohasbaProvider({
     [executeOnlineCrud],
   );
 
+  const mergeTemplate = useCallback(
+    (payload: MergeTemplatePayload) =>
+      executeOnlineCrud(
+        '/api/bootstrap/merge-template',
+        'POST',
+        payload as unknown as Record<string, unknown>,
+      ),
+    [executeOnlineCrud],
+  );
+
+  const resetWorkspace = useCallback(async (): Promise<CrudResponse> => {
+    try {
+      const res = await fetch('/api/bootstrap/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ confirm: 'RESET_WORKSPACE' }),
+      });
+
+      if (res.status === 401) {
+        const err = await parseApiError(res);
+        setAuthStatus('locked');
+        setHasAuthError(true);
+        return {
+          ok: false,
+          errorCode: err.code,
+          errorMessage: err.message,
+          errorDetails: err.details,
+        };
+      }
+
+      if (!res.ok) {
+        const err = await parseApiError(res);
+        return {
+          ok: false,
+          errorCode: err.code,
+          errorMessage: err.message,
+          errorDetails: err.details,
+        };
+      }
+
+      const data = await res.json();
+
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      await wipeAllLocalData(engine.dbName);
+
+      if (mountedRef.current) {
+        setPeriods([]);
+        setActions([]);
+        setTargetVersions([]);
+        setLogs([]);
+        setOutbox([]);
+        setActiveUndoToast(null);
+      }
+
+      if (typeof BroadcastChannel !== 'undefined') {
+        try {
+          const bc = new BroadcastChannel(SYNC_BROADCAST_CHANNEL);
+          bc.postMessage({ type: 'idb_updated', reason: 'wipe', ts: Date.now() });
+          bc.close();
+        } catch {
+          // ignore
+        }
+      }
+
+      await refreshBootstrap({ full: true });
+      return { ok: true, data };
+    } catch {
+      return {
+        ok: false,
+        errorCode: 'NETWORK_ERROR',
+        errorMessage: 'Network request failed.',
+      };
+    }
+  }, [engine.dbName, refreshBootstrap]);
+
   const updateSettings = useCallback(
     (patch: Record<string, unknown>) =>
       executeOnlineCrud('/api/settings', 'PATCH', patch),
@@ -1186,6 +1271,8 @@ export function MohasbaProvider({
       drainBeforeCrud,
       unlockWithPasscode,
       initOnboarding,
+      mergeTemplate,
+      resetWorkspace,
       updateSettings,
       testNtfy,
       createPeriod,
@@ -1239,6 +1326,7 @@ export function MohasbaProvider({
       logCellTap,
       logs,
       logsByKey,
+      mergeTemplate,
       nonRecoverableMisses,
       nowMs,
       ntfyConfigured,
@@ -1250,6 +1338,7 @@ export function MohasbaProvider({
       periods,
       refreshBootstrap,
       reorderSchema,
+      resetWorkspace,
       retryAttentionItem,
       settings,
       signOut,

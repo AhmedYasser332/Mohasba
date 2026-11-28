@@ -8,6 +8,7 @@ import { buildStarterPack } from '@/domain/starter-pack';
 import {
   buildTemplateBundle,
   customizeTemplateBundle,
+  planTemplateMerge,
   type TemplateLevelId,
 } from '@/domain/templates';
 import {
@@ -412,6 +413,236 @@ export async function initStarterPack(params: {
     onboarding_completed: true,
     mode,
     ...(level ? { level } : {}),
+    settings: normalizeAppSettingsRow(updatedRow as Record<string, unknown>),
+  };
+}
+
+export interface MergeTemplateResult {
+  ok: true;
+  level: TemplateLevelId;
+  added_periods: number;
+  added_actions: number;
+  added_target_versions: number;
+  skipped_existing_actions: number;
+  matched_existing_periods: number;
+}
+
+/**
+ * Non-destructively merges net-new periods/actions/targets from a template level
+ * into an already-initialized workspace while preserving 100% of existing logs,
+ * actions, targets, and periods.
+ */
+export async function mergeTemplateIntoWorkspace(params: {
+  supabase: SupabaseClient;
+  level: TemplateLevelId;
+  excludedPeriodIds?: readonly string[];
+  excludedActionIds?: readonly string[];
+  activeFromIso?: string;
+  requestId: string;
+}): Promise<MergeTemplateResult> {
+  const {
+    supabase,
+    level,
+    excludedPeriodIds,
+    excludedActionIds,
+    activeFromIso,
+    requestId,
+  } = params;
+
+  const settings = await fetchAppSettings(supabase);
+  if (!settings.onboarding_completed) {
+    throw new ServiceError(
+      409,
+      'CONFLICT',
+      'Workspace is not initialized yet. Use /api/bootstrap/init first.',
+    );
+  }
+
+  if (activeFromIso !== undefined) {
+    try {
+      parseIsoDateParts(activeFromIso);
+    } catch {
+      throw new ServiceError(
+        400,
+        'VALIDATION_ERROR',
+        `Invalid calendar date for active_from: ${activeFromIso}`,
+      );
+    }
+  }
+
+  const effectiveActiveFrom =
+    activeFromIso ?? resolveIslamicDate(Date.now(), settings);
+
+  const [periodsRes, actionsRes, targetsRes] = await Promise.all([
+    supabase
+      .from('periods')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('id', { ascending: true }),
+    supabase
+      .from('actions')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('id', { ascending: true }),
+    supabase.from('target_versions').select('id'),
+  ]);
+
+  if (periodsRes.error) {
+    throw new Error(`Failed loading periods for merge: ${periodsRes.error.message}`);
+  }
+  if (actionsRes.error) {
+    throw new Error(`Failed loading actions for merge: ${actionsRes.error.message}`);
+  }
+  if (targetsRes.error) {
+    throw new Error(
+      `Failed loading target_versions for merge: ${targetsRes.error.message}`,
+    );
+  }
+
+  const existingPeriods = (periodsRes.data ?? []).map((r) =>
+    normalizePeriodRow(r as Record<string, unknown>),
+  );
+  const existingActions = (actionsRes.data ?? []).map((r) =>
+    normalizeActionRow(r as Record<string, unknown>),
+  );
+  const existingTargetVersionIds = (targetsRes.data ?? [])
+    .map((r) => String((r as Record<string, unknown>).id ?? ''))
+    .filter(Boolean);
+
+  const plan = planTemplateMerge({
+    level,
+    activeFromIso: effectiveActiveFrom,
+    existingPeriods,
+    existingActions,
+    existingTargetVersionIds,
+    excludedPeriodIds,
+    excludedActionIds,
+    generateId: () => crypto.randomUUID(),
+  });
+
+  if (plan.newPeriods.length > 0) {
+    const { error: pErr } = await supabase.from('periods').insert(plan.newPeriods);
+    if (pErr) {
+      throw new Error(`Template merge periods insert failed: ${pErr.message}`);
+    }
+  }
+
+  if (plan.newActions.length > 0) {
+    const { error: aErr } = await supabase.from('actions').insert(plan.newActions);
+    if (aErr) {
+      throw new Error(`Template merge actions insert failed: ${aErr.message}`);
+    }
+  }
+
+  if (plan.newTargetVersions.length > 0) {
+    const { error: tErr } = await supabase
+      .from('target_versions')
+      .insert(plan.newTargetVersions);
+    if (tErr) {
+      throw new Error(
+        `Template merge target_versions insert failed: ${tErr.message}`,
+      );
+    }
+  }
+
+  await writeAuditLog(supabase, {
+    level: 'INFO',
+    category: 'CRUD',
+    event_name: 'template_merged',
+    request_id: requestId,
+    entity_type: 'app_settings',
+    entity_id: '1',
+    summary: `Merged template ${level}: +${plan.newPeriods.length} periods, +${plan.newActions.length} actions (skipped ${plan.skippedExistingActionsCount} existing).`,
+    context: {
+      level,
+      added_periods: plan.newPeriods.length,
+      added_actions: plan.newActions.length,
+      added_target_versions: plan.newTargetVersions.length,
+      skipped_existing_actions: plan.skippedExistingActionsCount,
+      matched_existing_periods: plan.matchedExistingPeriodsCount,
+    },
+  });
+
+  return {
+    ok: true,
+    level,
+    added_periods: plan.newPeriods.length,
+    added_actions: plan.newActions.length,
+    added_target_versions: plan.newTargetVersions.length,
+    skipped_existing_actions: plan.skippedExistingActionsCount,
+    matched_existing_periods: plan.matchedExistingPeriodsCount,
+  };
+}
+
+export interface ResetWorkspaceResult {
+  ok: true;
+  onboarding_completed: false;
+  settings: AppSettings;
+}
+
+/**
+ * Safely resets schedule & log tables so the user can re-run the 3-Level Onboarding Wizard
+ * from a clean slate while preserving device/location/ntfy/UI settings and audit logs.
+ */
+export async function resetWorkspaceForOnboarding(params: {
+  supabase: SupabaseClient;
+  requestId: string;
+}): Promise<ResetWorkspaceResult> {
+  const { supabase, requestId } = params;
+
+  // Delete in strict child-to-parent FK order
+  const deleteSteps: Array<{ table: string; notNullCol: string }> = [
+    { table: 'daily_logs', notNullCol: 'action_id' },
+    { table: 'target_versions', notNullCol: 'id' },
+    { table: 'actions', notNullCol: 'id' },
+    { table: 'reminder_dispatches', notNullCol: 'id' },
+    { table: 'periods', notNullCol: 'id' },
+    { table: 'applied_mutations', notNullCol: 'mutation_id' },
+  ];
+
+  for (const step of deleteSteps) {
+    const { error } = await supabase
+      .from(step.table)
+      .delete()
+      .not(step.notNullCol, 'is', null);
+    if (error) {
+      throw new Error(
+        `Workspace reset failed clearing ${step.table}: ${error.message}`,
+      );
+    }
+  }
+
+  const { data: updatedRow, error: sErr } = await supabase
+    .from('app_settings')
+    .update({
+      onboarding_completed: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', 1)
+    .select('*')
+    .single();
+
+  if (sErr || !updatedRow) {
+    throw new Error(
+      `Workspace reset failed updating onboarding flag: ${sErr?.message ?? 'missing row'}`,
+    );
+  }
+
+  await writeAuditLog(supabase, {
+    level: 'INFO',
+    category: 'SYSTEM',
+    event_name: 'workspace_reset',
+    request_id: requestId,
+    entity_type: 'app_settings',
+    entity_id: '1',
+    summary:
+      'Reset workspace schedule and logs to return to 3-level onboarding wizard (preferences preserved).',
+    context: { preserved_settings: true },
+  });
+
+  return {
+    ok: true,
+    onboarding_completed: false,
     settings: normalizeAppSettingsRow(updatedRow as Record<string, unknown>),
   };
 }

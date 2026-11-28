@@ -1358,3 +1358,126 @@
     justify-content: center;
   }
 }
+
+/* Templates Level-Up Merge Dialog & Safe Workspace Reset */
+dialog.app-dialog.app-dialog-wide {
+  width: min(860px, calc(100vw - 24px));
+  max-height: min(88dvh, 840px);
+}
+
+.merge-dialog-shell {
+  display: flex;
+  flex-direction: column;
+  max-height: min(88dvh, 840px);
+}
+
+.merge-dialog-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.merge-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.merge-new-period-note {
+  color: var(--accent-live);
+  font-weight: 600;
+}
+
+.merge-dialog-body .onboarding-level-card-top .count-chip {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.merge-dialog-shell .dialog-foot {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .merge-dialog-body {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .merge-dialog-body .onboarding-level-card {
+    padding: 10px;
+    gap: 4px;
+  }
+
+  .merge-dialog-shell .dialog-foot {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .merge-dialog-shell .dialog-foot .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.onboarding-action-row.is-merge-existing {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.merge-existing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding-block: 1px;
+  padding-inline: 6px;
+  border-radius: var(--r-cell);
+  background: var(--done-fill);
+  border: 1px solid var(--done-border);
+  color: var(--done-ink);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.lifecycle-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .lifecycle-action-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.lifecycle-action-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-canvas);
+}
+
+.lifecycle-action-card.is-danger {
+  border-color: var(--missed-border);
+  background: color-mix(in srgb, var(--missed-fill) 38%, var(--bg-canvas));
+}
+
+.reset-backup-step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-canvas);
+}
