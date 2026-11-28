@@ -14,6 +14,10 @@ import {
   type PointerDndReorderPayload,
 } from '../../hooks/use-pointer-dnd';
 import { useMohasba } from '../../store/mohasba-provider';
+import {
+  usePersistedBoolean,
+  usePersistedStringSet,
+} from '../../utils/disclosure-storage';
 import { AppDialog } from '../app-dialog';
 import {
   IconArchive,
@@ -79,7 +83,10 @@ export function ActionsSection() {
     reorderSchema,
   } = useMohasba();
 
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = usePersistedBoolean(
+    'mohasba.ui.settings-actions-show-archived',
+    false,
+  );
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{
     text: string;
@@ -90,8 +97,8 @@ export function ActionsSection() {
   );
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const [expandedPeriodIds, setExpandedPeriodIds] = useState<Set<string>>(
-    () => new Set(),
+  const [expandedPeriodIds, setExpandedPeriodIds] = usePersistedStringSet(
+    'mohasba.ui.settings-actions-expanded-periods',
   );
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -178,7 +185,7 @@ export function ActionsSection() {
       next.add(periodId);
       return next;
     });
-  }, []);
+  }, [setExpandedPeriodIds]);
 
   const handleDndReorder = async (payload: PointerDndReorderPayload) => {
     if (!isOnline || busy) return;

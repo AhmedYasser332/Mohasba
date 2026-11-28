@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   AR_STRINGS,
   DEFAULT_KEYBOARD_SHORTCUTS,
@@ -10,6 +10,7 @@ import {
   type DefaultHomeView,
 } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
+import { usePersistedStringSet } from '../../utils/disclosure-storage';
 import { IconChevronDown, IconExpiredAlert } from '../icons';
 import { ActionsSection } from '../settings/actions-section';
 import { BackupAuditSection } from '../settings/backup-audit-section';
@@ -118,8 +119,8 @@ export function SettingsView({ onStatusMessage }: SettingsViewProps) {
     outbox,
   } = useMohasba();
 
-  const [openSections, setOpenSections] = useState<Set<SettingsSectionKey>>(
-    () => new Set(),
+  const [openSections, setOpenSections] = usePersistedStringSet(
+    'mohasba.ui.settings-open-sections',
   );
 
   const toggleSection = (key: SettingsSectionKey) => {
@@ -169,8 +170,12 @@ export function SettingsView({ onStatusMessage }: SettingsViewProps) {
     [outbox],
   );
 
-  const allExpanded = openSections.size === ALL_SECTION_KEYS.length;
-  const noneExpanded = openSections.size === 0;
+  const openCount = useMemo(
+    () => ALL_SECTION_KEYS.filter((k) => openSections.has(k)).length,
+    [openSections],
+  );
+  const allExpanded = openCount === ALL_SECTION_KEYS.length;
+  const noneExpanded = openCount === 0;
 
   return (
     <div className="view-stack" aria-label={AR_STRINGS.settings.title}>
@@ -189,7 +194,7 @@ export function SettingsView({ onStatusMessage }: SettingsViewProps) {
         <div className="settings-topbar-summary">
           <strong>{AR_STRINGS.settings.title}</strong>
           <span className="count-chip nums">
-            {openSections.size} / {ALL_SECTION_KEYS.length} مفتوح
+            {openCount} / {ALL_SECTION_KEYS.length} مفتوح
           </span>
         </div>
 

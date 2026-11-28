@@ -385,7 +385,8 @@ export function TableCrosshairStage({
           prev.rowIndex = effectiveRow.rowIndex;
           prev.rowTransform = nextTransform;
         }
-      } else if (prev.rowActive) {
+      } else if (prev.rowActive || rowBar.dataset.active === 'true') {
+        rowBar.dataset.glide = 'false';
         rowBar.dataset.active = 'false';
         delete rowBar.dataset.rowIndex;
         prev.rowActive = false;
@@ -450,11 +451,19 @@ export function TableCrosshairStage({
           prev.headTransform = nextHeadTransform;
           prev.headLineTransform = nextHeadLineTransform;
         }
-      } else if (prev.colActive) {
+      } else if (
+        prev.colActive ||
+        colBar.dataset.active === 'true' ||
+        headBar.dataset.active === 'true' ||
+        headLine.dataset.active === 'true'
+      ) {
+        colBar.dataset.glide = 'false';
         colBar.dataset.active = 'false';
         delete colBar.dataset.colIndex;
+        headBar.dataset.glide = 'false';
         headBar.dataset.active = 'false';
         delete headBar.dataset.colIndex;
+        headLine.dataset.glide = 'false';
         headLine.dataset.active = 'false';
         prev.colActive = false;
         prev.colIndex = null;
@@ -518,7 +527,7 @@ export function TableCrosshairStage({
       localY < 0 ||
       localY > stageRect.height
     ) {
-      applyBars.current(null, null, 'hover', false);
+      applyBars.current(null, null, 'idle', false);
       return;
     }
 
@@ -595,10 +604,12 @@ export function TableCrosshairStage({
         rafIdRef.current = null;
       }
       detachScroll();
-      if (!isHoveringRef.current) return;
+      const wasHovering = isHoveringRef.current;
       isHoveringRef.current = false;
       lastPointerRef.current = null;
-      coordinator.leave(tableId);
+      if (wasHovering) {
+        coordinator.leave(tableId);
+      }
       syncIdleOrFocus.current(false);
     };
 
@@ -622,6 +633,8 @@ export function TableCrosshairStage({
 
     stage.addEventListener('pointermove', handlePointerMove, { passive: true });
     stage.addEventListener('pointerleave', handleLeave);
+    stage.addEventListener('mouseleave', handleLeave);
+    stage.addEventListener('pointercancel', handleLeave);
 
     // Keep cached geometry fresh on resize, zoom, or sidebar transition
     let resizeRaf: number | null = null;
@@ -660,6 +673,8 @@ export function TableCrosshairStage({
       detachScroll();
       stage.removeEventListener('pointermove', handlePointerMove);
       stage.removeEventListener('pointerleave', handleLeave);
+      stage.removeEventListener('mouseleave', handleLeave);
+      stage.removeEventListener('pointercancel', handleLeave);
       window.removeEventListener('resize', scheduleMeasure);
       ro?.disconnect();
     };

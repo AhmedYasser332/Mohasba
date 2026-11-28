@@ -37,10 +37,8 @@ import {
   type PointerDndReorderPayload,
 } from '../../hooks/use-pointer-dnd';
 import { useMohasba } from '../../store/mohasba-provider';
-import {
-  DEFAULT_UNDO_HOLD_MS,
-  type CellMutationInput,
-} from '../../sync/outbox-engine';
+import { usePersistedBooleanRecord } from '../../utils/disclosure-storage';
+import { type CellMutationInput } from '../../sync/outbox-engine';
 import {
   computeCellScore,
   formatArabicDateFull,
@@ -63,9 +61,16 @@ import {
   IconCross,
   IconDash,
   IconGripVertical,
+  IconMoreDots,
   IconQadaa,
   IconX,
 } from '../icons';
+import {
+  EntityContextMenu,
+  QuickActionEditDialog,
+  QuickPeriodEditDialog,
+  type EntityContextMenuItem,
+} from '../quick-edit-dialogs';
 import {
   TableCrosshairStage,
   createCrosshairCoordinator,
@@ -74,6 +79,68 @@ import {
 
 /** Max gap between clicks/taps on the same cell to count as a repeat (cycle) click. */
 const MULTI_TAP_WINDOW_MS = 450;
+
+function InlineRenameInput({
+  value,
+  maxLength,
+  disabled,
+  ariaLabel,
+  compact,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  maxLength: number;
+  disabled: boolean;
+  ariaLabel: string;
+  compact?: boolean;
+  onChange: (next: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      className={`inline-rename-input ${compact ? 'is-compact' : ''}`}
+      data-testid="inline-rename-input"
+      aria-label={ariaLabel}
+      maxLength={maxLength}
+      disabled={disabled}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          onCommit();
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+          return;
+        }
+        e.stopPropagation();
+      }}
+      onBlur={() => onCommit()}
+    />
+  );
+}
 
 function useCellButtonRefs() {
   const cellButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -103,7 +170,7 @@ interface WeekViewProps {
   oneGlanceMode: boolean;
   onSetOneGlanceMode: (enabled: boolean) => void;
   onOpenCellEditor: (target: CellEditorTarget) => void;
-  onActionFeedback: (message: string) => void;
+  onActionFeedback: (message: string, options?: { isError?: boolean }) => void;
 }
 
 interface GridCoord {
@@ -463,7 +530,7 @@ export function WeekView({
     activeWindowResolution,
     todayIslamicDate,
     isOnline,
-    activeUndoToast,
+    getLastUndoCreatedAt,
     fetchLogsRange,
     logCellBatch,
     logBulkNormalDay,
@@ -472,16 +539,52 @@ export function WeekView({
     undoBatch,
     dismissUndoToast,
     reorderSchema,
+    updateAction,
+    updatePeriod,
   } = useMohasba();
 
   const [weekAnchorDate, setWeekAnchorDate] = useState<string | null>(null);
   const [selectedBulkDate, setSelectedBulkDate] = useState<string | null>(null);
   const [mobileCompactGrid, setMobileCompactGrid] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = usePersistedBooleanRecord(
+    'mohasba.ui.week-collapsed-groups',
+    {},
+  );
   const [loadingWeekRange, setLoadingWeekRange] = useState(false);
   const [normalDialogOpen, setNormalDialogOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dndSaving, setDndSaving] = useState(false);
+  const [inlineRename, setInlineRename] = useState<{
+    kind: 'action' | 'period';
+    id: string;
+    surface: 'desktop-std' | 'desktop-glance' | 'mobile-cards' | 'mobile-compact';
+    originalTitle: string;
+    draft: string;
+  } | null>(null);
+  const [inlineRenameSaving, setInlineRenameSaving] = useState(false);
+  const inlineRenameCommitGuardRef = useRef(false);
+  const [quickEditActionId, setQuickEditActionId] = useState<string | null>(null);
+  const [quickEditPeriodId, setQuickEditPeriodId] = useState<string | null>(null);
+  const [entityContextMenu, setEntityContextMenu] = useState<{
+    position: { x: number; y: number };
+    title: string;
+    items: EntityContextMenuItem[];
+  } | null>(null);
+
+  const quickEditAction = useMemo(
+    () =>
+      quickEditActionId
+        ? (actions.find((a) => a.id === quickEditActionId) ?? null)
+        : null,
+    [actions, quickEditActionId],
+  );
+  const quickEditPeriod = useMemo(
+    () =>
+      quickEditPeriodId
+        ? (periods.find((p) => p.id === quickEditPeriodId) ?? null)
+        : null,
+    [periods, quickEditPeriodId],
+  );
 
   // Desktop spreadsheet grid focus, selection, copy marquee, fill drag, crosshair & clipboard
   const [crosshairCoordinator] = useState(() => createCrosshairCoordinator());
@@ -827,6 +930,22 @@ export function WeekView({
     setContextMenu(null);
   }, [setContextMenu]);
 
+  const cancelInlineRename = useCallback(() => {
+    inlineRenameCommitGuardRef.current = true;
+    setInlineRename(null);
+  }, []);
+
+  const cancelActiveDragAndCopy = useCallback(() => {
+    fillDragRef.current = null;
+    setFillDrag(null);
+    dragSelectRef.current = null;
+    periodDragRef.current = null;
+    periodAnchorRef.current = null;
+    setIsGridDragging(false);
+    setCopiedRect(null);
+    document.body.style.cursor = '';
+  }, []);
+
   const clearAllInteractionState = useCallback(
     (options?: { restoreFocus?: boolean }) => {
       fillDragRef.current = null;
@@ -839,6 +958,7 @@ export function WeekView({
       setExtraCoords([]);
       setCopiedRect(null);
       setContextMenu(null);
+      setEntityContextMenu(null);
       document.body.style.cursor = '';
       if (options?.restoreFocus) {
         restoreFocusHandlerRef.current();
@@ -854,6 +974,7 @@ export function WeekView({
       setExtraCoords([]);
       setCopiedRect(null);
       setContextMenu(null);
+      setEntityContextMenu(null);
       periodDragRef.current = null;
       periodAnchorRef.current = null;
     },
@@ -1093,13 +1214,17 @@ export function WeekView({
     [dndSaving, isOnline, onActionFeedback, reorderSchema],
   );
 
-  const handleHoverCollapsedGroup = useCallback((groupId: string) => {
-    setCollapsedGroups((prev) =>
-      prev[groupId] ? { ...prev, [groupId]: false } : prev,
-    );
-  }, []);
+  const handleHoverCollapsedGroup = useCallback(
+    (groupId: string) => {
+      setCollapsedGroups((prev) =>
+        prev[groupId] ? { ...prev, [groupId]: false } : prev,
+      );
+    },
+    [setCollapsedGroups],
+  );
 
-  const dndDisabled = oneGlanceMode || !isOnline || dndSaving;
+  const dndDisabled =
+    oneGlanceMode || !isOnline || dndSaving || inlineRename !== null;
 
   const dnd = usePointerDnd<Action>({
     items: standardDndItems,
@@ -1212,7 +1337,7 @@ export function WeekView({
         availabilityOverride = 'DISABLED';
         status = null;
       } else if (target.kind === 'EMPTY') {
-        availabilityOverride = isDefaultOff ? 'ENABLED' : null;
+        availabilityOverride = null;
         status = null;
       } else if (target.kind === 'PERCENT') {
         availabilityOverride = isDefaultOff ? 'ENABLED' : null;
@@ -1419,7 +1544,6 @@ export function WeekView({
     logDate: string,
     display: CellDisplayInfo,
     options?: {
-      showUndoToast?: boolean;
       /** Rapid multi-click: state already planned by the previous click but not yet rendered. */
       stateOverride?: CellDisplayInfo['state'];
       onPlanned?: (fromState: CellDisplayInfo['state'], toState: CellDisplayInfo['state']) => void;
@@ -1482,11 +1606,7 @@ export function WeekView({
       display,
       nextTarget,
     );
-    const showUndoToast = options?.showUndoToast ?? false;
-    const holdMs = showUndoToast
-      ? DEFAULT_UNDO_HOLD_MS
-      : SINGLE_CLICK_COALESCE_HOLD_MS;
-    const res = await logCellBatch([mutation], holdMs, showUndoToast);
+    const res = await logCellBatch([mutation], SINGLE_CLICK_COALESCE_HOLD_MS, false);
     if (res.items.length > 0) {
       pushUndoEntry({
         batchId: res.batchId,
@@ -1510,7 +1630,7 @@ export function WeekView({
   const applySnapshotEntries = async (
     entries: ReadonlyArray<{ coord: GridCoord; snapshot: ClipboardCellSnapshot }>,
     options: {
-      showToast?: boolean;
+      announceFeedback?: boolean;
       actionNameAr?: string;
       clearSelection?: boolean;
       restoreFocus?: boolean;
@@ -1561,15 +1681,13 @@ export function WeekView({
       return;
     }
 
-    const isBulkOrDestructive =
-      options.showToast ??
+    const shouldAnnounce =
+      options.announceFeedback ??
       (mutations.length > 1 ||
         entries.some((e) => e.snapshot.kind === 'DISABLED'));
-    const holdMs = isBulkOrDestructive
-      ? DEFAULT_UNDO_HOLD_MS
-      : SINGLE_CLICK_COALESCE_HOLD_MS;
 
-    const res = await logCellBatch(mutations, holdMs, isBulkOrDestructive);
+    // Never show the bottom undo-toast bar in the Weekly Matrix; Ctrl+Z / Ctrl+Y session stack handles undo.
+    const res = await logCellBatch(mutations, SINGLE_CLICK_COALESCE_HOLD_MS, false);
     if (res.items.length > 0) {
       pushUndoEntry({
         batchId: res.batchId,
@@ -1586,7 +1704,7 @@ export function WeekView({
       restoreFocusToGrid(focusTarget);
     }
 
-    if (isBulkOrDestructive || skippedIncompatible > 0) {
+    if (shouldAnnounce || skippedIncompatible > 0) {
       const label = options.actionNameAr
         ? `${options.actionNameAr} (${formatArabicCells(mutations.length)})`
         : `تم تحديث ${formatArabicCells(mutations.length)}`;
@@ -1602,7 +1720,7 @@ export function WeekView({
     coords: readonly GridCoord[],
     target: ClipboardCellSnapshot,
     options: {
-      showToast?: boolean;
+      announceFeedback?: boolean;
       actionNameAr?: string;
       clearSelection?: boolean;
       restoreFocus?: boolean;
@@ -1641,7 +1759,7 @@ export function WeekView({
     const entries = getFillTargetEntries(fd);
     if (entries.length === 0) return;
     void applySnapshotEntries(entries, {
-      showToast: true,
+      announceFeedback: true,
       actionNameAr: 'تم تعبئة',
       clearSelection: true,
     });
@@ -1688,7 +1806,7 @@ export function WeekView({
 
     if (entries.length === 0) return;
     void applySnapshotEntries(entries, {
-      showToast: true,
+      announceFeedback: true,
       actionNameAr: 'تم تعبئة الفترة',
       clearSelection: true,
     });
@@ -1779,7 +1897,7 @@ export function WeekView({
       coords,
       { kind: 'EMPTY', percentValue: null },
       {
-        showToast: true,
+        announceFeedback: true,
         actionNameAr: 'تم قص',
         clearSelection: true,
         restoreFocus: options?.restoreFocus,
@@ -1870,7 +1988,7 @@ export function WeekView({
     }
 
     await applySnapshotEntries(entries, {
-      showToast: true,
+      announceFeedback: true,
       actionNameAr: 'تم لصق',
       clearSelection: true,
       restoreFocus: options?.restoreFocus,
@@ -1958,7 +2076,7 @@ export function WeekView({
     }
 
     await applySnapshotEntries(entries, {
-      showToast: true,
+      announceFeedback: true,
       actionNameAr: 'تم التعبئة للأسفل',
       clearSelection: true,
       restoreFocus: options?.restoreFocus,
@@ -2353,8 +2471,8 @@ export function WeekView({
 
     const res = await logCellBatch(
       mutations,
-      hasActiveOutbox ? 0 : DEFAULT_UNDO_HOLD_MS,
-      !hasActiveOutbox,
+      hasActiveOutbox ? 0 : SINGLE_CLICK_COALESCE_HOLD_MS,
+      false,
     );
     if (res.items.length > 0) {
       pushUndoEntry({
@@ -2396,7 +2514,7 @@ export function WeekView({
       : { kind: 'DONE', percentValue: null };
 
     await applyTargetStateToCoords(coords, nextTarget, {
-      showToast: coords.length > 1,
+      announceFeedback: coords.length > 1,
       actionNameAr: allDone ? 'تم مسح الحالات' : 'تم تحديد تم للكل',
       clearSelection: true,
     });
@@ -2454,7 +2572,7 @@ export function WeekView({
       void applyTargetStateToCoords(
         coords,
         { kind: 'DISABLED', percentValue: null },
-        { showToast: true, actionNameAr: 'تم تعطيل' },
+        { announceFeedback: true, actionNameAr: 'تم تعطيل' },
       );
       return true;
     }
@@ -2463,7 +2581,19 @@ export function WeekView({
 
   const handleWindowKeyDown = (e: KeyboardEvent) => {
     if (e.isComposing) return;
+    // 1. Inline rename takes top priority: Escape cancels rename without touching cells; block all grid hotkeys.
+    if (inlineRename !== null) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelInlineRename();
+      }
+      return;
+    }
+    // 2. Open modal dialogs or other editable inputs handle their own keys.
     if (
+      quickEditAction !== null ||
+      quickEditPeriod !== null ||
       normalDialogOpen ||
       document.querySelector('dialog[open]') !== null ||
       isEditableTarget(e.target) ||
@@ -2472,15 +2602,13 @@ export function WeekView({
       return;
     }
 
-    // Global session Undo (capture phase — takes precedence over app-shell toast-only undo)
+    // Global session Undo (capture phase — takes precedence over app-shell silent undo)
     if (matchesShortcutEvent(e, effectiveShortcuts.undo)) {
       if (undoStackRef.current.length > 0) {
         const topEntry = undoStackRef.current[undoStackRef.current.length - 1]!;
-        if (activeUndoToast) {
-          const toastCreatedAt = activeUndoToast.expiresAt - DEFAULT_UNDO_HOLD_MS;
-          if (toastCreatedAt > topEntry.createdAt) {
-            return;
-          }
+        const lastUndoCreatedAt = getLastUndoCreatedAt();
+        if ((lastUndoCreatedAt ?? 0) > topEntry.createdAt) {
+          return;
         }
         if (!doesUndoEntryMatchLiveLogs(topEntry, logsByKey)) {
           undoStackRef.current = undoStackRef.current.slice(0, -1);
@@ -2510,6 +2638,14 @@ export function WeekView({
     }
 
     if (e.key === 'Escape') {
+      // 3. Entity context menu
+      if (entityContextMenu) {
+        e.preventDefault();
+        e.stopPropagation();
+        setEntityContextMenu(null);
+        return;
+      }
+      // 4. Multi-cell context menu
       if (contextMenu) {
         e.preventDefault();
         e.stopPropagation();
@@ -2517,8 +2653,8 @@ export function WeekView({
         restoreFocusToGrid();
         return;
       }
+      // 5. Active drag / fill / marquee / period-drag / copy-outline
       if (
-        selectedCellCount > 0 ||
         copiedRect !== null ||
         fillDragRef.current !== null ||
         dragSelectRef.current !== null ||
@@ -2526,7 +2662,39 @@ export function WeekView({
       ) {
         e.preventDefault();
         e.stopPropagation();
-        clearAllInteractionState({ restoreFocus: true });
+        cancelActiveDragAndCopy();
+        return;
+      }
+      // 6. Selected cell(s) (or focused cell button in grid): clear logged status first, then deselect on 2nd Escape
+      const hasActiveSingleFocus =
+        focusedCell !== null &&
+        document.activeElement instanceof Element &&
+        document.activeElement.matches('[data-grid-row][data-grid-col]') &&
+        (desktopGridAreaRef.current?.contains(document.activeElement) ?? false);
+      if (selectedCellCount > 0 || hasActiveSingleFocus) {
+        const coords = getTargetCoords();
+        const loggedCoords = coords.filter((coord) => {
+          const rowMeta = visibleGridRows[coord.row];
+          const logDate = weekDates[coord.col];
+          if (!rowMeta || !logDate) return false;
+          if (isCellPostArchived(rowMeta.action, logDate)) return false;
+          const log = logsByKey.get(makeCellKey(rowMeta.action.id, logDate));
+          return log?.status != null || log?.availability_override != null;
+        });
+
+        e.preventDefault();
+        e.stopPropagation();
+        if (loggedCoords.length > 0) {
+          void applyTargetStateToCoords(
+            loggedCoords,
+            { kind: 'EMPTY', percentValue: null },
+            { clearSelection: false, restoreFocus: true },
+          );
+        } else if (selectedCellCount > 0) {
+          clearAllInteractionState({ restoreFocus: true });
+        } else {
+          setFocusedCell(null);
+        }
       }
       return;
     }
@@ -2627,7 +2795,7 @@ export function WeekView({
       if (
         target instanceof Element &&
         target.closest(
-          '[data-grid-row][data-grid-col], .col-day-btn, .row-title-btn, .cell-period, .period-select-btn, .period-quick-done-btn, .group-select-btn',
+          '[data-grid-row][data-grid-col], .col-day-btn, .row-title-btn, .cell-period, .period-select-btn, .period-quick-done-btn, .group-select-btn, .entity-context-menu, .inline-rename-input',
         )
       ) {
         return;
@@ -2697,7 +2865,15 @@ export function WeekView({
     logDate: string,
     display: CellDisplayInfo,
   ) => {
-    if (normalDialogOpen || isEditableTarget(event.target)) return;
+    if (
+      inlineRename !== null ||
+      quickEditAction !== null ||
+      quickEditPeriod !== null ||
+      normalDialogOpen ||
+      isEditableTarget(event.target)
+    ) {
+      return;
+    }
 
     // Respect user-configured shortcuts from settings.keyboard_shortcuts
     if (matchesShortcutEvent(event, effectiveShortcuts.toggle_one_glance)) {
@@ -2722,19 +2898,8 @@ export function WeekView({
 
     const mod = event.ctrlKey || event.metaKey;
 
-    // Escape clears fillDrag, dragSelect, selection, copiedRect & cursor
+    // Escape is handled centrally by handleWindowKeyDown (capture phase) to avoid double-handling.
     if (event.key === 'Escape') {
-      if (
-        copiedRect ||
-        selection ||
-        extraCoords.length > 0 ||
-        fillDragRef.current ||
-        dragSelectRef.current ||
-        periodDragRef.current
-      ) {
-        event.preventDefault();
-        clearAllInteractionState({ restoreFocus: true });
-      }
       return;
     }
 
@@ -2986,6 +3151,163 @@ export function WeekView({
       ...prev,
       [periodId]: !prev[periodId],
     }));
+  };
+
+  const startInlineRename = (
+    kind: 'action' | 'period',
+    id: string,
+    title: string,
+    surface: 'desktop-std' | 'desktop-glance' | 'mobile-cards' | 'mobile-compact',
+  ) => {
+    if (!isOnline) {
+      onActionFeedback('إعادة التسمية متاحة عند الاتصال بالإنترنت فقط');
+      return;
+    }
+    setContextMenu(null);
+    setEntityContextMenu(null);
+    inlineRenameCommitGuardRef.current = false;
+    setInlineRename({
+      kind,
+      id,
+      surface,
+      originalTitle: title,
+      draft: title,
+    });
+  };
+
+  const commitInlineRename = async () => {
+    if (inlineRenameCommitGuardRef.current || !inlineRename || inlineRenameSaving) {
+      return;
+    }
+    inlineRenameCommitGuardRef.current = true;
+    const current = inlineRename;
+    const trimmed = current.draft.trim();
+    if (!trimmed || trimmed === current.originalTitle.trim()) {
+      setInlineRename(null);
+      return;
+    }
+    if (!isOnline) {
+      setInlineRename(null);
+      onActionFeedback('إعادة التسمية متاحة عند الاتصال بالإنترنت فقط', {
+        isError: true,
+      });
+      return;
+    }
+
+    setInlineRenameSaving(true);
+    try {
+      const res =
+        current.kind === 'action'
+          ? await updateAction(current.id, { title: trimmed })
+          : await updatePeriod(current.id, { title: trimmed });
+      if (res.ok) {
+        onActionFeedback(`تم تغيير الاسم إلى: ${trimmed}`);
+      } else {
+        onActionFeedback(res.errorMessage ?? 'تعذر حفظ الاسم الجديد', {
+          isError: true,
+        });
+      }
+    } finally {
+      setInlineRenameSaving(false);
+      setInlineRename(null);
+    }
+  };
+
+  const handleQuickToggleActionArchive = async (action: Action) => {
+    if (!isOnline) {
+      onActionFeedback('الأرشفة متاحة عند الاتصال بالإنترنت فقط', {
+        isError: true,
+      });
+      return;
+    }
+    const isArchived = action.archived_at !== null;
+    const fallbackDate = new Date().toISOString().slice(0, 10);
+    const res = await updateAction(action.id, {
+      archived_at: isArchived ? null : (todayIslamicDate ?? fallbackDate),
+    });
+    if (res.ok) {
+      onActionFeedback(
+        isArchived
+          ? `تمت استعادة العمل: ${action.title}`
+          : `تمت أرشفة العمل: ${action.title}`,
+      );
+    } else {
+      onActionFeedback(res.errorMessage ?? 'تعذر تغيير حالة الأرشفة', {
+        isError: true,
+      });
+    }
+  };
+
+  const openActionEntityMenu = (
+    action: Action,
+    position: { x: number; y: number },
+    surface: 'desktop-std' | 'desktop-glance' | 'mobile-cards' | 'mobile-compact',
+  ) => {
+    setContextMenu(null);
+    const isArchived = action.archived_at !== null;
+    setEntityContextMenu({
+      position,
+      title: action.title,
+      items: [
+        {
+          id: 'edit-action',
+          label: 'تعديل العمل...',
+          onSelect: () => setQuickEditActionId(action.id),
+        },
+        {
+          id: 'rename-action',
+          label: 'إعادة تسمية',
+          disabled: !isOnline,
+          onSelect: () =>
+            startInlineRename('action', action.id, action.title, surface),
+        },
+        {
+          id: 'archive-action',
+          label: isArchived ? 'استعادة العمل' : 'أرشفة العمل',
+          danger: !isArchived,
+          disabled: !isOnline,
+          onSelect: () => {
+            void handleQuickToggleActionArchive(action);
+          },
+        },
+      ],
+    });
+  };
+
+  const openPeriodEntityMenu = (
+    group: Period,
+    position: { x: number; y: number },
+    surface: 'desktop-std' | 'desktop-glance' | 'mobile-cards' | 'mobile-compact',
+    options?: { showCollapseToggle?: boolean },
+  ) => {
+    setContextMenu(null);
+    const isCollapsed = Boolean(collapsedGroups[group.id]);
+    const items: EntityContextMenuItem[] = [
+      {
+        id: 'edit-period',
+        label: 'تعديل الفترة...',
+        onSelect: () => setQuickEditPeriodId(group.id),
+      },
+      {
+        id: 'rename-period',
+        label: 'إعادة تسمية',
+        disabled: !isOnline,
+        onSelect: () =>
+          startInlineRename('period', group.id, group.title, surface),
+      },
+    ];
+    if (options?.showCollapseToggle) {
+      items.push({
+        id: 'toggle-period-collapse',
+        label: isCollapsed ? 'توسيع الفترة' : 'طي الفترة',
+        onSelect: () => toggleGroup(group.id),
+      });
+    }
+    setEntityContextMenu({
+      position,
+      title: group.title,
+      items,
+    });
   };
 
   const handleDeferToQadaa = async () => {
@@ -3248,7 +3570,6 @@ export function WeekView({
                   ? (prevTap.plannedTo as CellDisplayInfo['state'])
                   : undefined;
               void handleCellPrimaryCycle(action, logDate, display, {
-                showUndoToast: lastPointerTypeRef.current !== 'mouse',
                 stateOverride: staleOverride,
                 onPlanned: (fromState, toState) => {
                   if (lastCellTapRef.current?.key === coordKey) {
@@ -3361,6 +3682,11 @@ export function WeekView({
     const isPeriodSelected =
       !isCollapsed && isPeriodFullySelected(group.id, activeDayCol);
 
+    const isRenamingGroup =
+      inlineRename?.kind === 'period' &&
+      inlineRename.id === group.id &&
+      inlineRename.surface === 'desktop-std';
+
     return (
       <React.Fragment key={group.id}>
         <tr
@@ -3371,40 +3697,100 @@ export function WeekView({
           {...groupDropProps}
         >
           <td colSpan={9} role="gridcell">
-            <div className="group-row-bar">
-              <button
-                type="button"
-                className="group-toggle"
-                aria-expanded={!isCollapsed}
-                onClick={() => toggleGroup(group.id)}
-              >
-                <span className="group-toggle-start">
+            <div
+              className="group-row-bar"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openPeriodEntityMenu(
+                  group,
+                  { x: e.clientX, y: e.clientY },
+                  'desktop-std',
+                  { showCollapseToggle: true },
+                );
+              }}
+            >
+              <div className="group-toggle-wrap">
+                <button
+                  type="button"
+                  className="group-chevron-btn"
+                  aria-expanded={!isCollapsed}
+                  aria-label={
+                    isCollapsed ? `توسيع ${group.title}` : `طي ${group.title}`
+                  }
+                  onClick={() => toggleGroup(group.id)}
+                >
                   {isCollapsed ? (
                     <IconChevronLeft size="sm" />
                   ) : (
                     <IconChevronDown size="sm" />
                   )}
-                  <span>{group.title}</span>
+                </button>
+
+                {isRenamingGroup ? (
+                  <InlineRenameInput
+                    value={inlineRename.draft}
+                    maxLength={80}
+                    disabled={inlineRenameSaving}
+                    ariaLabel={`إعادة تسمية فترة ${group.title}`}
+                    onChange={(next) =>
+                      setInlineRename((prev) =>
+                        prev ? { ...prev, draft: next } : prev,
+                      )
+                    }
+                    onCommit={() => {
+                      void commitInlineRename();
+                    }}
+                    onCancel={cancelInlineRename}
+                  />
+                ) : (
+                  <span
+                    className="group-title-text"
+                    title="انقر مرتين لإعادة التسمية أو انقر باليمين للخيارات"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startInlineRename(
+                        'period',
+                        group.id,
+                        group.title,
+                        'desktop-std',
+                      );
+                    }}
+                  >
+                    {group.title}
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  className="group-toggle-rest"
+                  aria-expanded={!isCollapsed}
+                  aria-label={
+                    isCollapsed ? `توسيع ${group.title}` : `طي ${group.title}`
+                  }
+                  onClick={() => toggleGroup(group.id)}
+                >
                   <span className="panel-meta nums">({groupActions.length})</span>
-                </span>
 
-                {liveWin && (
-                  <span className="panel-meta nums" dir="ltr">
-                    {formatHhmmInTz(liveWin.startInstant, settings.iana_timezone)}{' '}
-                    -{' '}
-                    {formatHhmmInTz(liveWin.endInstant, settings.iana_timezone)}
-                  </span>
-                )}
+                  {liveWin && (
+                    <span className="panel-meta nums" dir="ltr">
+                      {formatHhmmInTz(liveWin.startInstant, settings.iana_timezone)}{' '}
+                      -{' '}
+                      {formatHhmmInTz(liveWin.endInstant, settings.iana_timezone)}
+                    </span>
+                  )}
 
-                {liveWin && (
-                  <span className="horizon-track" aria-hidden="true">
-                    <span
-                      className={`horizon-fill ${liveWin.isPreExpiry ? 'closing' : ''}`}
-                      style={{ width: `${Math.round(liveWin.elapsedRatio * 100)}%` }}
-                    />
-                  </span>
-                )}
-              </button>
+                  {liveWin && (
+                    <span className="horizon-track" aria-hidden="true">
+                      <span
+                        className={`horizon-fill ${liveWin.isPreExpiry ? 'closing' : ''}`}
+                        style={{
+                          width: `${Math.round(liveWin.elapsedRatio * 100)}%`,
+                        }}
+                      />
+                    </span>
+                  )}
+                </button>
+              </div>
 
               <div className="group-row-actions">
                 <button
@@ -3489,7 +3875,19 @@ export function WeekView({
                 data-period-side={group.side}
                 {...itemProps}
               >
-                <td className="cell-title" role="rowheader" title={action.title}>
+                <td
+                  className="cell-title"
+                  role="rowheader"
+                  title={action.title}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openActionEntityMenu(
+                      action,
+                      { x: e.clientX, y: e.clientY },
+                      'desktop-std',
+                    );
+                  }}
+                >
                   <div className="cell-title-inner">
                     <button
                       type="button"
@@ -3505,21 +3903,50 @@ export function WeekView({
                     >
                       <IconGripVertical size="sm" />
                     </button>
-                    <button
-                      type="button"
-                      className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
-                        isRowCrosshair ? 'is-row-crosshair' : ''
-                      }`}
-                      aria-label={`تحديد صف ${action.title}`}
-                      onClick={(e) => handleSelectActionRow(rowIndex, e)}
-                    >
-                      <span className="cell-title-text">{action.title}</span>
-                      {tv && (
-                        <span className="target-tag nums ms-1">
-                          {tv.target_label}
-                        </span>
-                      )}
-                    </button>
+                    {inlineRename?.kind === 'action' &&
+                    inlineRename.id === action.id &&
+                    inlineRename.surface === 'desktop-std' ? (
+                      <InlineRenameInput
+                        value={inlineRename.draft}
+                        maxLength={120}
+                        disabled={inlineRenameSaving}
+                        ariaLabel={`إعادة تسمية عمل ${action.title}`}
+                        onChange={(next) =>
+                          setInlineRename((prev) =>
+                            prev ? { ...prev, draft: next } : prev,
+                          )
+                        }
+                        onCommit={() => {
+                          void commitInlineRename();
+                        }}
+                        onCancel={cancelInlineRename}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
+                          isRowCrosshair ? 'is-row-crosshair' : ''
+                        }`}
+                        aria-label={`تحديد صف ${action.title}`}
+                        onClick={(e) => handleSelectActionRow(rowIndex, e)}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          startInlineRename(
+                            'action',
+                            action.id,
+                            action.title,
+                            'desktop-std',
+                          );
+                        }}
+                      >
+                        <span className="cell-title-text">{action.title}</span>
+                        {tv && (
+                          <span className="target-tag nums ms-1">
+                            {tv.target_label}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </td>
 
@@ -3548,35 +3975,174 @@ export function WeekView({
     const groupActions = actionsByPeriodId.get(group.id) ?? [];
     if (groupActions.length === 0) return null;
     const isCollapsed = Boolean(collapsedGroups[group.id]);
+    const isRenamingGroup =
+      inlineRename?.kind === 'period' &&
+      inlineRename.id === group.id &&
+      inlineRename.surface === 'mobile-compact';
 
     return (
       <React.Fragment key={group.id}>
         <tr className="group-row">
           <td colSpan={9}>
-            <button
-              type="button"
-              className="group-toggle"
-              aria-expanded={!isCollapsed}
-              onClick={() => toggleGroup(group.id)}
+            <div
+              className="group-row-bar"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openPeriodEntityMenu(
+                  group,
+                  { x: e.clientX, y: e.clientY },
+                  'mobile-compact',
+                  { showCollapseToggle: true },
+                );
+              }}
             >
-              <span className="group-toggle-start">
-                {isCollapsed ? (
-                  <IconChevronLeft size="sm" />
+              <div className="group-toggle-wrap">
+                <button
+                  type="button"
+                  className="group-chevron-btn"
+                  aria-expanded={!isCollapsed}
+                  aria-label={
+                    isCollapsed ? `توسيع ${group.title}` : `طي ${group.title}`
+                  }
+                  onClick={() => toggleGroup(group.id)}
+                >
+                  {isCollapsed ? (
+                    <IconChevronLeft size="sm" />
+                  ) : (
+                    <IconChevronDown size="sm" />
+                  )}
+                </button>
+                {isRenamingGroup ? (
+                  <InlineRenameInput
+                    value={inlineRename.draft}
+                    maxLength={80}
+                    disabled={inlineRenameSaving}
+                    ariaLabel={`إعادة تسمية فترة ${group.title}`}
+                    onChange={(next) =>
+                      setInlineRename((prev) =>
+                        prev ? { ...prev, draft: next } : prev,
+                      )
+                    }
+                    onCommit={() => {
+                      void commitInlineRename();
+                    }}
+                    onCancel={cancelInlineRename}
+                  />
                 ) : (
-                  <IconChevronDown size="sm" />
+                  <span
+                    className="group-title-text"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startInlineRename(
+                        'period',
+                        group.id,
+                        group.title,
+                        'mobile-compact',
+                      );
+                    }}
+                  >
+                    {group.title}
+                  </span>
                 )}
-                <span>{group.title}</span>
-                <span className="panel-meta nums">({groupActions.length})</span>
-              </span>
-            </button>
+                <button
+                  type="button"
+                  className="group-toggle-rest"
+                  aria-expanded={!isCollapsed}
+                  aria-label={
+                    isCollapsed ? `توسيع ${group.title}` : `طي ${group.title}`
+                  }
+                  onClick={() => toggleGroup(group.id)}
+                >
+                  <span className="panel-meta nums">({groupActions.length})</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn btn-icon m-entity-menu-btn"
+                aria-label={`خيارات فترة ${group.title}`}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  openPeriodEntityMenu(
+                    group,
+                    { x: r.left, y: r.bottom + 4 },
+                    'mobile-compact',
+                    { showCollapseToggle: true },
+                  );
+                }}
+              >
+                <IconMoreDots size="sm" />
+              </button>
+            </div>
           </td>
         </tr>
 
         {!isCollapsed &&
           groupActions.map((action) => (
             <tr key={action.id} className="data-row">
-              <td className="cell-title" title={action.title}>
-                {action.title}
+              <td
+                className="cell-title"
+                title={action.title}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openActionEntityMenu(
+                    action,
+                    { x: e.clientX, y: e.clientY },
+                    'mobile-compact',
+                  );
+                }}
+              >
+                <div className="cell-title-inner">
+                  {inlineRename?.kind === 'action' &&
+                  inlineRename.id === action.id &&
+                  inlineRename.surface === 'mobile-compact' ? (
+                    <InlineRenameInput
+                      value={inlineRename.draft}
+                      maxLength={120}
+                      disabled={inlineRenameSaving}
+                      compact
+                      ariaLabel={`إعادة تسمية عمل ${action.title}`}
+                      onChange={(next) =>
+                        setInlineRename((prev) =>
+                          prev ? { ...prev, draft: next } : prev,
+                        )
+                      }
+                      onCommit={() => {
+                        void commitInlineRename();
+                      }}
+                      onCancel={cancelInlineRename}
+                    />
+                  ) : (
+                    <span
+                      className="cell-title-text"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        startInlineRename(
+                          'action',
+                          action.id,
+                          action.title,
+                          'mobile-compact',
+                        );
+                      }}
+                    >
+                      {action.title}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-icon m-entity-menu-btn is-compact-cell"
+                    aria-label={`خيارات عمل ${action.title}`}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      openActionEntityMenu(
+                        action,
+                        { x: r.left, y: r.bottom + 4 },
+                        'mobile-compact',
+                      );
+                    }}
+                  >
+                    <IconMoreDots size="sm" />
+                  </button>
+                </div>
               </td>
               {weekDates.map((d) => {
                 const display = resolveDisplay(action, d);
@@ -3610,9 +4176,7 @@ export function WeekView({
                       onClick={(e) => {
                         if (nonInteractive) return;
                         if (longPress.shouldSuppressClick(e, cellKey)) return;
-                        void handleCellPrimaryCycle(action, d, display, {
-                          showUndoToast: true,
-                        });
+                        void handleCellPrimaryCycle(action, d, display);
                       }}
                       onContextMenu={(e) => {
                         if (nonInteractive) return;
@@ -3770,15 +4334,42 @@ export function WeekView({
                             rowSpan={groupActions.length}
                             data-period-id={group.id}
                             data-period-side={side}
-                            onPointerDown={(e) =>
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              openPeriodEntityMenu(
+                                group,
+                                { x: e.clientX, y: e.clientY },
+                                'desktop-glance',
+                                { showCollapseToggle: false },
+                              );
+                            }}
+                            onPointerDown={(e) => {
+                              if (
+                                inlineRename?.kind === 'period' &&
+                                inlineRename.id === group.id &&
+                                inlineRename.surface === 'desktop-glance'
+                              ) {
+                                return;
+                              }
                               handlePeriodHeaderPointerDown(
                                 e,
                                 group,
                                 activeDayCol,
-                              )
-                            }
+                              );
+                            }}
                             onClick={(e) => {
-                              if ((e.target as Element | null)?.closest('button')) {
+                              if (
+                                inlineRename?.kind === 'period' &&
+                                inlineRename.id === group.id &&
+                                inlineRename.surface === 'desktop-glance'
+                              ) {
+                                return;
+                              }
+                              if (
+                                (e.target as Element | null)?.closest(
+                                  'button, input',
+                                )
+                              ) {
                                 return;
                               }
                               if (suppressNextPeriodClickRef.current) {
@@ -3793,28 +4384,58 @@ export function WeekView({
                             }}
                           >
                             <div className="cell-period-inner">
-                              <button
-                                type="button"
-                                className={`period-select-btn ${
-                                  isPeriodSelected ? 'is-period-selected' : ''
-                                }`}
-                                data-period-id={group.id}
-                                data-period-side={side}
-                                aria-label={`تحديد فترة ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
-                                onClick={(e) => {
-                                  if (suppressNextPeriodClickRef.current) {
-                                    suppressNextPeriodClickRef.current = false;
-                                    return;
+                              {inlineRename?.kind === 'period' &&
+                              inlineRename.id === group.id &&
+                              inlineRename.surface === 'desktop-glance' ? (
+                                <InlineRenameInput
+                                  value={inlineRename.draft}
+                                  maxLength={80}
+                                  disabled={inlineRenameSaving}
+                                  compact
+                                  ariaLabel={`إعادة تسمية فترة ${group.title}`}
+                                  onChange={(next) =>
+                                    setInlineRename((prev) =>
+                                      prev ? { ...prev, draft: next } : prev,
+                                    )
                                   }
-                                  handleSelectPeriodColumn(
-                                    group.id,
-                                    activeDayCol,
-                                    e,
-                                  );
-                                }}
-                              >
-                                {group.title}
-                              </button>
+                                  onCommit={() => {
+                                    void commitInlineRename();
+                                  }}
+                                  onCancel={cancelInlineRename}
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`period-select-btn ${
+                                    isPeriodSelected ? 'is-period-selected' : ''
+                                  }`}
+                                  data-period-id={group.id}
+                                  data-period-side={side}
+                                  aria-label={`تحديد فترة ${group.title} ليوم ${formatArabicDateFull(activeDayDate)}`}
+                                  onClick={(e) => {
+                                    if (suppressNextPeriodClickRef.current) {
+                                      suppressNextPeriodClickRef.current = false;
+                                      return;
+                                    }
+                                    handleSelectPeriodColumn(
+                                      group.id,
+                                      activeDayCol,
+                                      e,
+                                    );
+                                  }}
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    startInlineRename(
+                                      'period',
+                                      group.id,
+                                      group.title,
+                                      'desktop-glance',
+                                    );
+                                  }}
+                                >
+                                  {group.title}
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 className={`period-quick-done-btn ${
@@ -3844,19 +4465,61 @@ export function WeekView({
                             </div>
                           </td>
                         )}
-                        <td className="cell-title" role="rowheader" title={action.title}>
-                          <button
-                            type="button"
-                            className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
-                              isRowCrosshair ? 'is-row-crosshair' : ''
-                            }`}
-                            aria-label={`تحديد صف ${action.title}`}
-                            onClick={(e) => handleSelectActionRow(rowIndex, e)}
-                          >
-                            <span className="cell-title-text">
-                              {action.title}
-                            </span>
-                          </button>
+                        <td
+                          className="cell-title"
+                          role="rowheader"
+                          title={action.title}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            openActionEntityMenu(
+                              action,
+                              { x: e.clientX, y: e.clientY },
+                              'desktop-glance',
+                            );
+                          }}
+                        >
+                          {inlineRename?.kind === 'action' &&
+                          inlineRename.id === action.id &&
+                          inlineRename.surface === 'desktop-glance' ? (
+                            <InlineRenameInput
+                              value={inlineRename.draft}
+                              maxLength={120}
+                              disabled={inlineRenameSaving}
+                              compact
+                              ariaLabel={`إعادة تسمية عمل ${action.title}`}
+                              onChange={(next) =>
+                                setInlineRename((prev) =>
+                                  prev ? { ...prev, draft: next } : prev,
+                                )
+                              }
+                              onCommit={() => {
+                                void commitInlineRename();
+                              }}
+                              onCancel={cancelInlineRename}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className={`row-title-btn ${isRowSelected ? 'is-row-selected' : ''} ${
+                                isRowCrosshair ? 'is-row-crosshair' : ''
+                              }`}
+                              aria-label={`تحديد صف ${action.title}`}
+                              onClick={(e) => handleSelectActionRow(rowIndex, e)}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                startInlineRename(
+                                  'action',
+                                  action.id,
+                                  action.title,
+                                  'desktop-glance',
+                                );
+                              }}
+                            >
+                              <span className="cell-title-text">
+                                {action.title}
+                              </span>
+                            </button>
+                          )}
                         </td>
                         {weekDates.map((d, colIdx) => {
                           const abbr =
@@ -4158,7 +4821,7 @@ export function WeekView({
                     getTargetCoords(),
                     { kind: 'DONE', percentValue: null },
                     {
-                      showToast: true,
+                      announceFeedback: true,
                       actionNameAr: 'تم تحديد تم للكل',
                       clearSelection: true,
                       restoreFocus: true,
@@ -4179,7 +4842,7 @@ export function WeekView({
                     getTargetCoords(),
                     { kind: 'MISSED', percentValue: null },
                     {
-                      showToast: true,
+                      announceFeedback: true,
                       actionNameAr: 'تم تحديد فات للكل',
                       clearSelection: true,
                       restoreFocus: true,
@@ -4201,7 +4864,7 @@ export function WeekView({
                       getTargetCoords(),
                       { kind: 'PERCENT', percentValue: 50 },
                       {
-                        showToast: true,
+                        announceFeedback: true,
                         actionNameAr: 'تم تحديد 50%',
                         clearSelection: true,
                         restoreFocus: true,
@@ -4222,7 +4885,7 @@ export function WeekView({
                       getTargetCoords(),
                       { kind: 'QADAA_DONE', percentValue: null },
                       {
-                        showToast: true,
+                        announceFeedback: true,
                         actionNameAr: 'تم تسجيل القضاء',
                         clearSelection: true,
                         restoreFocus: true,
@@ -4244,7 +4907,7 @@ export function WeekView({
                     getTargetCoords(),
                     { kind: 'DISABLED', percentValue: null },
                     {
-                      showToast: true,
+                      announceFeedback: true,
                       actionNameAr: 'تم تعطيل',
                       clearSelection: true,
                       restoreFocus: true,
@@ -4264,7 +4927,7 @@ export function WeekView({
                     getTargetCoords(),
                     { kind: 'EMPTY', percentValue: null },
                     {
-                      showToast: true,
+                      announceFeedback: true,
                       actionNameAr: 'تم مسح الحالات',
                       clearSelection: true,
                       restoreFocus: true,
@@ -4365,7 +5028,7 @@ export function WeekView({
                   getTargetCoords(),
                   { kind: 'DONE', percentValue: null },
                   {
-                    showToast: true,
+                    announceFeedback: true,
                     actionNameAr: 'تم تحديد تم للكل',
                     clearSelection: true,
                     restoreFocus: true,
@@ -4389,7 +5052,7 @@ export function WeekView({
                   getTargetCoords(),
                   { kind: 'MISSED', percentValue: null },
                   {
-                    showToast: true,
+                    announceFeedback: true,
                     actionNameAr: 'تم تحديد فات للكل',
                     clearSelection: true,
                     restoreFocus: true,
@@ -4414,7 +5077,7 @@ export function WeekView({
                     getTargetCoords(),
                     { kind: 'PERCENT', percentValue: 50 },
                     {
-                      showToast: true,
+                      announceFeedback: true,
                       actionNameAr: 'تم تحديد 50%',
                       clearSelection: true,
                       restoreFocus: true,
@@ -4439,7 +5102,7 @@ export function WeekView({
                     getTargetCoords(),
                     { kind: 'QADAA_DONE', percentValue: null },
                     {
-                      showToast: true,
+                      announceFeedback: true,
                       actionNameAr: 'تم تسجيل القضاء',
                       clearSelection: true,
                       restoreFocus: true,
@@ -4464,7 +5127,7 @@ export function WeekView({
                   getTargetCoords(),
                   { kind: 'DISABLED', percentValue: null },
                   {
-                    showToast: true,
+                    announceFeedback: true,
                     actionNameAr: 'تم تعطيل',
                     clearSelection: true,
                     restoreFocus: true,
@@ -4488,7 +5151,7 @@ export function WeekView({
                   getTargetCoords(),
                   { kind: 'EMPTY', percentValue: null },
                   {
-                    showToast: true,
+                    announceFeedback: true,
                     actionNameAr: 'تم مسح الحالات',
                     clearSelection: true,
                     restoreFocus: true,
@@ -4619,43 +5282,187 @@ export function WeekView({
               if (groupActions.length === 0) return null;
               const isCollapsed = Boolean(collapsedGroups[group.id]);
 
+              const isRenamingGroup =
+                inlineRename?.kind === 'period' &&
+                inlineRename.id === group.id &&
+                inlineRename.surface === 'mobile-cards';
+
               return (
                 <section key={group.id} className="panel">
-                  <button
-                    type="button"
-                    className="group-toggle"
-                    aria-expanded={!isCollapsed}
+                  <div
+                    className="m-period-head"
                     style={{
                       background: 'var(--bg-subtle)',
                       borderBlockEnd: isCollapsed
                         ? 'none'
                         : '1px solid var(--border-hairline)',
                     }}
-                    onClick={() => toggleGroup(group.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      openPeriodEntityMenu(
+                        group,
+                        { x: e.clientX, y: e.clientY },
+                        'mobile-cards',
+                        { showCollapseToggle: true },
+                      );
+                    }}
                   >
-                    <span className="group-toggle-start">
-                      {isCollapsed ? (
-                        <IconChevronLeft size="sm" />
+                    <div className="group-toggle-wrap">
+                      <button
+                        type="button"
+                        className="group-chevron-btn"
+                        aria-expanded={!isCollapsed}
+                        aria-label={
+                          isCollapsed
+                            ? `توسيع ${group.title}`
+                            : `طي ${group.title}`
+                        }
+                        onClick={() => toggleGroup(group.id)}
+                      >
+                        {isCollapsed ? (
+                          <IconChevronLeft size="sm" />
+                        ) : (
+                          <IconChevronDown size="sm" />
+                        )}
+                      </button>
+
+                      {isRenamingGroup ? (
+                        <InlineRenameInput
+                          value={inlineRename.draft}
+                          maxLength={80}
+                          disabled={inlineRenameSaving}
+                          ariaLabel={`إعادة تسمية فترة ${group.title}`}
+                          onChange={(next) =>
+                            setInlineRename((prev) =>
+                              prev ? { ...prev, draft: next } : prev,
+                            )
+                          }
+                          onCommit={() => {
+                            void commitInlineRename();
+                          }}
+                          onCancel={cancelInlineRename}
+                        />
                       ) : (
-                        <IconChevronDown size="sm" />
+                        <span
+                          className="group-title-text"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            startInlineRename(
+                              'period',
+                              group.id,
+                              group.title,
+                              'mobile-cards',
+                            );
+                          }}
+                        >
+                          {group.title}
+                        </span>
                       )}
-                      <span>{group.title}</span>
-                    </span>
-                    <span className="panel-meta nums">
-                      {groupActions.length} أعمال
-                    </span>
-                  </button>
+
+                      <button
+                        type="button"
+                        className="group-toggle-rest"
+                        aria-expanded={!isCollapsed}
+                        aria-label={
+                          isCollapsed
+                            ? `توسيع ${group.title}`
+                            : `طي ${group.title}`
+                        }
+                        onClick={() => toggleGroup(group.id)}
+                      >
+                        <span className="panel-meta nums">
+                          {groupActions.length} أعمال
+                        </span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-icon m-entity-menu-btn"
+                      aria-label={`خيارات فترة ${group.title}`}
+                      onClick={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        openPeriodEntityMenu(
+                          group,
+                          { x: r.left, y: r.bottom + 4 },
+                          'mobile-cards',
+                          { showCollapseToggle: true },
+                        );
+                      }}
+                    >
+                      <IconMoreDots size="sm" />
+                    </button>
+                  </div>
 
                   {!isCollapsed &&
                     groupActions.map((action) => (
                       <div key={action.id} className="m-whoop-row">
-                        <div className="m-whoop-head">
-                          <span className="text-sm font-medium">
-                            {action.title}
-                          </span>
-                          <span className="panel-meta nums">
-                            {computeWeekRate(action)}
-                          </span>
+                        <div
+                          className="m-whoop-head"
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            openActionEntityMenu(
+                              action,
+                              { x: e.clientX, y: e.clientY },
+                              'mobile-cards',
+                            );
+                          }}
+                        >
+                          {inlineRename?.kind === 'action' &&
+                          inlineRename.id === action.id &&
+                          inlineRename.surface === 'mobile-cards' ? (
+                            <InlineRenameInput
+                              value={inlineRename.draft}
+                              maxLength={120}
+                              disabled={inlineRenameSaving}
+                              ariaLabel={`إعادة تسمية عمل ${action.title}`}
+                              onChange={(next) =>
+                                setInlineRename((prev) =>
+                                  prev ? { ...prev, draft: next } : prev,
+                                )
+                              }
+                              onCommit={() => {
+                                void commitInlineRename();
+                              }}
+                              onCancel={cancelInlineRename}
+                            />
+                          ) : (
+                            <span
+                              className="m-whoop-title text-sm font-medium"
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                startInlineRename(
+                                  'action',
+                                  action.id,
+                                  action.title,
+                                  'mobile-cards',
+                                );
+                              }}
+                            >
+                              {action.title}
+                            </span>
+                          )}
+                          <div className="m-whoop-head-end">
+                            <span className="panel-meta nums">
+                              {computeWeekRate(action)}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-icon m-entity-menu-btn"
+                              aria-label={`خيارات عمل ${action.title}`}
+                              onClick={(e) => {
+                                const r =
+                                  e.currentTarget.getBoundingClientRect();
+                                openActionEntityMenu(
+                                  action,
+                                  { x: r.left, y: r.bottom + 4 },
+                                  'mobile-cards',
+                                );
+                              }}
+                            >
+                              <IconMoreDots size="sm" />
+                            </button>
+                          </div>
                         </div>
                         <div className="m-whoop-days">
                           {weekDates.map((d) => {
@@ -4711,7 +5518,6 @@ export function WeekView({
                                     action,
                                     d,
                                     display,
-                                    { showUndoToast: true },
                                   );
                                 }}
                                 onContextMenu={(e) => {
@@ -4855,6 +5661,23 @@ export function WeekView({
           </button>
         </div>
       </AppDialog>
+
+      <EntityContextMenu
+        position={entityContextMenu?.position ?? null}
+        title={entityContextMenu?.title}
+        items={entityContextMenu?.items ?? []}
+        onClose={() => setEntityContextMenu(null)}
+      />
+
+      <QuickActionEditDialog
+        action={quickEditAction}
+        onClose={() => setQuickEditActionId(null)}
+      />
+
+      <QuickPeriodEditDialog
+        period={quickEditPeriod}
+        onClose={() => setQuickEditPeriodId(null)}
+      />
     </>
   );
 }

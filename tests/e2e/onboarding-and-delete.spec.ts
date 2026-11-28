@@ -303,7 +303,13 @@ test.describe('2-Step 3-Level Onboarding Wizard & Smart 2-Tier Permanent Delete'
 
     // Verify Dark Mode screenshot on Settings Periods
     await page.getByTestId('theme-toggle-btn').click();
-    await page.getByTestId('accordion-toggle-periods').click();
+    if (
+      (await page
+        .getByTestId('accordion-toggle-periods')
+        .getAttribute('aria-expanded')) !== 'true'
+    ) {
+      await page.getByTestId('accordion-toggle-periods').click();
+    }
     await page.screenshot({
       path: `${SCREENSHOT_DIR}/desktop-settings-periods-dark.png`,
       fullPage: false,

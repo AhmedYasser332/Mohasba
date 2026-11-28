@@ -75,8 +75,10 @@ describe('crosshair-prefs', () => {
 
     const html1 = renderToStaticMarkup(React.createElement(SsrProbe));
     const html2 = renderToStaticMarkup(React.createElement(SsrProbe));
-    expect(html1).toBe('<span>both:100:smooth:false</span>');
+    expect(html1).toBe('<span>both:100:instant:false</span>');
     expect(html2).toBe(html1);
+    expect(DEFAULT_CROSSHAIR_PREFS.motion).toBe('instant');
+    expect(DEFAULT_CROSSHAIR_PREFS.showFocusFallback).toBe(false);
   });
 
   it('clamps opacity to 20..220 rounded to nearest step of 10 and falls back on malformed JSON or invalid values', () => {
@@ -114,7 +116,7 @@ describe('crosshair-prefs', () => {
     expect(getCrosshairPrefsSnapshot()).toEqual({
       mode: 'both',
       opacity: 150,
-      motion: 'smooth',
+      motion: 'instant',
       showHeaderIndicator: true,
       showFocusFallback: false,
       coverPeriodColumn: true,
@@ -128,16 +130,16 @@ describe('crosshair-prefs', () => {
     const updated = updateCrosshairPrefs({
       mode: 'row',
       opacity: 180,
-      motion: 'instant',
+      motion: 'smooth',
       coverPeriodColumn: true,
     });
 
     expect(updated).toEqual({
       mode: 'row',
       opacity: 180,
-      motion: 'instant',
+      motion: 'smooth',
       showHeaderIndicator: true,
-      showFocusFallback: true,
+      showFocusFallback: false,
       coverPeriodColumn: true,
     });
 

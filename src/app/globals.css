@@ -2674,5 +2674,166 @@ table.analytics-table {
   font-weight: 600;
 }
 
+/* Simultaneous Overlapping Live Periods ("الآن") */
+.now-concurrent-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.now-concurrent-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-inline: 4px;
+  min-width: 0;
+}
+
+.now-concurrent-divider-rule {
+  flex: 1 1 24px;
+  height: 1px;
+  background: var(--border-strong);
+}
+
+.now-concurrent-divider-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-block: 3px;
+  padding-inline: 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--accent-live);
+  background: var(--accent-live-soft);
+  color: var(--accent-live);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.window-header-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.window-header-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.window-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+
+.window-edit-btn:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-hairline);
+  color: var(--ink-primary);
+}
+
+@media (pointer: coarse), (max-width: 639px) {
+  .window-edit-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.now-action-menu-btn {
+  display: none;
+}
+
+@media (pointer: coarse), (max-width: 1023px) {
+  .now-action-menu-btn {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* Inline Rename & Editable Titles */
+.is-editable-title {
+  cursor: text;
+  border-radius: var(--r-cell);
+  transition: color var(--t-fast);
+}
+
+.is-editable-title:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 4px;
+}
+
+.inline-rename-input {
+  flex: 1;
+  min-width: 0;
+  width: min(260px, 100%);
+  max-width: 100%;
+  min-height: 28px;
+  padding-block: 2px;
+  padding-inline: 7px;
+  border: 1px solid var(--accent-live);
+  border-radius: var(--r-control);
+  background: var(--bg-surface);
+  color: var(--ink-primary);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.35;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-live-soft);
+}
+
+.inline-rename-input.is-compact {
+  height: 21px;
+  min-height: 0;
+  font-size: 0.74rem;
+  padding: 0 5px;
+}
+
+.inline-rename-input.inline-rename-input-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  min-height: 34px;
+}
+
+/* Shared Entity Context Menu (Action & Period Rename/Edit) */
+.entity-context-menu {
+  z-index: 90;
+}
+
+.entity-context-menu-title {
+  padding-block: 5px;
+  padding-inline: 10px;
+  border-block-end: 1px solid var(--border-hairline);
+  margin-block-end: 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @import "./ux-week.css";
 @import "./ux-settings.css";

@@ -460,9 +460,21 @@ test.describe('Slice 5: Full 5-View E2E (Qadaa, Analytics, Settings, Target Evol
     }
 
     await expect(page.getByTestId('settings-offline-banner')).toBeVisible();
-    await page.getByTestId('accordion-toggle-periods').click();
+    if (
+      (await page
+        .getByTestId('accordion-toggle-periods')
+        .getAttribute('aria-expanded')) !== 'true'
+    ) {
+      await page.getByTestId('accordion-toggle-periods').click();
+    }
     await expect(page.getByTestId('add-period-btn')).toBeDisabled();
-    await page.getByTestId('accordion-toggle-backup').click();
+    if (
+      (await page
+        .getByTestId('accordion-toggle-backup')
+        .getAttribute('aria-expanded')) !== 'true'
+    ) {
+      await page.getByTestId('accordion-toggle-backup').click();
+    }
     await expect(page.getByTestId('export-full-btn')).toBeDisabled();
     await expect(page.getByTestId('export-emergency-btn')).toBeEnabled();
 

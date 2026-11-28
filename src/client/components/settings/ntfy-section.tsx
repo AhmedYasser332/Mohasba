@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AR_STRINGS, type NtfyMode, type NtfySource, type Period } from '@/domain';
 import { useMohasba } from '../../store/mohasba-provider';
 import { generateSecureNtfyTopicUrl } from '../../utils/presets';
@@ -22,6 +22,40 @@ interface NtfyFormDraft {
   backupReminderEnabled?: boolean;
 }
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (
+    typeof navigator !== 'undefined' &&
+    navigator.clipboard &&
+    typeof navigator.clipboard.writeText === 'function'
+  ) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall back to temporary input copy below
+    }
+  }
+  if (typeof document === 'undefined' || !document.body) return false;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = text;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.top = '-9999px';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  try {
+    input.focus();
+    input.select();
+    input.setSelectionRange(0, text.length);
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(input);
+  }
+}
+
 export function NtfySection() {
   const {
     settings,
@@ -35,12 +69,20 @@ export function NtfySection() {
     updatePeriod,
     refreshBootstrap,
     testNtfy,
+    revealNtfyTopicUrl,
   } = useMohasba();
 
   const [draft, setDraft] = useState<NtfyFormDraft>({});
   const [topicUrlDraft, setTopicUrlDraft] = useState('');
   const [tokenDraft, setTokenDraft] = useState('');
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedSavedUrl, setCopiedSavedUrl] = useState(false);
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealedFallbackUrl, setRevealedFallbackUrl] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => () => setRevealedFallbackUrl(null), []);
 
   const [offsetDrafts, setOffsetDrafts] = useState<Record<string, string>>({});
 
@@ -89,15 +131,83 @@ export function NtfySection() {
   const handleCopyTopicUrl = async () => {
     const value = topicUrlDraft.trim();
     if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
+    const copied = await copyTextToClipboard(value);
+    if (copied) {
       setCopiedUrl(true);
       setTimeout(() => setCopiedUrl(false), 2000);
-    } catch {
+    } else {
       setFeedback({
         text: 'تعذر النسخ التلقائي؛ يمكنك تحديد الرابط ونسخه يدوياً.',
         isError: true,
       });
+    }
+  };
+
+  const handleCopySavedTopicUrl = async () => {
+    if (!ntfyConfigured || !isOnline || revealBusy || busy) return;
+    setRevealBusy(true);
+    setFeedback(null);
+    setRevealedFallbackUrl(null);
+    try {
+      const revealPromise = revealNtfyTopicUrl();
+
+      if (
+        typeof ClipboardItem !== 'undefined' &&
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.write === 'function'
+      ) {
+        try {
+          const blobPromise = revealPromise.then((res) => {
+            if (!res.ok || !res.data?.url) {
+              throw new Error(res.errorMessage ?? 'REVEAL_FAILED');
+            }
+            return new Blob([res.data.url], { type: 'text/plain' });
+          });
+          void blobPromise.catch(() => {});
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'text/plain': blobPromise }),
+          ]);
+          setCopiedSavedUrl(true);
+          setFeedback({
+            text: 'تم نسخ الرابط الحالي إلى الحافظة.',
+            isError: false,
+          });
+          setTimeout(() => setCopiedSavedUrl(false), 2500);
+          return;
+        } catch {
+          // Fall through to inspect revealPromise result and legacy fallback
+        }
+      }
+
+      const res = await revealPromise;
+      if (!res.ok || !res.data?.url) {
+        setFeedback({
+          text:
+            res.errorCode === 'NTFY_NOT_CONFIGURED'
+              ? 'قناة ntfy غير مهيأة بعد.'
+              : (res.errorMessage ?? 'تعذر استرجاع رابط القناة الحالي.'),
+          isError: true,
+        });
+        return;
+      }
+      const copied = await copyTextToClipboard(res.data.url);
+      if (copied) {
+        setCopiedSavedUrl(true);
+        setFeedback({
+          text: 'تم نسخ الرابط الحالي إلى الحافظة.',
+          isError: false,
+        });
+        setTimeout(() => setCopiedSavedUrl(false), 2500);
+      } else {
+        setRevealedFallbackUrl(res.data.url);
+        setFeedback({
+          text: 'تعذر النسخ التلقائي؛ تم إظهار الرابط مؤقتاً لتحديده ونسخه يدوياً.',
+          isError: false,
+        });
+      }
+    } finally {
+      setRevealBusy(false);
     }
   };
 
@@ -109,6 +219,8 @@ export function NtfySection() {
       const res = await updateSettings({ ntfy_topic_url: null });
       if (res.ok) {
         setTopicUrlDraft('');
+        setRevealedFallbackUrl(null);
+        setCopiedSavedUrl(false);
         setFeedback({
           text: 'تم مسح القناة المحفوظة في التطبيق والعودة لإعداد الخادم إن وُجد.',
           isError: false,
@@ -184,6 +296,8 @@ export function NtfySection() {
         setDraft({});
         setTopicUrlDraft('');
         setTokenDraft('');
+        setRevealedFallbackUrl(null);
+        setCopiedSavedUrl(false);
         setFeedback({
           text: 'تم حفظ إعدادات تنبيهات ntfy بنجاح.',
           isError: false,
@@ -485,6 +599,31 @@ export function NtfySection() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {ntfyConfigured && (
+                  <button
+                    type="button"
+                    className="btn"
+                    data-testid="ntfy-copy-saved-url-btn"
+                    disabled={!isOnline || busy || revealBusy}
+                    onClick={() => {
+                      void handleCopySavedTopicUrl();
+                    }}
+                  >
+                    {copiedSavedUrl ? (
+                      <>
+                        <IconCheck size="sm" />
+                        <span>تم نسخ الرابط الحالي</span>
+                      </>
+                    ) : (
+                      <>
+                        <IconCopy size="sm" />
+                        <span>
+                          {revealBusy ? 'جاري التحضير...' : 'نسخ الرابط الحالي'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                )}
                 {ntfySource === 'db' && (
                   <button
                     type="button"
@@ -514,6 +653,31 @@ export function NtfySection() {
                   </button>
                 )}
               </div>
+
+              {revealedFallbackUrl && (
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  data-testid="ntfy-revealed-fallback-wrap"
+                >
+                  <input
+                    type="text"
+                    readOnly
+                    dir="ltr"
+                    className="field-input nums ntfy-url-input flex-1"
+                    aria-label="رابط قناة ntfy الحالي"
+                    value={revealedFallbackUrl}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onClick={(e) => e.currentTarget.select()}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setRevealedFallbackUrl(null)}
+                  >
+                    إخفاء
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -524,7 +688,7 @@ export function NtfySection() {
             <div className="ntfy-step-content">
               <strong>احفظ الإعدادات واضغط «تجربة التنبيه» للتحقق</strong>
               <span className="panel-meta">
-                لا يُعاد عرض الرابط السري أو التوكن نصاً بعد الحفظ ولا يُضمّنان في ملفات النسخ الاحتياطي.
+                يبقى الرابط السري والتوكن مخفيّين افتراضياً ولا يُضمّنان في ملفات النسخ الاحتياطي، ويمكنك نسخ الرابط عند الحاجة من زر «نسخ الرابط الحالي» أعلاه.
               </span>
             </div>
           </div>

@@ -39,6 +39,31 @@ export interface NtfyTestResult {
   status: number;
 }
 
+export interface NtfyRevealResult {
+  url: string;
+  source: 'db' | 'env';
+}
+
+export async function revealNtfyTopicUrl(
+  config: RuntimeConfig,
+  supabase: SupabaseClient,
+): Promise<NtfyRevealResult> {
+  const { ntfyTopicUrlDb } = await fetchAppSettingsWithNtfySecrets(supabase);
+
+  if (ntfyTopicUrlDb) {
+    return { url: ntfyTopicUrlDb, source: 'db' };
+  }
+  if (config.ntfyTopicUrl) {
+    return { url: config.ntfyTopicUrl, source: 'env' };
+  }
+
+  throw new ServiceError(
+    400,
+    'NTFY_NOT_CONFIGURED',
+    'NTFY_TOPIC_URL is not configured.',
+  );
+}
+
 export async function sendTestNtfy(
   config: RuntimeConfig,
   supabase: SupabaseClient,

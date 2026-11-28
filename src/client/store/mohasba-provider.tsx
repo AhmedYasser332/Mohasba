@@ -131,7 +131,11 @@ export interface MohasbaContextValue {
   openQadaaQueue: QadaaQueueItem[];
   catchUp48hItems: CatchUpItem[];
   adaptingActionIds: ReadonlySet<string>;
-  logCellTap: (input: CellMutationInput, holdMs?: number) => Promise<EnqueueResult>;
+  logCellTap: (
+    input: CellMutationInput,
+    holdMs?: number,
+    showUndoToast?: boolean,
+  ) => Promise<EnqueueResult>;
   logCellBatch: (
     inputs: readonly CellMutationInput[],
     holdMs?: number,
@@ -143,6 +147,8 @@ export interface MohasbaContextValue {
   logBulkDeferToQadaa: (logDate: string) => Promise<EnqueueResult>;
   undoMutation: (mutationId: string) => Promise<UndoResult>;
   undoBatch: (batchId: string) => Promise<UndoResult>;
+  undoLastAction: () => Promise<UndoResult>;
+  getLastUndoCreatedAt: () => number | null;
   dismissUndoToast: () => void;
   flushOutbox: () => Promise<FlushResult>;
   refreshBootstrap: (options?: { full?: boolean }) => Promise<boolean>;
@@ -165,6 +171,9 @@ export interface MohasbaContextValue {
   resetWorkspace: () => Promise<CrudResponse>;
   updateSettings: (patch: Record<string, unknown>) => Promise<CrudResponse>;
   testNtfy: () => Promise<CrudResponse>;
+  revealNtfyTopicUrl: () => Promise<
+    CrudResponse<{ url: string; source: 'db' | 'env' }>
+  >;
   createPeriod: (input: Record<string, unknown>) => Promise<CrudResponse>;
   updatePeriod: (
     id: string,
@@ -267,6 +276,7 @@ export function MohasbaProvider({
   const sessionEpochRef = useRef(0);
   const bootstrapAbortRef = useRef<AbortController | null>(null);
   const inFlightBootstrapRef = useRef<Promise<boolean> | null>(null);
+  const lastUndoTargetRef = useRef<(ActiveUndoToast & { createdAt: number }) | null>(null);
 
   const syncStateFromIdb = useCallback(async () => {
     const state = await engine.readHydrationState();
@@ -547,7 +557,7 @@ export function MohasbaProvider({
     async (
       inputs: readonly CellMutationInput[],
       holdMs: number = DEFAULT_UNDO_HOLD_MS,
-      showUndoToast: boolean = true,
+      showUndoToast: boolean = false,
     ): Promise<EnqueueResult> => {
       const res = await engine.enqueueCellMutations(inputs, {
         targetVersions,
@@ -556,18 +566,22 @@ export function MohasbaProvider({
       await syncStateFromIdb();
 
       if (res.items.length > 0 && holdMs > 0) {
+        const first = res.items[0]!;
+        const now = Date.now();
+        const target: ActiveUndoToast = {
+          id: res.batchId ?? first.mutation_id,
+          kind: res.batchId ? 'batch' : 'single',
+          mutationId: res.batchId ? null : first.mutation_id,
+          batchId: res.batchId,
+          cellCount: res.items.length,
+          expiresAt: now + holdMs,
+        };
+        lastUndoTargetRef.current = { ...target, createdAt: now };
         if (showUndoToast) {
-          const first = res.items[0]!;
-          setActiveUndoToast({
-            id: res.batchId ?? first.mutation_id,
-            kind: res.batchId ? 'batch' : 'single',
-            mutationId: res.batchId ? null : first.mutation_id,
-            batchId: res.batchId,
-            cellCount: res.items.length,
-            expiresAt: Date.now() + holdMs,
-          });
+          setActiveUndoToast(target);
         }
       } else if (res.items.length > 0) {
+        lastUndoTargetRef.current = null;
         void flushOutbox();
       }
 
@@ -580,7 +594,8 @@ export function MohasbaProvider({
     async (
       input: CellMutationInput,
       holdMs: number = DEFAULT_UNDO_HOLD_MS,
-    ): Promise<EnqueueResult> => enqueueAndSchedule([input], holdMs, true),
+      showUndoToast: boolean = false,
+    ): Promise<EnqueueResult> => enqueueAndSchedule([input], holdMs, showUndoToast),
     [enqueueAndSchedule],
   );
 
@@ -588,7 +603,7 @@ export function MohasbaProvider({
     async (
       inputs: readonly CellMutationInput[],
       holdMs: number = DEFAULT_UNDO_HOLD_MS,
-      showUndoToast: boolean = true,
+      showUndoToast: boolean = false,
     ): Promise<EnqueueResult> => enqueueAndSchedule(inputs, holdMs, showUndoToast),
     [enqueueAndSchedule],
   );
@@ -611,6 +626,8 @@ export function MohasbaProvider({
         percent_value: CellMutationInput['percent_value'];
         qadaa_resolved_at: CellMutationInput['qadaa_resolved_at'];
       }[],
+      holdMs: number = DEFAULT_UNDO_HOLD_MS,
+      showUndoToast: boolean = false,
     ): Promise<EnqueueResult> => {
       const actionsById = new Map(actions.map((a) => [a.id, a]));
       const inputs: CellMutationInput[] = [];
@@ -626,7 +643,7 @@ export function MohasbaProvider({
           qadaa_resolved_at: p.qadaa_resolved_at,
         });
       }
-      return enqueueAndSchedule(inputs);
+      return enqueueAndSchedule(inputs, holdMs, showUndoToast);
     },
     [actions, enqueueAndSchedule],
   );
@@ -640,7 +657,7 @@ export function MohasbaProvider({
         periods,
         logsByKey,
       });
-      return enqueuePlannedMutations(planned);
+      return enqueuePlannedMutations(planned, DEFAULT_UNDO_HOLD_MS, false);
     },
     [actions, enqueuePlannedMutations, logsByKey, periods],
   );
@@ -654,7 +671,7 @@ export function MohasbaProvider({
         periods,
         logsByKey,
       });
-      return enqueuePlannedMutations(planned);
+      return enqueuePlannedMutations(planned, DEFAULT_UNDO_HOLD_MS, false);
     },
     [actions, enqueuePlannedMutations, logsByKey, periods],
   );
@@ -693,6 +710,9 @@ export function MohasbaProvider({
   const undoMutation = useCallback(
     async (mutationId: string): Promise<UndoResult> => {
       const res = await engine.undoMutation(mutationId);
+      if (lastUndoTargetRef.current?.mutationId === mutationId) {
+        lastUndoTargetRef.current = null;
+      }
       setActiveUndoToast((prev) =>
         prev?.mutationId === mutationId ? null : prev,
       );
@@ -705,12 +725,39 @@ export function MohasbaProvider({
   const undoBatch = useCallback(
     async (batchId: string): Promise<UndoResult> => {
       const res = await engine.undoBatch(batchId);
+      if (lastUndoTargetRef.current?.batchId === batchId) {
+        lastUndoTargetRef.current = null;
+      }
       setActiveUndoToast((prev) => (prev?.batchId === batchId ? null : prev));
       await syncStateFromIdb();
       return res;
     },
     [engine, syncStateFromIdb],
   );
+
+  const undoLastAction = useCallback(async (): Promise<UndoResult> => {
+    const target = lastUndoTargetRef.current;
+    if (!target || Date.now() > target.expiresAt) {
+      lastUndoTargetRef.current = null;
+      return { undoneCount: 0, cellKeys: [] };
+    }
+    lastUndoTargetRef.current = null;
+    if (target.kind === 'batch' && target.batchId) {
+      return undoBatch(target.batchId);
+    }
+    if (target.mutationId) {
+      return undoMutation(target.mutationId);
+    }
+    return { undoneCount: 0, cellKeys: [] };
+  }, [undoBatch, undoMutation]);
+
+  const getLastUndoCreatedAt = useCallback((): number | null => {
+    const target = lastUndoTargetRef.current;
+    if (!target || Date.now() > target.expiresAt) {
+      return null;
+    }
+    return target.createdAt;
+  }, []);
 
   const dismissUndoToast = useCallback(() => {
     setActiveUndoToast(null);
@@ -763,6 +810,7 @@ export function MohasbaProvider({
   const drainBeforeCrud = useCallback(async () => {
     const res = await engine.drainBeforeCrud();
     await syncStateFromIdb();
+    lastUndoTargetRef.current = null;
     setActiveUndoToast(null);
     if (res.reason === 'auth_required') {
       setAuthStatus('locked');
@@ -956,6 +1004,7 @@ export function MohasbaProvider({
         setTargetVersions([]);
         setLogs([]);
         setOutbox([]);
+        lastUndoTargetRef.current = null;
         setActiveUndoToast(null);
       }
 
@@ -988,6 +1037,17 @@ export function MohasbaProvider({
 
   const testNtfy = useCallback(
     () => executeOnlineCrud('/api/settings/test-ntfy', 'POST', {}),
+    [executeOnlineCrud],
+  );
+
+  const revealNtfyTopicUrl = useCallback(
+    () =>
+      executeOnlineCrud<{ url: string; source: 'db' | 'env' }>(
+        '/api/settings/ntfy-reveal',
+        'POST',
+        undefined,
+        { skipDrain: true, skipRefresh: true },
+      ),
     [executeOnlineCrud],
   );
 
@@ -1120,6 +1180,7 @@ export function MohasbaProvider({
       setLastSyncedAt(null);
       setConsecutiveFailures(0);
       setHasAuthError(false);
+      lastUndoTargetRef.current = null;
       setActiveUndoToast(null);
       setNtfyConfigured(false);
       setNtfySource('none');
@@ -1161,6 +1222,32 @@ export function MohasbaProvider({
     if (!settings) return null;
     return resolveActiveWindow(nowMs, periods, settings);
   }, [nowMs, periods, settings]);
+
+  // Trigger an exact boundary refresh when the next TIME_BOUND window opens or closes
+  useEffect(() => {
+    if (!activeWindowResolution) return;
+    const now = Date.now();
+    let earliestBoundary = Infinity;
+    for (const win of activeWindowResolution.windows3Day) {
+      if (win.startInstant > now && win.startInstant < earliestBoundary) {
+        earliestBoundary = win.startInstant;
+      }
+      if (win.endInstant > now && win.endInstant < earliestBoundary) {
+        earliestBoundary = win.endInstant;
+      }
+    }
+    if (!Number.isFinite(earliestBoundary)) return;
+    const delay = Math.min(
+      2_147_000_000,
+      Math.max(50, earliestBoundary - now + 50),
+    );
+    const timer = setTimeout(() => {
+      if (mountedRef.current) {
+        setNowMs(Date.now());
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [activeWindowResolution]);
 
   const todayIslamicDate = activeWindowResolution?.islamicDate ?? null;
 
@@ -1273,6 +1360,8 @@ export function MohasbaProvider({
       logBulkDeferToQadaa,
       undoMutation,
       undoBatch,
+      undoLastAction,
+      getLastUndoCreatedAt,
       dismissUndoToast,
       flushOutbox,
       refreshBootstrap,
@@ -1288,6 +1377,7 @@ export function MohasbaProvider({
       resetWorkspace,
       updateSettings,
       testNtfy,
+      revealNtfyTopicUrl,
       createPeriod,
       updatePeriod,
       deletePeriod,
@@ -1323,6 +1413,7 @@ export function MohasbaProvider({
       exportAndDiscardAttentionItem,
       fetchLogsRange,
       flushOutbox,
+      getLastUndoCreatedAt,
       hydrated,
       importBackupChunk,
       initOnboarding,
@@ -1351,6 +1442,7 @@ export function MohasbaProvider({
       reorderSchema,
       resetWorkspace,
       retryAttentionItem,
+      revealNtfyTopicUrl,
       settings,
       signOut,
       swUpdateAvailable,
@@ -1359,6 +1451,7 @@ export function MohasbaProvider({
       testNtfy,
       todayIslamicDate,
       undoBatch,
+      undoLastAction,
       undoMutation,
       unlockWithPasscode,
       updateAction,

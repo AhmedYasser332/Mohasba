@@ -303,8 +303,9 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     await expect(page.locator('.m-whoop-row').first()).toBeVisible();
 
     const mobileWeekMetrics = await page.evaluate(() => {
+      const firstWhoopRow = document.querySelector('.m-whoop-row');
       const labels = Array.from(
-        document.querySelectorAll('.m-whoop-row:first-of-type .m-whoop-day-lbl'),
+        firstWhoopRow?.querySelectorAll('.m-whoop-day-lbl') ?? [],
       ).map((el) => el.textContent?.trim());
       return {
         scrollWidth: document.documentElement.scrollWidth,
@@ -347,16 +348,15 @@ test.describe('Slice 4: App Shell, Street Mode (الآن), Weekly Matrix, Cell E
     await doneTapBtn.click();
     await expect(doneTapBtn).toHaveClass(/active-done/);
 
-    // Undo within 5s window
-    const undoBtn = page.getByTestId('undo-toast-btn');
-    await expect(undoBtn).toBeVisible();
-    await undoBtn.click();
+    // Bottom undo toast is intentionally hidden; Ctrl+Z still undoes the tap cleanly
+    await expect(page.getByTestId('undo-toast')).toBeHidden();
+    await page.keyboard.press('Control+KeyZ');
     await expect(doneTapBtn).not.toHaveClass(/active-done/);
 
     // Re-tap Done and wait for 5s hold expiry + live sync to mohasba-test
     await doneTapBtn.click();
     await expect(doneTapBtn).toHaveClass(/active-done/);
-    await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
+    await expect(page.getByTestId('undo-toast')).toBeHidden();
     await expect(page.getByTestId('sync-badge-btn')).toHaveAttribute(
       'data-sync',
       'synced',

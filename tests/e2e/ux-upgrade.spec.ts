@@ -496,7 +496,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await editorDialog.getByRole('button', { name: 'تم', exact: true }).click();
     await expect(editorDialog).toBeHidden();
     await expect(dhuhaCell).toHaveClass(/st-done/);
-    await expect(page.getByTestId('undo-toast')).toBeVisible();
+    await expect(page.getByTestId('undo-toast')).toBeHidden();
 
     await dhuhaCell.click({ button: 'right' });
     await expect(editorDialog).toBeVisible();
@@ -559,7 +559,7 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
     await expect(bulkBar).toHaveCount(0);
 
-    // 6f. Global Escape clearing (focus outside grid -> press Escape -> 0 selected & bulk bar gone)
+    // 6f. Global Escape clearing (focus outside grid -> 1st Escape clears active copy marquee from 6d-2, 2nd Escape clears logged cells, 3rd Escape deselects)
     await asrFardCell.focus();
     await asrAdhkarCell.click({ modifiers: ['Shift'] });
     await expect(bulkBar).toBeVisible();
@@ -568,6 +568,15 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       (document.activeElement as HTMLElement | null)?.blur();
       document.body.focus();
     });
+    await expect(bulkBar).toBeVisible();
+    await expect(dhuhaCell).toHaveClass(/is-grid-copied/);
+    await page.keyboard.press('Escape');
+    await expect(dhuhaCell).not.toHaveClass(/is-grid-copied/);
+    await page.keyboard.press('Escape');
+    await expect(asrFardCell).not.toHaveClass(/st-done/);
+    await expect(asrJamaahCell).not.toHaveClass(/st-done/);
+    await expect(asrAdhkarCell).not.toHaveClass(/st-done/);
+    await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(3);
     await expect(bulkBar).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
@@ -735,7 +744,13 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(page.locator('.m-cell.is-grid-selected')).toHaveCount(0);
 
     // 6j-3. Period Header Multi-Select: Shift+Click (الفجر -> العصر), Ctrl+Click (toggle المغرب), and Pointer Hold-Drag (الفجر -> الظهر)
-    await fajrCell.focus();
+    // Focus an unlogged column so single Escape deselects without clearing today's logged cells
+    const cleanPeriodColDate = weekDates.find((d) => d !== todayIslamic)!;
+    await page
+      .getByTestId(
+        `week-cell-${STARTER_PACK_ACTION_IDS.FAJR_FARD}-${cleanPeriodColDate}`,
+      )
+      .focus();
     const fajrPeriodBtn = page
       .locator('td.cell-period', { hasText: 'الفجر' })
       .locator('.period-select-btn');
@@ -1033,33 +1048,35 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       });
     }
 
-    // Moving pointer outside table clears hover crosshair and cleanly falls back to focus crosshair
+    // Moving pointer outside table clears hover crosshair completely (default showFocusFallback: false)
     await page.mouse.move(10, 10);
-    await expect(fajrCell.locator('xpath=ancestor::tr[1]')).toHaveClass(
-      /is-row-crosshair/,
+    await page.evaluate(
+      () =>
+        new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(r)),
+        ),
     );
-    await expect(
-      page.locator('.overview-table-time thead th.col-day').nth(todayColIdx),
-    ).toHaveClass(/is-col-crosshair/);
-    const fallbackCrosshair = await fajrCell.evaluate((el) => {
+    const leaveCrosshair = await fajrCell.evaluate((el) => {
       const stage = el.closest<HTMLElement>('.ledger-table-stage')!;
       return {
         mode: stage.dataset.crosshairMode,
         rowActive: stage.querySelector<HTMLElement>('.crosshair-row-bar')?.dataset.active,
         colActive: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.active,
-        colIndex: stage.querySelector<HTMLElement>('.crosshair-col-bar')?.dataset.colIndex,
+        headActive: stage.querySelector<HTMLElement>('.crosshair-head-bar')?.dataset.active,
       };
     });
-    expect(fallbackCrosshair).toEqual({
-      mode: 'focus',
-      rowActive: 'true',
-      colActive: 'true',
-      colIndex: String(todayColIdx),
+    expect(leaveCrosshair).toEqual({
+      mode: 'idle',
+      rowActive: 'false',
+      colActive: 'false',
+      headActive: 'false',
     });
 
     // Also run rapid crosshair sweep in Standard Mode (العرض المريح) across group-row separators!
     await page.getByRole('tab', { name: 'العرض المريح' }).click();
     await expect(page.locator('table.ledger-table tr.group-row').first()).toBeVisible();
+    // Wait for desktop sidebar expand CSS transition to finish before measuring cell bounding boxes
+    await page.waitForTimeout(260);
     await verifyCrosshairSweep([
       {
         tableSelector: 'table.ledger-table',
@@ -1183,9 +1200,18 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       () => window.getSelection()?.toString() ?? '',
     );
     expect(nativeSelectedText).toBe('');
+    // 1st Escape clears active copy marquee from 6o; 2nd Escape clears logged cells in selection; 3rd Escape deselects; Ctrl+Z restores cleared cells
+    await expect(adhkarEveningCell).toHaveClass(/is-grid-copied/);
+    await page.keyboard.press('Escape');
+    await expect(adhkarEveningCell).not.toHaveClass(/is-grid-copied/);
+    await page.keyboard.press('Escape');
+    await expect(dhuhrCell).not.toHaveClass(/st-done/);
+    await expect(bulkBar).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(bulkBar).toHaveCount(0);
     await expect(fajrCell).toBeFocused();
+    await page.keyboard.press('Control+KeyZ');
+    await expect(dhuhrCell).toHaveClass(/st-done/);
 
     // 6q. Ctrl+Click non-contiguous multi-selection -> Digit1 marks both DONE
     const fajrJamaahCell = page.getByTestId(
@@ -1230,7 +1256,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     await expect(editorDialog).toBeHidden();
     await expect(fajrAdhkarCell.locator('.m-cell-note-dot')).toBeVisible();
 
-    await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
+    await expect(page.getByTestId('undo-toast')).toBeHidden();
+    await expect(page.getByTestId('sync-badge-btn')).toHaveAttribute(
+      'data-sync',
+      'synced',
+      { timeout: 10_000 },
+    );
     await fajrAdhkarCell.focus();
     await page.keyboard.press('Control+KeyZ');
     await expect(fajrAdhkarCell).toHaveClass(/st-done/);
@@ -1275,7 +1306,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       fullPage: false,
     });
 
-    await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
+    await expect(page.getByTestId('undo-toast')).toBeHidden();
+    await expect(page.getByTestId('sync-badge-btn')).toHaveAttribute(
+      'data-sync',
+      'synced',
+      { timeout: 10_000 },
+    );
     await expect(page.getByTestId('sync-badge-btn')).toHaveAttribute(
       'data-sync',
       'synced',
@@ -1405,9 +1441,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       'A / ش',
     );
 
-    // Reload and verify ntfy masking + secret absence from /api/bootstrap & /api/export + shortcut persistence
+    // Reload and verify ntfy/shortcuts accordion state persisted + ntfy masking + secret absence from /api/bootstrap & /api/export + shortcut persistence
     await page.reload({ waitUntil: 'networkidle' });
-    await page.getByTestId('accordion-toggle-ntfy').click();
+    await expect(page.getByTestId('accordion-toggle-ntfy')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
     await expect(page.getByTestId('ntfy-topic-hint')).toContainText('••••');
 
     const secretLeakCheck = await page.evaluate(async (rawSecret) => {
@@ -1425,7 +1464,10 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     expect(secretLeakCheck.bootHasRaw).toBe(false);
     expect(secretLeakCheck.expHasRaw).toBe(false);
 
-    await page.getByTestId('accordion-toggle-shortcuts').click();
+    await expect(page.getByTestId('accordion-toggle-shortcuts')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
     await expect(page.getByTestId('shortcut-row-nav_analytics')).toContainText(
       'مخصص',
     );
@@ -1445,7 +1487,12 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       .getByTestId(`now-action-${STARTER_PACK_ACTION_IDS.FAJR_SUNNAH}`)
       .getByRole('button', { name: /تسجيل فات للعمل/ })
       .click();
-    await expect(page.getByTestId('undo-toast')).toBeHidden({ timeout: 8_000 });
+    await expect(page.getByTestId('undo-toast')).toBeHidden();
+    await expect(page.getByTestId('sync-badge-btn')).toHaveAttribute(
+      'data-sync',
+      'synced',
+      { timeout: 10_000 },
+    );
 
     await page
       .locator('.desktop-rail')
@@ -1472,7 +1519,10 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       .locator('.desktop-rail')
       .getByRole('button', { name: 'الإعدادات' })
       .click();
-    await page.getByTestId('accordion-toggle-general').click();
+    await expect(page.getByTestId('accordion-toggle-general')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
     await page
       .getByTestId('pref-enter-key-mode')
       .getByTestId('pref-enter-key-mode-move_down')
@@ -1481,11 +1531,16 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       page.getByTestId('pref-enter-key-mode-move_down'),
     ).toHaveAttribute('aria-checked', 'true');
 
-    // Customize Desktop Crosshair preferences in Settings
+    // Customize Desktop Crosshair preferences in Settings (new defaults: instant, showFocusFallback: false)
     await expect(page.getByTestId('pref-crosshair-mode-both')).toHaveAttribute(
       'aria-checked',
       'true',
     );
+    await expect(page.getByTestId('pref-crosshair-motion-instant')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(page.getByTestId('pref-crosshair-focus-fallback')).not.toBeChecked();
     await expect(page.getByTestId('pref-crosshair-reset')).toBeDisabled();
     await page.getByTestId('pref-crosshair-mode-row').click();
     await expect(page.getByTestId('pref-crosshair-mode-row')).toHaveAttribute(
@@ -1548,7 +1603,13 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
       .locator('.mobile-nav')
       .getByRole('button', { name: 'الإعدادات' })
       .click();
-    await page.getByTestId('accordion-toggle-ntfy').click();
+    if (
+      (await page
+        .getByTestId('accordion-toggle-ntfy')
+        .getAttribute('aria-expanded')) !== 'true'
+    ) {
+      await page.getByTestId('accordion-toggle-ntfy').click();
+    }
     await assertTopBarInsideViewport(page, 390, 844);
     await page.waitForTimeout(200);
     await page.screenshot({
@@ -1557,7 +1618,13 @@ test.describe('UX Upgrade: Geometry Fixes, 1-Click Cycling, Copy/Paste, Settings
     });
 
     // Reset Crosshair preferences back to defaults
-    await page.getByTestId('accordion-toggle-general').click();
+    if (
+      (await page
+        .getByTestId('accordion-toggle-general')
+        .getAttribute('aria-expanded')) !== 'true'
+    ) {
+      await page.getByTestId('accordion-toggle-general').click();
+    }
     await page.getByTestId('pref-crosshair-reset').click();
     await expect(page.getByTestId('pref-crosshair-mode-both')).toHaveAttribute(
       'aria-checked',

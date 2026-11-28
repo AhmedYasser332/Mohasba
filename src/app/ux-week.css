@@ -874,3 +874,158 @@
     transform: none;
   }
 }
+
+/* Inline Rename & Entity Context Menu (Action Names + Period Headers) */
+.group-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding-inline-start: 6px;
+}
+
+.group-chevron-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color var(--t-fast), color var(--t-fast);
+}
+
+.group-chevron-btn:hover,
+.group-chevron-btn:focus-visible {
+  background: var(--bg-hover);
+  color: var(--ink-primary);
+}
+
+.group-title-text {
+  font-weight: 600;
+  color: var(--ink-primary);
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  padding-block: 2px;
+  padding-inline: 4px;
+  border-radius: var(--r-cell);
+  transition: background-color var(--t-fast);
+}
+
+.group-title-text:hover {
+  background: var(--bg-hover);
+}
+
+.group-toggle-rest {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding-block: 2px;
+  padding-inline: 4px;
+  border: none;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Inline rename & entity context menu base styles live in globals.css; only week-table overrides here. */
+.week-context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.week-context-menu-item:disabled:hover {
+  background: transparent;
+}
+
+/* Quick Edit Dialogs Footer & Target Evolution Row */
+.quick-edit-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block: 8px;
+  padding-inline: 10px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-control);
+  background: var(--bg-subtle);
+}
+
+.quick-edit-target-info {
+  font-size: 0.82rem;
+  color: var(--ink-primary);
+}
+
+.quick-edit-dialog-foot {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-edit-danger-group,
+.quick-edit-primary-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Mobile Parity (44px Tap Targets, Zero 360px Overflow) */
+.m-period-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 44px;
+  padding-inline: 4px;
+}
+
+.m-whoop-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-whoop-head-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.m-entity-menu-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-secondary);
+  flex-shrink: 0;
+}
+
+.m-entity-menu-btn.is-compact-cell {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+}

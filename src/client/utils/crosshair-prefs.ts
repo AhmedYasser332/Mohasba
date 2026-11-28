@@ -22,9 +22,9 @@ export const DEFAULT_CROSSHAIR_PREFS: Readonly<CrosshairPreferences> =
   Object.freeze({
     mode: 'both',
     opacity: 100,
-    motion: 'smooth',
+    motion: 'instant',
     showHeaderIndicator: true,
-    showFocusFallback: true,
+    showFocusFallback: false,
     coverPeriodColumn: false,
   });
 

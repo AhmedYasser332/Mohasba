@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 import {
   AR_STRINGS,
+  SHORTCUT_ACTION_IDS,
   SHORTCUT_DEFINITIONS,
   formatShortcutKeycaps,
   matchesShortcutEvent,
@@ -20,6 +21,7 @@ import {
   useMohasba,
   type InitOnboardingPayload,
 } from '../store/mohasba-provider';
+import { usePersistedNullableBoolean } from '../utils/disclosure-storage';
 import { AppDialog } from './app-dialog';
 import {
   CellEditorDialog,
@@ -107,27 +109,37 @@ function buildSearchString(state: UrlParamsState): string {
 
 const NAV_ITEMS: ReadonlyArray<{
   id: AppView;
+  shortcutId: 'nav_now' | 'nav_week' | 'nav_qadaa' | 'nav_analytics' | 'nav_settings';
   mobileLabel: string;
   desktopLabel: string;
 }> = [
-  { id: 'now', mobileLabel: AR_STRINGS.nav.now, desktopLabel: AR_STRINGS.nav.now },
+  {
+    id: 'now',
+    shortcutId: 'nav_now',
+    mobileLabel: AR_STRINGS.nav.now,
+    desktopLabel: AR_STRINGS.nav.now,
+  },
   {
     id: 'week',
+    shortcutId: 'nav_week',
     mobileLabel: 'الجدول',
     desktopLabel: AR_STRINGS.nav.week,
   },
   {
     id: 'qadaa',
+    shortcutId: 'nav_qadaa',
     mobileLabel: AR_STRINGS.nav.qadaa,
     desktopLabel: AR_STRINGS.nav.qadaa,
   },
   {
     id: 'analytics',
+    shortcutId: 'nav_analytics',
     mobileLabel: AR_STRINGS.nav.analytics,
     desktopLabel: AR_STRINGS.nav.analytics,
   },
   {
     id: 'settings',
+    shortcutId: 'nav_settings',
     mobileLabel: AR_STRINGS.nav.settings,
     desktopLabel: AR_STRINGS.nav.settings,
   },
@@ -227,6 +239,7 @@ export function MohasbaAppShell() {
     openQadaaQueue,
     undoMutation,
     undoBatch,
+    undoLastAction,
     dismissUndoToast,
     flushOutbox,
     refreshBootstrap,
@@ -252,7 +265,11 @@ export function MohasbaAppShell() {
     getThemeSnapshot,
     getThemeServerSnapshot,
   );
-  const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
+  const [persistedSidebarCollapsed, setPersistedSidebarCollapsed] =
+    usePersistedNullableBoolean('mohasba.ui.sidebar-collapsed');
+  const [sessionSidebarOverride, setSessionSidebarOverride] = useState<
+    boolean | null
+  >(null);
   const [oneGlanceOverride, setOneGlanceOverride] = useState<boolean | null>(null);
   const [userNavigated, setUserNavigated] = useState(false);
   const [hasExplicitInitialUrl, setHasExplicitInitialUrl] = useState(false);
@@ -274,6 +291,8 @@ export function MohasbaAppShell() {
     AR_STRINGS.street.undoToastMessage,
   );
   const [shellMessage, setShellMessage] = useState<string | null>(null);
+  const [shellMessageSeq, setShellMessageSeq] = useState(0);
+  const [shellMessageAutoClear, setShellMessageAutoClear] = useState(false);
   const [signedOutNotice, setSignedOutNotice] = useState(false);
 
   const syncWrapRef = useRef<HTMLDivElement | null>(null);
@@ -295,16 +314,45 @@ export function MohasbaAppShell() {
     [settings?.keyboard_shortcuts],
   );
 
+  const isCtrlCommaBoundElsewhere = useMemo(
+    () =>
+      SHORTCUT_ACTION_IDS.some(
+        (id) =>
+          id !== 'nav_settings' &&
+          matchesShortcutEvent(
+            {
+              code: 'Comma',
+              ctrlKey: true,
+              metaKey: false,
+              altKey: false,
+              shiftKey: false,
+            },
+            effectiveShortcuts[id],
+          ),
+      ),
+    [effectiveShortcuts],
+  );
+
   const oneGlanceMode =
     oneGlanceOverride ??
     (showWorkspaceViews && settings?.default_week_mode === 'one_glance');
 
   const sidebarCollapsed =
-    sidebarOverride ??
+    sessionSidebarOverride ??
+    persistedSidebarCollapsed ??
     (showWorkspaceViews &&
+      oneGlanceOverride !== false &&
       settings?.default_week_mode === 'one_glance' &&
       typeof window !== 'undefined' &&
       window.innerWidth >= 1024);
+
+  const setSidebarCollapsed = useCallback(
+    (collapsed: boolean) => {
+      setSessionSidebarOverride(collapsed);
+      setPersistedSidebarCollapsed(collapsed);
+    },
+    [setPersistedSidebarCollapsed],
+  );
 
   const configuredDefaultHomeView =
     showWorkspaceViews && settings?.default_home_view
@@ -410,11 +458,36 @@ export function MohasbaAppShell() {
     [updateUrlState],
   );
 
+  useEffect(() => {
+    if (!shellMessage || !shellMessageAutoClear) return;
+    const timer = setTimeout(() => {
+      setShellMessage(null);
+      setShellMessageAutoClear(false);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [shellMessage, shellMessageSeq, shellMessageAutoClear]);
+
+  const handleActionFeedback = useCallback(
+    (msg: string, options?: { isError?: boolean }) => {
+      setUndoLabel(msg);
+      if (
+        options?.isError ||
+        /تعذر|متاحة عند الاتصال|فشل|تجاوز|تخطي|غير متوافق|غير صالح|خطأ/.test(
+          msg,
+        )
+      ) {
+        setSignedOutNotice(false);
+        setShellMessageAutoClear(true);
+        setShellMessage(msg);
+        setShellMessageSeq((seq) => seq + 1);
+      }
+    },
+    [],
+  );
+
   const handleSetOneGlance = useCallback((enabled: boolean) => {
     setOneGlanceOverride(enabled);
-    if (enabled) {
-      setSidebarOverride(true);
-    }
+    setSessionSidebarOverride(enabled ? true : null);
   }, []);
 
   const handleUndoClick = useCallback(async () => {
@@ -438,7 +511,7 @@ export function MohasbaAppShell() {
 
       if (matchesShortcutEvent(e, effectiveShortcuts.toggle_sidebar)) {
         e.preventDefault();
-        setSidebarOverride(!(sidebarOverride ?? sidebarCollapsed));
+        setSidebarCollapsed(!sidebarCollapsed);
         return;
       }
 
@@ -497,9 +570,11 @@ export function MohasbaAppShell() {
       }
 
       if (matchesShortcutEvent(e, effectiveShortcuts.undo)) {
+        e.preventDefault();
         if (activeUndoToast) {
-          e.preventDefault();
           void handleUndoClick();
+        } else {
+          void undoLastAction();
         }
         return;
       }
@@ -507,6 +582,18 @@ export function MohasbaAppShell() {
       if (matchesShortcutEvent(e, effectiveShortcuts.open_shortcuts_help)) {
         e.preventDefault();
         setShortcutsHelpOpen(true);
+        return;
+      }
+
+      if (
+        !isCtrlCommaBoundElsewhere &&
+        e.code === 'Comma' &&
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        e.preventDefault();
+        handleNavigate('settings');
       }
     };
 
@@ -519,11 +606,13 @@ export function MohasbaAppShell() {
     handleNavigate,
     handleSetOneGlance,
     handleUndoClick,
+    isCtrlCommaBoundElsewhere,
     oneGlanceMode,
+    setSidebarCollapsed,
     showWorkspaceViews,
     sidebarCollapsed,
-    sidebarOverride,
     todayIslamicDate,
+    undoLastAction,
     updateUrlState,
   ]);
 
@@ -795,7 +884,7 @@ export function MohasbaAppShell() {
                 type="button"
                 className="btn btn-icon"
                 aria-label="طي القائمة الجانبية"
-                onClick={() => setSidebarOverride(true)}
+                onClick={() => setSidebarCollapsed(true)}
               >
                 <IconSidebar />
               </button>
@@ -805,22 +894,34 @@ export function MohasbaAppShell() {
           <nav className="rail-nav">
             {NAV_ITEMS.map((item) => {
               const isCurrent = effectiveUrlState.view === item.id;
+              const baseShortcut = formatShortcutKeycaps(
+                effectiveShortcuts[item.shortcutId],
+              ).join(' + ');
+              const navShortcut =
+                item.id === 'settings' && !isCtrlCommaBoundElsewhere
+                  ? `${baseShortcut} / Ctrl + ,`
+                  : baseShortcut;
               return (
-                <button
+                <Tooltip
                   key={item.id}
-                  type="button"
-                  className="nav-btn"
-                  aria-current={isCurrent ? 'page' : undefined}
-                  onClick={() => handleNavigate(item.id)}
+                  content={item.desktopLabel}
+                  shortcut={navShortcut}
                 >
-                  <span className="nav-btn-label">
-                    {renderNavIcon(item.id)}
-                    <span>{item.desktopLabel}</span>
-                  </span>
-                  {item.id === 'qadaa' && qadaaCount > 0 && (
-                    <span className="count-chip alert nums">{qadaaCount}</span>
-                  )}
-                </button>
+                  <button
+                    type="button"
+                    className="nav-btn"
+                    aria-current={isCurrent ? 'page' : undefined}
+                    onClick={() => handleNavigate(item.id)}
+                  >
+                    <span className="nav-btn-label">
+                      {renderNavIcon(item.id)}
+                      <span>{item.desktopLabel}</span>
+                    </span>
+                    {item.id === 'qadaa' && qadaaCount > 0 && (
+                      <span className="count-chip alert nums">{qadaaCount}</span>
+                    )}
+                  </button>
+                </Tooltip>
               );
             })}
           </nav>
@@ -864,7 +965,7 @@ export function MohasbaAppShell() {
                     type="button"
                     className="btn btn-icon desktop-sidebar-trigger"
                     aria-label="فتح القائمة الجانبية"
-                    onClick={() => setSidebarOverride(false)}
+                    onClick={() => setSidebarCollapsed(false)}
                   >
                     <IconSidebar />
                   </button>
@@ -1060,6 +1161,7 @@ export function MohasbaAppShell() {
                 aria-label="إغلاق التنبيه"
                 onClick={() => {
                   setShellMessage(null);
+                  setShellMessageAutoClear(false);
                   setSignedOutNotice(false);
                 }}
               >
@@ -1224,7 +1326,7 @@ export function MohasbaAppShell() {
               }
               onNavigateToCatchUp={() => handleNavigate('qadaa', 'catchup')}
               onOpenCellEditor={(target) => setCellEditorTarget(target)}
-              onActionFeedback={(msg) => setUndoLabel(msg)}
+              onActionFeedback={handleActionFeedback}
             />
           )}
 
@@ -1233,7 +1335,7 @@ export function MohasbaAppShell() {
               oneGlanceMode={oneGlanceMode}
               onSetOneGlanceMode={handleSetOneGlance}
               onOpenCellEditor={(target) => setCellEditorTarget(target)}
-              onActionFeedback={(msg) => setUndoLabel(msg)}
+              onActionFeedback={handleActionFeedback}
             />
           )}
 
@@ -1247,7 +1349,7 @@ export function MohasbaAppShell() {
                 )
               }
               onOpenCellEditor={(target) => setCellEditorTarget(target)}
-              onActionFeedback={(msg) => setUndoLabel(msg)}
+              onActionFeedback={handleActionFeedback}
             />
           )}
 
@@ -1258,6 +1360,7 @@ export function MohasbaAppShell() {
           {showWorkspaceViews && effectiveUrlState.view === 'settings' && (
             <SettingsView
               onStatusMessage={(msg) => {
+                setShellMessageAutoClear(false);
                 if (msg === 'signed_out') {
                   setSignedOutNotice(true);
                   setShellMessage('تم تسجيل الخروج بنجاح.');
@@ -1364,6 +1467,8 @@ export function MohasbaAppShell() {
             {SHORTCUT_DEFINITIONS.map((def) => {
               const binding = effectiveShortcuts[def.id];
               const caps = formatShortcutKeycaps(binding);
+              const showSettingsCtrlComma =
+                def.id === 'nav_settings' && !isCtrlCommaBoundElsewhere;
               return (
                 <div key={def.id} className="shortcut-help-row">
                   <span>{def.labelAr}</span>
@@ -1373,10 +1478,48 @@ export function MohasbaAppShell() {
                         {cap}
                       </kbd>
                     ))}
+                    {showSettingsCtrlComma && (
+                      <>
+                        <span className="panel-meta">/</span>
+                        <kbd className="kbd-cap nums">Ctrl</kbd>
+                        <kbd className="kbd-cap nums">, / و</kbd>
+                      </>
+                    )}
                   </span>
                 </div>
               );
             })}
+            <div className="shortcut-help-row">
+              <span>الانتقال بين الفترات (شاشة «الآن»)</span>
+              <span className="kbd-group" dir="ltr">
+                <kbd className="kbd-cap nums">←</kbd>
+                <span className="panel-meta">/</span>
+                <kbd className="kbd-cap nums">→</kbd>
+              </span>
+            </div>
+            <div className="shortcut-help-row">
+              <span>الانتقال بين أيام الأسبوع (شاشة «الآن»)</span>
+              <span className="kbd-group" dir="ltr">
+                <kbd className="kbd-cap nums">Ctrl</kbd>
+                <kbd className="kbd-cap nums">←</kbd>
+                <span className="panel-meta">/</span>
+                <kbd className="kbd-cap nums">→</kbd>
+              </span>
+            </div>
+            <div className="shortcut-help-row">
+              <span>مسح حالة الخانة المحددة (وضغطة ثانية لإلغاء التحديد)</span>
+              <span className="kbd-group" dir="ltr">
+                <kbd className="kbd-cap nums">Esc</kbd>
+              </span>
+            </div>
+            <div className="shortcut-help-row">
+              <span>إعادة تسمية العمل أو الفترة (الجدول الأسبوعي)</span>
+              <span className="panel-meta">نقرتان على الاسم</span>
+            </div>
+            <div className="shortcut-help-row">
+              <span>التعديل السريع للخانة أو العمل أو الفترة</span>
+              <span className="panel-meta">كليك يمين</span>
+            </div>
           </div>
         </div>
         <div className="dialog-foot">

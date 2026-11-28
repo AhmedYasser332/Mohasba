@@ -55,8 +55,8 @@ const CROSSHAIR_MOTION_OPTIONS: ReadonlyArray<{
   value: CrosshairMotionMode;
   label: string;
 }> = [
+  { value: 'instant', label: 'فوري (0ms) (الافتراضي)' },
   { value: 'smooth', label: 'انزلاق ناعم' },
-  { value: 'instant', label: 'فوري (0ms)' },
 ];
 
 export function GeneralPreferencesSection() {

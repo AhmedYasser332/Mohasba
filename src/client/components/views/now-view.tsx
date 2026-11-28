@@ -27,6 +27,12 @@ import {
 } from '../cell-display';
 import type { CellEditorTarget } from '../cell-editor-dialog';
 import {
+  EntityContextMenu,
+  QuickActionEditDialog,
+  QuickPeriodEditDialog,
+  type EntityContextMenuItem,
+} from '../quick-edit-dialogs';
+import {
   IconCheck,
   IconCheckAll,
   IconChevronLeft,
@@ -43,11 +49,21 @@ interface NowViewProps {
   selectedDate: string;
   onSelectDate: (date: string) => void;
   selectedPeriodId: string | null;
-  onSelectPeriodId: (periodId: string) => void;
+  onSelectPeriodId: (periodId: string | null) => void;
   onResetToToday: () => void;
   onNavigateToCatchUp: () => void;
   onOpenCellEditor: (target: CellEditorTarget) => void;
-  onActionFeedback: (message: string) => void;
+  onActionFeedback: (message: string, options?: { isError?: boolean }) => void;
+}
+
+type RenamingTarget =
+  | { kind: 'action'; id: string; originalTitle: string }
+  | { kind: 'period'; id: string; originalTitle: string };
+
+interface EntityMenuState {
+  position: { x: number; y: number };
+  title: string;
+  items: EntityContextMenuItem[];
 }
 
 const QUICK_PERCENT_STEPS = [25, 50, 75, 100, 0] as const;
@@ -69,6 +85,7 @@ export function NowView({
     targetVersions,
     logsByKey,
     nowMs,
+    isOnline,
     activeWindowResolution,
     todayIslamicDate,
     catchUp48hItems,
@@ -76,10 +93,21 @@ export function NowView({
     logCellTap,
     logBulkMosqueDone,
     logBulkPeriodDone,
+    updateAction,
+    updatePeriod,
   } = useMohasba();
 
   const periodStripRef = useRef<HTMLDivElement | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const renameSavingRef = useRef(false);
   const [stripFade, setStripFade] = useState({ start: false, end: false });
+  const [renamingTarget, setRenamingTarget] = useState<RenamingTarget | null>(
+    null,
+  );
+  const [renameDraft, setRenameDraft] = useState('');
+  const [editingActionId, setEditingActionId] = useState<string | null>(null);
+  const [editingPeriodId, setEditingPeriodId] = useState<string | null>(null);
+  const [entityMenu, setEntityMenu] = useState<EntityMenuState | null>(null);
 
   const periodsById = useMemo(
     () => new Map(periods.map((p) => [p.id, p])),
@@ -105,6 +133,40 @@ export function NowView({
         .sort((a, b) => a.sort_order - b.sort_order),
     [periods, selectedDate],
   );
+
+  const liveOpenEntries = useMemo(() => {
+    if (
+      !activeWindowResolution ||
+      !todayIslamicDate ||
+      selectedDate !== todayIslamicDate
+    ) {
+      return [] as Array<{ period: Period; window: ResolvedPeriodWindow }>;
+    }
+    const allOpen = activeWindowResolution.activeWindows;
+    if (allOpen.length === 0) return [];
+    const islamicDayMatches = allOpen.filter(
+      (w) => w.islamicDate === todayIslamicDate,
+    );
+    const pool = islamicDayMatches.length > 0 ? islamicDayMatches : allOpen;
+    const windowByPeriodId = new Map<string, ResolvedPeriodWindow>();
+    for (const w of pool) {
+      if (!windowByPeriodId.has(w.periodId)) {
+        windowByPeriodId.set(w.periodId, w);
+      }
+    }
+    return activeTimePeriods
+      .filter((p) => windowByPeriodId.has(p.id))
+      .map((p) => ({ period: p, window: windowByPeriodId.get(p.id)! }));
+  }, [
+    activeTimePeriods,
+    activeWindowResolution,
+    selectedDate,
+    todayIslamicDate,
+  ]);
+
+  const hasMultiLiveTab =
+    selectedDate === todayIslamicDate && liveOpenEntries.length > 1;
+  const isMultiLiveView = hasMultiLiveTab && selectedPeriodId === null;
 
   const activePeriod: Period | null = useMemo(() => {
     const allActive = [...activeTimePeriods, ...activeDailyGroups];
@@ -157,59 +219,225 @@ export function NowView({
     return set;
   }, [activeWindowResolution]);
 
-  const periodActions = useMemo(() => {
-    if (!activePeriod) return [];
-    return actions
-      .filter(
-        (a) =>
-          a.period_id === activePeriod.id &&
-          !isActionArchivedOnDate(a, selectedDate),
-      )
-      .sort((a, b) => a.sort_order - b.sort_order);
-  }, [actions, activePeriod, selectedDate]);
-
-  const boundLeftActions = useMemo(() => {
-    if (!activePeriod || activePeriod.side !== 'TIME_BOUND') return [];
-    return actions
-      .filter(
-        (a) =>
-          a.bound_time_period_id === activePeriod.id &&
-          !isActionArchivedOnDate(a, selectedDate),
-      )
-      .sort((a, b) => a.sort_order - b.sort_order);
-  }, [actions, activePeriod, selectedDate]);
-
-  const hasMosqueActions = useMemo(
-    () =>
-      periodActions.some(
-        (a) => a.is_mosque_action && !a.supports_percentage,
-      ),
-    [periodActions],
+  const orderedTabIds = useMemo<Array<string | null>>(
+    () => [
+      ...(hasMultiLiveTab ? [null] : []),
+      ...activeTimePeriods.map((p) => p.id),
+      ...activeDailyGroups.map((g) => g.id),
+    ],
+    [activeDailyGroups, activeTimePeriods, hasMultiLiveTab],
   );
 
-  const eligibleMosqueCount = useMemo(() => {
-    if (!activePeriod || activePeriod.side !== 'TIME_BOUND' || !hasMosqueActions) {
-      return 0;
-    }
-    return planMosqueDone({
-      periodId: activePeriod.id,
-      logDate: selectedDate,
-      actions,
-      periods,
-      logsByKey,
-    }).length;
-  }, [actions, activePeriod, hasMosqueActions, logsByKey, periods, selectedDate]);
+  const startRename = useCallback(
+    (kind: 'action' | 'period', id: string, title: string) => {
+      if (!isOnline) {
+        onActionFeedback('إعادة التسمية متاحة عند الاتصال بالإنترنت فقط', {
+          isError: true,
+        });
+        return;
+      }
+      if (kind === 'period') {
+        const isDisplayed = isMultiLiveView
+          ? liveOpenEntries.some((entry) => entry.period.id === id)
+          : activePeriod?.id === id;
+        if (!isDisplayed) {
+          onSelectPeriodId(id);
+        }
+      }
+      renameSavingRef.current = false;
+      setRenameDraft(title);
+      setRenamingTarget({ kind, id, originalTitle: title });
+    },
+    [
+      activePeriod?.id,
+      isMultiLiveView,
+      isOnline,
+      liveOpenEntries,
+      onActionFeedback,
+      onSelectPeriodId,
+    ],
+  );
 
-  const eligiblePeriodCount = useMemo(() => {
-    if (!activePeriod || activePeriod.side !== 'TIME_BOUND') return 0;
-    return planPeriodDone({
-      periodId: activePeriod.id,
-      logDate: selectedDate,
-      actions,
-      periods,
-      logsByKey,
-    }).length;
-  }, [actions, activePeriod, logsByKey, periods, selectedDate]);
+  const cancelRename = useCallback(() => {
+    renameSavingRef.current = true;
+    setRenamingTarget(null);
+  }, []);
+
+  const commitRename = useCallback(async () => {
+    if (!renamingTarget || renameSavingRef.current) return;
+    const target = renamingTarget;
+    if (!isOnline) {
+      setRenamingTarget(null);
+      onActionFeedback('إعادة التسمية متاحة عند الاتصال بالإنترنت فقط', {
+        isError: true,
+      });
+      return;
+    }
+    const trimmed = renameDraft.trim();
+    if (!trimmed || trimmed === target.originalTitle.trim()) {
+      setRenamingTarget(null);
+      return;
+    }
+    renameSavingRef.current = true;
+    setRenamingTarget(null);
+    const res =
+      target.kind === 'action'
+        ? await updateAction(target.id, { title: trimmed })
+        : await updatePeriod(target.id, { title: trimmed });
+    renameSavingRef.current = false;
+    if (res.ok) {
+      onActionFeedback(`تم تغيير الاسم إلى «${trimmed}»`);
+    } else {
+      onActionFeedback(res.errorMessage ?? 'تعذر حفظ الاسم الجديد', {
+        isError: true,
+      });
+    }
+  }, [
+    isOnline,
+    onActionFeedback,
+    renameDraft,
+    renamingTarget,
+    updateAction,
+    updatePeriod,
+  ]);
+
+  useEffect(() => {
+    if (!renamingTarget) return;
+    const input = renameInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [renamingTarget, activePeriod?.id, isMultiLiveView]);
+
+  const openActionContextMenuAt = useCallback(
+    (position: { x: number; y: number }, action: Action) => {
+      setEntityMenu({
+        position,
+        title: action.title,
+        items: [
+          {
+            id: 'edit-action',
+            label: 'تعديل العمل...',
+            onSelect: () => setEditingActionId(action.id),
+          },
+          {
+            id: 'rename-action',
+            label: 'إعادة تسمية',
+            disabled: !isOnline,
+            onSelect: () => startRename('action', action.id, action.title),
+          },
+          {
+            id: 'open-cell-editor',
+            label: 'تفاصيل وملاحظة اليوم',
+            onSelect: () => onOpenCellEditor({ action, logDate: selectedDate }),
+          },
+        ],
+      });
+    },
+    [isOnline, onOpenCellEditor, selectedDate, startRename],
+  );
+
+  const openActionContextMenu = useCallback(
+    (e: React.MouseEvent, action: Action) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openActionContextMenuAt({ x: e.clientX, y: e.clientY }, action);
+    },
+    [openActionContextMenuAt],
+  );
+
+  const openPeriodContextMenuAt = useCallback(
+    (position: { x: number; y: number }, period: Period) => {
+      setEntityMenu({
+        position,
+        title: period.title,
+        items: [
+          {
+            id: 'edit-period',
+            label: 'تعديل الفترة...',
+            onSelect: () => setEditingPeriodId(period.id),
+          },
+          {
+            id: 'rename-period',
+            label: 'إعادة تسمية',
+            disabled: !isOnline,
+            onSelect: () => startRename('period', period.id, period.title),
+          },
+        ],
+      });
+    },
+    [isOnline, startRename],
+  );
+
+  const openPeriodContextMenu = useCallback(
+    (e: React.MouseEvent, period: Period) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openPeriodContextMenuAt({ x: e.clientX, y: e.clientY }, period);
+    },
+    [openPeriodContextMenuAt],
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (renamingTarget !== null || entityMenu !== null) return;
+      if (document.querySelector('dialog[open]') !== null) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          target.closest(
+            'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
+          ) !== null)
+      ) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          onSelectDate(addDaysIso(selectedDate, 1));
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          onSelectDate(addDaysIso(selectedDate, -1));
+          return;
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (orderedTabIds.length === 0) return;
+
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const currentTabId = isMultiLiveView ? null : (activePeriod?.id ?? null);
+        const foundIndex = orderedTabIds.indexOf(currentTabId);
+        const currentIndex = foundIndex >= 0 ? foundIndex : 0;
+        const delta = e.key === 'ArrowLeft' ? 1 : -1;
+        const nextIndex = Math.max(
+          0,
+          Math.min(orderedTabIds.length - 1, currentIndex + delta),
+        );
+        onSelectPeriodId(orderedTabIds[nextIndex] ?? null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    activePeriod?.id,
+    entityMenu,
+    isMultiLiveView,
+    onSelectDate,
+    onSelectPeriodId,
+    orderedTabIds,
+    renamingTarget,
+    selectedDate,
+  ]);
 
   const updateStripFade = useCallback(() => {
     const el = periodStripRef.current;
@@ -244,39 +472,47 @@ export function NowView({
       });
     }
     updateStripFade();
-  }, [activePeriod?.id, selectedDate, updateStripFade]);
+  }, [
+    activePeriod?.id,
+    isMultiLiveView,
+    selectedDate,
+    selectedPeriodId,
+    updateStripFade,
+  ]);
 
   useEffect(() => {
     updateStripFade();
     if (typeof window === 'undefined') return;
     window.addEventListener('resize', updateStripFade);
     return () => window.removeEventListener('resize', updateStripFade);
-  }, [activeTimePeriods.length, activeDailyGroups.length, updateStripFade]);
+  }, [
+    activeTimePeriods.length,
+    activeDailyGroups.length,
+    hasMultiLiveTab,
+    updateStripFade,
+  ]);
+
+  const editingAction = useMemo(
+    () =>
+      editingActionId
+        ? (actions.find((a) => a.id === editingActionId) ?? null)
+        : null,
+    [actions, editingActionId],
+  );
+
+  const editingPeriod = useMemo(
+    () =>
+      editingPeriodId
+        ? (periods.find((p) => p.id === editingPeriodId) ?? null)
+        : null,
+    [editingPeriodId, periods],
+  );
 
   if (!settings) {
     return null;
   }
 
   const windowCache: WindowLookupCache = new Map();
-  const activeWindow =
-    activePeriod && activePeriod.side === 'TIME_BOUND'
-      ? (dayWindowsByPeriodId.get(activePeriod.id) ?? null)
-      : null;
-
-  const isClosing = Boolean(activeWindow?.isPreExpiry);
-  const horizonPct = activeWindow
-    ? activeWindow.isExpired
-      ? 100
-      : activeWindow.isOpen
-        ? Math.round(activeWindow.elapsedRatio * 100)
-        : 0
-    : 0;
-
-  const timeStatusText = activeWindow
-    ? activeWindow.isExpired
-      ? 'انتهى الوقت'
-      : 'قادم'
-    : '';
 
   const handleToggleDone = async (action: Action) => {
     const info = resolveCellDisplay({
@@ -387,9 +623,8 @@ export function NowView({
     onActionFeedback(`تم تسجيل ${pct}% للعمل ${action.title}`);
   };
 
-  const handleBulkMosque = async () => {
-    if (!activePeriod) return;
-    const res = await logBulkMosqueDone(activePeriod.id, selectedDate);
+  const handleBulkMosque = async (periodId: string) => {
+    const res = await logBulkMosqueDone(periodId, selectedDate);
     if (res.items.length > 0) {
       onActionFeedback(
         `تم تسجيل ${formatArabicCount(res.items.length, ARABIC_NOUN_FORMS.action)} في المسجد`,
@@ -397,9 +632,8 @@ export function NowView({
     }
   };
 
-  const handleBulkPeriod = async () => {
-    if (!activePeriod) return;
-    const res = await logBulkPeriodDone(activePeriod.id, selectedDate);
+  const handleBulkPeriod = async (periodId: string) => {
+    const res = await logBulkPeriodDone(periodId, selectedDate);
     if (res.items.length > 0) {
       onActionFeedback(
         `تم تسجيل الفترة بالكامل (${formatArabicCount(res.items.length, ARABIC_NOUN_FORMS.action)})`,
@@ -423,6 +657,8 @@ export function NowView({
     const isDisabled = info.state === 'DISABLED';
     const isExpired = info.state === 'UNLOGGED_EXPIRED';
     const showGrace = adaptingActionIds.has(action.id);
+    const isRenamingAction =
+      renamingTarget?.kind === 'action' && renamingTarget.id === action.id;
 
     let doneCount = 0;
     let qadaaCount = 0;
@@ -473,7 +709,63 @@ export function NowView({
         <div className="action-row-main">
           <div className="action-info">
             <div className="action-title-line">
-              <span className="action-title">{action.title}</span>
+              {isRenamingAction ? (
+                <input
+                  ref={renameInputRef}
+                  type="text"
+                  maxLength={120}
+                  className="inline-rename-input"
+                  aria-label={`إعادة تسمية ${action.title}`}
+                  value={renameDraft}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void commitRename();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      cancelRename();
+                    }
+                  }}
+                  onBlur={() => {
+                    void commitRename();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span
+                  className="action-title is-editable-title"
+                  title="انقر مرتين لإعادة التسمية، أو بزر الفأرة الأيمن للخيارات"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    startRename('action', action.id, action.title);
+                  }}
+                  onContextMenu={(e) => openActionContextMenu(e, action)}
+                >
+                  {action.title}
+                </span>
+              )}
+              {!isRenamingAction && (
+                <button
+                  type="button"
+                  className="window-edit-btn now-action-menu-btn"
+                  aria-label={`تعديل وإعادة تسمية ${action.title}`}
+                  title="تعديل العمل أو إعادة تسميته"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    openActionContextMenuAt(
+                      { x: rect.left + rect.width / 2, y: rect.bottom + 4 },
+                      action,
+                    );
+                  }}
+                >
+                  <IconMoreDots size="sm" />
+                </button>
+              )}
               {info.targetVersion && (
                 <span className="target-tag nums">
                   {info.targetVersion.target_label}
@@ -604,6 +896,257 @@ export function NowView({
     );
   };
 
+  const renderPeriodPanel = (
+    period: Period,
+    windowOverride?: ResolvedPeriodWindow | null,
+  ) => {
+    const periodWindow =
+      windowOverride ??
+      (period.side === 'TIME_BOUND'
+        ? (dayWindowsByPeriodId.get(period.id) ?? null)
+        : null);
+
+    const isClosing = Boolean(periodWindow?.isPreExpiry);
+    const horizonPct = periodWindow
+      ? periodWindow.isExpired
+        ? 100
+        : periodWindow.isOpen
+          ? Math.round(periodWindow.elapsedRatio * 100)
+          : 0
+      : 0;
+
+    const timeStatusText = periodWindow
+      ? periodWindow.isExpired
+        ? 'انتهى الوقت'
+        : 'قادم'
+      : '';
+
+    const periodActions = actions
+      .filter(
+        (a) =>
+          a.period_id === period.id &&
+          !isActionArchivedOnDate(a, selectedDate),
+      )
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    const boundLeftActions =
+      period.side === 'TIME_BOUND'
+        ? actions
+            .filter(
+              (a) =>
+                a.bound_time_period_id === period.id &&
+                !isActionArchivedOnDate(a, selectedDate),
+            )
+            .sort((a, b) => a.sort_order - b.sort_order)
+        : [];
+
+    const hasMosqueActions = periodActions.some(
+      (a) => a.is_mosque_action && !a.supports_percentage,
+    );
+
+    const eligibleMosqueCount =
+      period.side === 'TIME_BOUND' && hasMosqueActions
+        ? planMosqueDone({
+            periodId: period.id,
+            logDate: selectedDate,
+            actions,
+            periods,
+            logsByKey,
+          }).length
+        : 0;
+
+    const eligiblePeriodCount =
+      period.side === 'TIME_BOUND'
+        ? planPeriodDone({
+            periodId: period.id,
+            logDate: selectedDate,
+            actions,
+            periods,
+            logsByKey,
+          }).length
+        : 0;
+
+    const isRenamingPeriod =
+      renamingTarget?.kind === 'period' && renamingTarget.id === period.id;
+
+    return (
+      <section
+        key={period.id}
+        className="panel"
+        data-testid={`now-period-panel-${period.id}`}
+        aria-label={`أعمال ${period.title}`}
+      >
+        <div className="window-header">
+          <div className="window-header-start">
+            {isRenamingPeriod ? (
+              <input
+                ref={renameInputRef}
+                type="text"
+                maxLength={80}
+                className="inline-rename-input inline-rename-input-title"
+                aria-label={`إعادة تسمية ${period.title}`}
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void commitRename();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelRename();
+                  }
+                }}
+                onBlur={() => {
+                  void commitRename();
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <h2
+                className="window-title is-editable-title"
+                title="انقر مرتين لإعادة التسمية، أو بزر الفأرة الأيمن للخيارات"
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  startRename('period', period.id, period.title);
+                }}
+                onContextMenu={(e) => openPeriodContextMenu(e, period)}
+              >
+                {period.side === 'TIME_BOUND'
+                  ? `فترة ${period.title}`
+                  : period.title}
+              </h2>
+            )}
+          </div>
+
+          <div className="window-header-end">
+            {periodWindow ? (
+              <div className="window-time-meta nums">
+                <span dir="ltr">
+                  {formatHhmmInTz(
+                    periodWindow.startInstant,
+                    settings.iana_timezone,
+                  )}{' '}
+                  -{' '}
+                  {formatHhmmInTz(
+                    periodWindow.endInstant,
+                    settings.iana_timezone,
+                  )}
+                </span>
+                {periodWindow.isOpen ? (
+                  <PeriodCountdown
+                    endInstant={periodWindow.endInstant}
+                    isClosing={isClosing}
+                  />
+                ) : (
+                  <span className="window-countdown">{timeStatusText}</span>
+                )}
+              </div>
+            ) : (
+              <span className="panel-meta">
+                {formatArabicDateFull(selectedDate)}
+              </span>
+            )}
+
+            <button
+              type="button"
+              className="window-edit-btn"
+              aria-label={`خيارات الفترة ${period.title}`}
+              title={`خيارات الفترة ${period.title}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                openPeriodContextMenuAt(
+                  { x: rect.left + rect.width / 2, y: rect.bottom + 6 },
+                  period,
+                );
+              }}
+            >
+              <IconMoreDots size="sm" />
+            </button>
+          </div>
+
+          {period.side === 'TIME_BOUND' && (
+            <div className="horizon-track" aria-hidden="true">
+              <div
+                className={`horizon-fill ${isClosing ? 'closing' : ''}`}
+                style={{ width: `${horizonPct}%` }}
+              />
+            </div>
+          )}
+        </div>
+
+        {period.side === 'TIME_BOUND' && (
+          <div
+            className={`quick-split ${hasMosqueActions ? '' : 'quick-split-single'}`}
+          >
+            {hasMosqueActions && (
+              <button
+                type="button"
+                className="btn btn-live"
+                data-testid="btn-mosque-done"
+                data-period-id={period.id}
+                disabled={eligibleMosqueCount === 0}
+                onClick={() => {
+                  void handleBulkMosque(period.id);
+                }}
+              >
+                <IconMosque size="sm" />
+                <span>
+                  {eligibleMosqueCount > 0
+                    ? `${AR_STRINGS.street.mosqueDoneButton} (${eligibleMosqueCount})`
+                    : 'تم تسجيل أعمال المسجد'}
+                </span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={`btn ${hasMosqueActions ? '' : 'btn-live'}`}
+              data-testid="btn-period-done"
+              data-period-id={period.id}
+              disabled={eligiblePeriodCount === 0}
+              onClick={() => {
+                void handleBulkPeriod(period.id);
+              }}
+            >
+              <IconCheckAll size="sm" />
+              <span>
+                {eligiblePeriodCount > 0
+                  ? `${AR_STRINGS.street.periodDoneButton} (${eligiblePeriodCount})`
+                  : 'تم تسجيل الفترة بالكامل'}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {periodActions.length === 0 ? (
+          <div className="empty-state">
+            <span>لا توجد أعمال مفعّلة في هذه الفترة لهذا اليوم</span>
+          </div>
+        ) : (
+          <div className="action-list">
+            {periodActions.map(renderActionRow)}
+          </div>
+        )}
+
+        {boundLeftActions.length > 0 && (
+          <>
+            <div className="sub-band">
+              <span>{AR_STRINGS.street.boundHabitsHeading}</span>
+              <span>خارج زر المسجد وإحصاء الفترة</span>
+            </div>
+            <div className="action-list">
+              {boundLeftActions.map(renderActionRow)}
+            </div>
+          </>
+        )}
+      </section>
+    );
+  };
+
   const isStaleDate = Boolean(
     todayIslamicDate && selectedDate && selectedDate !== todayIslamicDate,
   );
@@ -717,8 +1260,22 @@ export function NowView({
           aria-label="فترات اليوم والمجموعات"
           onScroll={updateStripFade}
         >
+          {hasMultiLiveTab && (
+            <button
+              type="button"
+              role="tab"
+              data-testid="period-pill-live-all"
+              className="period-pill period-pill-live-all"
+              aria-selected={selectedPeriodId === null}
+              onClick={() => onSelectPeriodId(null)}
+            >
+              <span className="live-indicator" />
+              <span className="nums">الآن ({liveOpenEntries.length})</span>
+            </button>
+          )}
+
           {activeTimePeriods.map((p) => {
-            const isSelected = activePeriod?.id === p.id;
+            const isSelected = !isMultiLiveView && activePeriod?.id === p.id;
             const isLive =
               selectedDate === todayIslamicDate && openLivePeriodIds.has(p.id);
             return (
@@ -729,6 +1286,7 @@ export function NowView({
                 className="period-pill"
                 aria-selected={isSelected}
                 onClick={() => onSelectPeriodId(p.id)}
+                onContextMenu={(e) => openPeriodContextMenu(e, p)}
               >
                 {isLive && <span className="live-indicator" />}
                 <span>{p.title}</span>
@@ -741,7 +1299,7 @@ export function NowView({
           )}
 
           {activeDailyGroups.map((g) => {
-            const isSelected = activePeriod?.id === g.id;
+            const isSelected = !isMultiLiveView && activePeriod?.id === g.id;
             return (
               <button
                 key={g.id}
@@ -750,6 +1308,7 @@ export function NowView({
                 className="period-pill"
                 aria-selected={isSelected}
                 onClick={() => onSelectPeriodId(g.id)}
+                onContextMenu={(e) => openPeriodContextMenu(e, g)}
               >
                 <span>{g.title}</span>
               </button>
@@ -758,117 +1317,30 @@ export function NowView({
         </div>
       </div>
 
-      {activePeriod ? (
-        <section className="panel" aria-label="أعمال الفترة">
-          <div className="window-header">
-            <h2 className="window-title">
-              {activePeriod.side === 'TIME_BOUND'
-                ? `فترة ${activePeriod.title}`
-                : activePeriod.title}
-            </h2>
-
-            {activeWindow ? (
-              <div className="window-time-meta nums">
-                <span dir="ltr">
-                  {formatHhmmInTz(
-                    activeWindow.startInstant,
-                    settings.iana_timezone,
-                  )}{' '}
-                  -{' '}
-                  {formatHhmmInTz(
-                    activeWindow.endInstant,
-                    settings.iana_timezone,
-                  )}
-                </span>
-                {activeWindow.isOpen ? (
-                  <PeriodCountdown
-                    endInstant={activeWindow.endInstant}
-                    isClosing={isClosing}
-                  />
-                ) : (
-                  <span className="window-countdown">{timeStatusText}</span>
-                )}
-              </div>
-            ) : (
-              <span className="panel-meta">
-                {formatArabicDateFull(selectedDate)}
-              </span>
-            )}
-
-            {activePeriod.side === 'TIME_BOUND' && (
-              <div className="horizon-track" aria-hidden="true">
+      {isMultiLiveView ? (
+        <div className="now-concurrent-stack">
+          {liveOpenEntries.map((entry, idx) => (
+            <React.Fragment key={entry.period.id}>
+              {idx > 0 && (
                 <div
-                  className={`horizon-fill ${isClosing ? 'closing' : ''}`}
-                  style={{ width: `${horizonPct}%` }}
-                />
-              </div>
-            )}
-          </div>
-
-          {activePeriod.side === 'TIME_BOUND' && (
-            <div
-              className={`quick-split ${hasMosqueActions ? '' : 'quick-split-single'}`}
-            >
-              {hasMosqueActions && (
-                <button
-                  type="button"
-                  className="btn btn-live"
-                  data-testid="btn-mosque-done"
-                  disabled={eligibleMosqueCount === 0}
-                  onClick={() => {
-                    void handleBulkMosque();
-                  }}
+                  className="now-concurrent-divider"
+                  data-testid="now-concurrent-divider"
+                  role="separator"
                 >
-                  <IconMosque size="sm" />
-                  <span>
-                    {eligibleMosqueCount > 0
-                      ? `${AR_STRINGS.street.mosqueDoneButton} (${eligibleMosqueCount})`
-                      : 'تم تسجيل أعمال المسجد'}
+                  <span className="now-concurrent-divider-rule" aria-hidden="true" />
+                  <span className="now-concurrent-divider-label">
+                    <span className="live-indicator" aria-hidden="true" />
+                    <span>فترة مفتوحة بالتوازي · {entry.period.title}</span>
                   </span>
-                </button>
+                  <span className="now-concurrent-divider-rule" aria-hidden="true" />
+                </div>
               )}
-
-              <button
-                type="button"
-                className={`btn ${hasMosqueActions ? '' : 'btn-live'}`}
-                data-testid="btn-period-done"
-                disabled={eligiblePeriodCount === 0}
-                onClick={() => {
-                  void handleBulkPeriod();
-                }}
-              >
-                <IconCheckAll size="sm" />
-                <span>
-                  {eligiblePeriodCount > 0
-                    ? `${AR_STRINGS.street.periodDoneButton} (${eligiblePeriodCount})`
-                    : 'تم تسجيل الفترة بالكامل'}
-                </span>
-              </button>
-            </div>
-          )}
-
-          {periodActions.length === 0 ? (
-            <div className="empty-state">
-              <span>لا توجد أعمال مفعّلة في هذه الفترة لهذا اليوم</span>
-            </div>
-          ) : (
-            <div className="action-list">
-              {periodActions.map(renderActionRow)}
-            </div>
-          )}
-
-          {boundLeftActions.length > 0 && (
-            <>
-              <div className="sub-band">
-                <span>{AR_STRINGS.street.boundHabitsHeading}</span>
-                <span>خارج زر المسجد وإحصاء الفترة</span>
-              </div>
-              <div className="action-list">
-                {boundLeftActions.map(renderActionRow)}
-              </div>
-            </>
-          )}
-        </section>
+              {renderPeriodPanel(entry.period, entry.window)}
+            </React.Fragment>
+          ))}
+        </div>
+      ) : activePeriod ? (
+        renderPeriodPanel(activePeriod)
       ) : (
         <section className="panel">
           <div className="empty-state">
@@ -876,6 +1348,23 @@ export function NowView({
           </div>
         </section>
       )}
+
+      <EntityContextMenu
+        position={entityMenu?.position ?? null}
+        title={entityMenu?.title}
+        items={entityMenu?.items ?? []}
+        onClose={() => setEntityMenu(null)}
+      />
+
+      <QuickActionEditDialog
+        action={editingAction}
+        onClose={() => setEditingActionId(null)}
+      />
+
+      <QuickPeriodEditDialog
+        period={editingPeriod}
+        onClose={() => setEditingPeriodId(null)}
+      />
     </>
   );
 }
